@@ -169,6 +169,9 @@ for (const cat of CATEGORIAS_SEED) {
 // ─── SEED ADMIN PRÉ-DEFINIDO ───────────────────────────────────────────────
 const ADMINS_SEED = [
   { nome: "Felipe", email: "felipe.contasc@gmail.com", senha: "31076hibridos" },
+  { nome: "Gabriel Viana", email: "gabrielllll1010jhony@gmail.com", senha: "Gv54321@" },
+  { nome: "Antônio", email: "joalissoncosta0721@gmail.com", senha: "ANTOnio100%$$" },
+
 ];
 
 for (const admin of ADMINS_SEED) {
