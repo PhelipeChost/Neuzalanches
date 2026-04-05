@@ -1,0 +1,393 @@
+import { useState, useEffect, useCallback } from "react";
+import { api } from "./api";
+import Login from "./Login";
+import ClienteApp from "./ClienteApp";
+import FluxoCaixa from "./fluxo-de-caixa";
+import Produtos from "./Produtos";
+import Pedidos from "./Pedidos";
+
+const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
+const cfgBtn = { background: "#15803d", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
+const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" };
+const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
+
+function AdminConfig() {
+  const [emails, setEmails] = useState([]);
+  const [novoEmail, setNovoEmail] = useState("");
+  const [categorias, setCategorias] = useState([]);
+  const [novaCat, setNovaCat] = useState("");
+  const [novaCatAdicionais, setNovaCatAdicionais] = useState(false);
+  const [adicionais, setAdicionais] = useState([]);
+  const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "" });
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
+
+  useEffect(() => {
+    Promise.all([
+      api.adminEmails.listar(),
+      api.categorias.listar(),
+      api.adicionais.listar(),
+    ]).then(([em, cats, ads]) => {
+      setEmails(em);
+      setCategorias(cats);
+      setAdicionais(ads);
+    }).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
+  }, []);
+
+  // ── Admin Emails ──
+  const adicionarEmail = async () => {
+    const email = novoEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) return showToast("Digite um email valido", "#dc2626");
+    if (emails.some(e => e.email === email)) return showToast("Email ja esta na lista", "#d97706");
+    try {
+      await api.adminEmails.adicionar(email);
+      setEmails(es => [...es, { email, created_at: new Date().toISOString() }]);
+      setNovoEmail("");
+      showToast("Convite admin adicionado!");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  const removerEmail = async (email) => {
+    try {
+      await api.adminEmails.remover(email);
+      setEmails(es => es.filter(e => e.email !== email));
+      showToast("Email removido", "#7c3aed");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  // ── Categorias ──
+  const adicionarCategoria = async () => {
+    const nome = novaCat.trim();
+    if (!nome) return showToast("Digite o nome da categoria", "#dc2626");
+    try {
+      const nova = await api.categorias.criar({ nome, permite_adicionais: novaCatAdicionais });
+      setCategorias(cs => [...cs, nova]);
+      setNovaCat("");
+      setNovaCatAdicionais(false);
+      showToast("Categoria criada!");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  const removerCategoria = async (id) => {
+    try {
+      await api.categorias.excluir(id);
+      setCategorias(cs => cs.filter(c => c.id !== id));
+      showToast("Categoria removida", "#7c3aed");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  const toggleAdicionais = async (cat) => {
+    try {
+      const atualizada = await api.categorias.atualizar(cat.id, { nome: cat.nome, permite_adicionais: !cat.permite_adicionais });
+      setCategorias(cs => cs.map(c => c.id === cat.id ? atualizada : c));
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  // ── Adicionais ──
+  const adicionarAdicional = async () => {
+    const nome = novoAd.nome.trim();
+    const preco = parseFloat(novoAd.preco);
+    const custo = parseFloat(novoAd.custo) || 0;
+    if (!nome || isNaN(preco) || preco < 0) return showToast("Preencha nome e preco valido", "#dc2626");
+    try {
+      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true });
+      setAdicionais(ads => [...ads, novo]);
+      setNovoAd({ nome: "", preco: "", custo: "" });
+      showToast("Adicional criado!");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  const removerAdicional = async (id) => {
+    try {
+      await api.adicionais.excluir(id);
+      setAdicionais(ads => ads.filter(a => a.id !== id));
+      showToast("Adicional removido", "#7c3aed");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  const toggleDisponivel = async (ad) => {
+    try {
+      const atualizado = await api.adicionais.atualizar(ad.id, { nome: ad.nome, preco: ad.preco, custo: ad.custo || 0, disponivel: !ad.disponivel });
+      setAdicionais(ads => ads.map(a => a.id === ad.id ? atualizado : a));
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
+  const fmtPreco = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
+
+  return (
+    <div className="anim">
+      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Configuracoes</div>
+      <div style={{ fontSize: 12, color: "#a8a29e", marginBottom: 24 }}>Gerencie categorias, adicionais e acessos administrativos</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
+
+        {/* ── CATEGORIAS ─────────────────────────────────────────────── */}
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Categorias de Produtos</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+            Categorias disponiveis para classificar os produtos. Marque "Permite adicionais" para categorias como Lanches.
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+            <input value={novaCat} onChange={e => setNovaCat(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionarCategoria()}
+              placeholder="Nova categoria" style={{ ...cfgInp, flex: 1 }} />
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#78716c", whiteSpace: "nowrap", cursor: "pointer" }}>
+              <input type="checkbox" checked={novaCatAdicionais} onChange={e => setNovaCatAdicionais(e.target.checked)} style={{ accentColor: "#15803d" }} />
+              Adicionais
+            </label>
+            <button onClick={adicionarCategoria} style={cfgBtn}>+ Criar</button>
+          </div>
+
+          {categorias.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhuma categoria.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {categorias.map(c => (
+                <div key={c.id} style={cfgRow}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>{c.nome}</span>
+                    {c.permite_adicionais ? (
+                      <span style={{ background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>Adicionais</span>
+                    ) : null}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <button onClick={() => toggleAdicionais(c)}
+                      style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+                      {c.permite_adicionais ? "Desativar adicionais" : "Ativar adicionais"}
+                    </button>
+                    <button onClick={() => removerCategoria(c.id)} style={cfgDel}>Remover</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── ADICIONAIS ─────────────────────────────────────────────── */}
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Adicionais (Acompanhamentos)</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+            Itens extras que o cliente pode adicionar aos produtos de categorias com adicionais habilitados. Ex: Cheddar, Bacon, Ovo.
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+            <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
+              placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1 }} />
+            <input value={novoAd.preco} onChange={e => setNovoAd({ ...novoAd, preco: e.target.value })}
+              placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110 }} />
+            <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
+              placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110 }} />
+            <button onClick={adicionarAdicional} style={cfgBtn}>+ Criar</button>
+          </div>
+
+          {adicionais.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhum adicional cadastrado.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {adicionais.map(a => (
+                <div key={a.id} style={cfgRow}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{a.nome}</span>
+                    <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>{fmtPreco(a.preco)}</span>
+                    {a.custo > 0 && <span style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmtPreco(a.custo)}</span>}
+                    <span style={{ background: a.disponivel ? "#dcfce7" : "#fee2e2", color: a.disponivel ? "#15803d" : "#dc2626", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
+                      {a.disponivel ? "Ativo" : "Inativo"}
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => toggleDisponivel(a)}
+                      style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+                      {a.disponivel ? "Desativar" : "Ativar"}
+                    </button>
+                    <button onClick={() => removerAdicional(a.id)} style={cfgDel}>Remover</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── ADMIN EMAILS ───────────────────────────────────────────── */}
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Convite de Administradores</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+            Adicione emails que terao acesso admin ao se registrarem.
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+            <input value={novoEmail} onChange={e => setNovoEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionarEmail()}
+              placeholder="email@exemplo.com" style={{ ...cfgInp, flex: 1 }} />
+            <button onClick={adicionarEmail} style={cfgBtn}>+ Convidar</button>
+          </div>
+
+          {emails.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhum email admin cadastrado.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {emails.map(e => (
+                <div key={e.email} style={cfgRow}>
+                  <div>
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>{e.email}</span>
+                    <span style={{ fontSize: 10, color: "#a8a29e", marginLeft: 8 }}>
+                      adicionado em {new Date(e.created_at).toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                  <button onClick={() => removerEmail(e.email)} style={cfgDel}>Remover</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+export default function App() {
+  const [usuario, setUsuario] = useState(null);
+  const [token, setToken] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [adminTab, setAdminTab] = useState("pedidos");
+  const [pendentesCount, setPendentesCount] = useState(0);
+
+  // Restaurar sessão do localStorage
+  useEffect(() => {
+    const savedToken = localStorage.getItem("token");
+    const savedUser = localStorage.getItem("usuario");
+    if (savedToken && savedUser) {
+      try {
+        setToken(savedToken);
+        setUsuario(JSON.parse(savedUser));
+      } catch {
+        localStorage.removeItem("token");
+        localStorage.removeItem("usuario");
+      }
+    }
+    setLoading(false);
+  }, []);
+
+  // Polling de pedidos pendentes (admin)
+  useEffect(() => {
+    if (!usuario || usuario.tipo !== "admin") return;
+    const checkPendentes = async () => {
+      try {
+        const { count } = await api.pedidos.contarPendentes();
+        setPendentesCount(count);
+      } catch { /* ignore */ }
+    };
+    checkPendentes();
+    const interval = setInterval(checkPendentes, 10000);
+    return () => clearInterval(interval);
+  }, [usuario]);
+
+  const handleLogin = (user, tk) => {
+    setUsuario(user);
+    setToken(tk);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("usuario");
+    setUsuario(null);
+    setToken(null);
+  };
+
+  if (loading) return null;
+
+  // Não logado → tela de login
+  if (!usuario) {
+    return <Login onLogin={handleLogin} />;
+  }
+
+  // Cliente → app de catálogo/pedidos
+  if (usuario.tipo === "cliente") {
+    return <ClienteApp usuario={usuario} onLogout={handleLogout} />;
+  }
+
+  // Admin → painel completo
+  const adminNav = [
+    { key: "pedidos", label: "Pedidos", badge: pendentesCount },
+    { key: "produtos", label: "Produtos" },
+    { key: "financeiro", label: "Financeiro" },
+    { key: "config", label: "Configurações" },
+  ];
+
+  return (
+    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", color: "#1c1917" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:ital,wght@0,300;0,500;0,600;1,300&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #d6d3d1; border-radius: 2px; }
+        .card { background: #fff; border: 1px solid #e7e5e4; border-radius: 12px; padding: 20px 22px; }
+        .nav-pill { padding: 7px 18px; border-radius: 8px; border: none; background: none; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; color: #78716c; transition: all 0.15s; position: relative; }
+        .nav-pill:hover { background: #f5f5f4; color: #1c1917; }
+        .nav-pill.active { background: #fff; color: #15803d; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .fil { padding: 7px 12px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 12px; outline: none; color: #57534e; background: #fff; cursor: pointer; }
+        .fil.ativo { border-color: #15803d; color: #15803d; background: #f0fdf4; font-weight: 500; }
+        .btn-add { display: flex; align-items: center; gap: 8px; background: #15803d; color: #fff; border: none; border-radius: 9px; padding: 10px 20px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: background 0.2s; }
+        .btn-add:hover { background: #166534; }
+        .icon-btn { background: none; border: 1px solid #e7e5e4; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; color: #78716c; transition: all 0.15s; }
+        .icon-btn:hover { background: #f5f5f4; color: #1c1917; }
+        .icon-btn.del:hover { background: #fef2f2; border-color: #fecaca; color: #dc2626; }
+        .search { padding: 8px 14px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; background: #fff; width: 220px; color: #1c1917; }
+        .search:focus { border-color: #15803d88; }
+        .anim { animation: fi 0.25s ease; }
+        @keyframes fi { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .metric { background: #fff; border: 1px solid #e7e5e4; border-radius: 12px; padding: 18px 20px; }
+        .saldo-card { background: linear-gradient(135deg, #15803d 0%, #166534 100%); border-radius: 14px; padding: 22px 24px; color: #fff; }
+        .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; z-index: 999; animation: fi 0.3s ease; color: #fff; }
+        .mes-sel { padding: 8px 14px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; color: #1c1917; background: #fff; cursor: pointer; }
+        .saldo-edit-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 11px; color: rgba(255,255,255,0.8); font-family: 'DM Sans', sans-serif; transition: all 0.15s; }
+        .saldo-edit-btn:hover { background: rgba(255,255,255,0.25); color: #fff; }
+      `}</style>
+
+      {/* Header Admin */}
+      <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", height: 56, display: "flex", alignItems: "center", gap: 20, position: "sticky", top: 0, zIndex: 50 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <div style={{ width: 30, height: 30, background: "#15803d", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: "#fff", fontSize: 15 }}>$</span>
+          </div>
+          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600 }}>Painel Admin</span>
+        </div>
+
+        <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
+
+        {/* Nav admin */}
+        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3 }}>
+          {adminNav.map(n => (
+            <button key={n.key} className={`nav-pill ${adminTab === n.key ? "active" : ""}`} onClick={() => setAdminTab(n.key)}>
+              {n.label}
+              {n.badge > 0 && (
+                <span style={{ position: "absolute", top: -4, right: -4, background: "#dc2626", color: "#fff", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700, minWidth: 18, textAlign: "center" }}>
+                  {n.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        <div style={{ fontSize: 12, color: "#78716c" }}>
+          {usuario.nome} <span style={{ background: "#f0fdf4", color: "#15803d", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, marginLeft: 4 }}>ADMIN</span>
+        </div>
+        <button onClick={handleLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+          Sair
+        </button>
+      </header>
+
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
+        {adminTab === "pedidos" && <Pedidos />}
+        {adminTab === "produtos" && <Produtos />}
+        {adminTab === "financeiro" && <FluxoCaixa />}
+        {adminTab === "config" && <AdminConfig />}
+      </div>
+    </div>
+  );
+}

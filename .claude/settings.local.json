@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(npx kill-port:*)",
+      "mcp__Claude_Preview__preview_start"
+    ]
+  }
+}
