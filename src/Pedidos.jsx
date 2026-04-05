@@ -468,6 +468,31 @@ export default function Pedidos() {
 
                     {p.obs && <div style={{ fontSize: 12, color: "#78716c", marginBottom: 12 }}>Obs: {p.obs}</div>}
 
+                    {/* Endereço de entrega */}
+                    {p.endereco_rua && (
+                      <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#2563eb", marginBottom: 4, letterSpacing: "0.06em" }}>ENDEREÇO DE ENTREGA</div>
+                        <div style={{ fontSize: 13, color: "#1c1917" }}>
+                          {p.endereco_rua}{p.endereco_numero ? `, ${p.endereco_numero}` : ""}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#57534e" }}>
+                          {p.endereco_bairro}{p.endereco_cep ? ` — CEP: ${p.endereco_cep}` : ""}
+                        </div>
+                        {p.endereco_referencia && (
+                          <div style={{ fontSize: 12, color: "#78716c", marginTop: 4, fontStyle: "italic" }}>
+                            Ref: {p.endereco_referencia}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Método de pagamento */}
+                    {p.metodo_pagamento && (
+                      <div style={{ display: "inline-block", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 600, color: "#92400e", marginBottom: 12 }}>
+                        {p.metodo_pagamento === "pix" ? "⚡ Pix" : p.metodo_pagamento === "credito" ? "💳 Cartão de Crédito" : p.metodo_pagamento === "debito" ? "💳 Cartão de Débito" : p.metodo_pagamento}
+                      </div>
+                    )}
+
                     {!isTerminal && (
                       <div style={{ display: "flex", gap: 8 }}>
                         {proximo && (

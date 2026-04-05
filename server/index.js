@@ -11,6 +11,7 @@ import {
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
   listarPedidos, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, contarPedidosPendentes,
+  listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
 } from "./database.js";
 
 const app = express();
@@ -261,6 +262,63 @@ app.delete("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── CEP (proxy para ViaCEP) ────────────────────────────────────────────
+
+app.get("/api/cep/:cep", async (req, res) => {
+  const cep = req.params.cep.replace(/\D/g, "");
+  if (cep.length !== 8) return res.status(400).json({ error: "CEP inválido" });
+  try {
+    const resp = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const data = await resp.json();
+    if (data.erro) return res.status(404).json({ error: "CEP não encontrado" });
+    res.json({ cep: data.cep, rua: data.logradouro, bairro: data.bairro, cidade: data.localidade, uf: data.uf });
+  } catch {
+    res.status(500).json({ error: "Erro ao consultar CEP" });
+  }
+});
+
+// ─── ENDERECOS (cliente) ────────────────────────────────────────────────
+
+app.get("/api/enderecos", authMiddleware, (req, res) => {
+  res.json(listarEnderecos(req.user.id));
+});
+
+app.post("/api/enderecos", authMiddleware, (req, res) => {
+  const { cep, rua, numero, bairro, referencia } = req.body;
+  if (!rua || !bairro) return res.status(400).json({ error: "Rua e bairro são obrigatórios" });
+  const endereco = criarEndereco({ cliente_id: req.user.id, cep, rua, numero, bairro, referencia });
+  res.status(201).json(endereco);
+});
+
+app.delete("/api/enderecos/:id", authMiddleware, (req, res) => {
+  const end = buscarEndereco(req.params.id);
+  if (!end) return res.status(404).json({ error: "Endereço não encontrado" });
+  if (end.cliente_id !== req.user.id && req.user.tipo !== "admin") {
+    return res.status(403).json({ error: "Acesso negado" });
+  }
+  excluirEndereco(req.params.id);
+  res.json({ success: true });
+});
+
+// ─── CONFIG PIX (público para leitura, admin para escrita) ─────────────
+
+app.get("/api/config/pix", authMiddleware, (req, res) => {
+  res.json({
+    pix_key: obterConfig("pix_key") || "",
+    pix_nome: obterConfig("pix_nome") || "",
+  });
+});
+
+app.put("/api/config/pix", authMiddleware, adminOnly, (req, res) => {
+  const { pix_key, pix_nome } = req.body;
+  if (pix_key !== undefined) salvarConfig("pix_key", pix_key);
+  if (pix_nome !== undefined) salvarConfig("pix_nome", pix_nome);
+  res.json({
+    pix_key: obterConfig("pix_key") || "",
+    pix_nome: obterConfig("pix_nome") || "",
+  });
+});
+
 // ─── PEDIDOS ────────────────────────────────────────────────────────────────
 
 app.get("/api/pedidos", authMiddleware, (req, res) => {
@@ -283,7 +341,7 @@ app.get("/api/pedidos/:id", authMiddleware, (req, res) => {
 });
 
 app.post("/api/pedidos", authMiddleware, (req, res) => {
-  const { itens, obs, cliente_nome, tipo } = req.body;
+  const { itens, obs, cliente_nome, tipo, metodo_pagamento, endereco } = req.body;
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
   }
@@ -293,12 +351,29 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     }
   }
   const isAdmin = req.user.tipo === "admin";
+
+  // Se o cliente enviou um endereco_id, buscar o endereço salvo
+  let enderecoFinal = endereco || {};
+  if (endereco && endereco.endereco_id) {
+    const endSalvo = buscarEndereco(endereco.endereco_id);
+    if (endSalvo) {
+      enderecoFinal = { cep: endSalvo.cep, rua: endSalvo.rua, numero: endSalvo.numero, bairro: endSalvo.bairro, referencia: endSalvo.referencia };
+    }
+  }
+
+  // Se o cliente pediu para salvar o endereço novo
+  if (endereco && endereco.salvar && !isAdmin && endereco.rua) {
+    criarEndereco({ cliente_id: req.user.id, cep: endereco.cep, rua: endereco.rua, numero: endereco.numero, bairro: endereco.bairro, referencia: endereco.referencia });
+  }
+
   const pedido = criarPedido({
     cliente_id: isAdmin ? null : req.user.id,
     cliente_nome: isAdmin ? (cliente_nome || "Pedido presencial") : req.user.nome,
     itens,
     obs,
     tipo: isAdmin ? (tipo || "presencial") : "online",
+    metodo_pagamento: metodo_pagamento || "",
+    endereco: enderecoFinal,
   });
   res.status(201).json(pedido);
 });

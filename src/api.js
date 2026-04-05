@@ -90,4 +90,20 @@ export const api = {
     atualizarStatus: (id, status) => request(`/pedidos/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
     contarPendentes: () => request("/pedidos/pendentes/count"),
   },
+
+  // Enderecos
+  enderecos: {
+    listar: () => request("/enderecos"),
+    criar: (data) => request("/enderecos", { method: "POST", body: JSON.stringify(data) }),
+    excluir: (id) => request(`/enderecos/${id}`, { method: "DELETE" }),
+  },
+
+  // CEP
+  buscarCep: (cep) => request(`/cep/${cep.replace(/\D/g, "")}`),
+
+  // PIX config
+  pix: {
+    obter: () => request("/config/pix"),
+    salvar: (data) => request("/config/pix", { method: "PUT", body: JSON.stringify(data) }),
+  },
 };

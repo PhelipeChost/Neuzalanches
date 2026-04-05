@@ -76,6 +76,18 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS enderecos (
+    id TEXT PRIMARY KEY,
+    cliente_id TEXT NOT NULL,
+    cep TEXT DEFAULT '',
+    rua TEXT DEFAULT '',
+    numero TEXT DEFAULT '',
+    bairro TEXT DEFAULT '',
+    referencia TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (cliente_id) REFERENCES usuarios(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS pedidos (
     id TEXT PRIMARY KEY,
     cliente_id TEXT,
@@ -84,6 +96,12 @@ db.exec(`
     total REAL NOT NULL DEFAULT 0,
     obs TEXT DEFAULT '',
     tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
+    metodo_pagamento TEXT DEFAULT '',
+    endereco_cep TEXT DEFAULT '',
+    endereco_rua TEXT DEFAULT '',
+    endereco_numero TEXT DEFAULT '',
+    endereco_bairro TEXT DEFAULT '',
+    endereco_referencia TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (cliente_id) REFERENCES usuarios(id)
   );
@@ -106,6 +124,29 @@ db.exec(`
 const existeConfig = db.prepare("SELECT 1 FROM config WHERE key = 'saldo_inicial'").get();
 if (!existeConfig) {
   db.prepare("INSERT INTO config (key, value) VALUES ('saldo_inicial', '0')").run();
+}
+
+// Inserir chave PIX padrão se não existir
+const existePix = db.prepare("SELECT 1 FROM config WHERE key = 'pix_key'").get();
+if (!existePix) {
+  db.prepare("INSERT INTO config (key, value) VALUES ('pix_key', '11999999999')").run();
+}
+const existePixNome = db.prepare("SELECT 1 FROM config WHERE key = 'pix_nome'").get();
+if (!existePixNome) {
+  db.prepare("INSERT INTO config (key, value) VALUES ('pix_nome', 'Neuza Lanches')").run();
+}
+
+// Migração: adicionar colunas novas na tabela pedidos (para bancos já existentes)
+const colsPedidos = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
+if (!colsPedidos.includes("metodo_pagamento")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN metodo_pagamento TEXT DEFAULT ''");
+}
+if (!colsPedidos.includes("endereco_cep")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN endereco_cep TEXT DEFAULT ''");
+  db.exec("ALTER TABLE pedidos ADD COLUMN endereco_rua TEXT DEFAULT ''");
+  db.exec("ALTER TABLE pedidos ADD COLUMN endereco_numero TEXT DEFAULT ''");
+  db.exec("ALTER TABLE pedidos ADD COLUMN endereco_bairro TEXT DEFAULT ''");
+  db.exec("ALTER TABLE pedidos ADD COLUMN endereco_referencia TEXT DEFAULT ''");
 }
 
 // ─── SEED CATEGORIAS PRÉ-DEFINIDAS ─────────────────────────────────────────
@@ -333,6 +374,28 @@ export function excluirProduto(id) {
   return db.prepare("DELETE FROM produtos WHERE id = ?").run(id).changes > 0;
 }
 
+// ─── ENDERECOS ─────────────────────────────────────────────────────────
+
+export function listarEnderecos(clienteId) {
+  return db.prepare("SELECT * FROM enderecos WHERE cliente_id = ? ORDER BY created_at DESC").all(clienteId);
+}
+
+export function buscarEndereco(id) {
+  return db.prepare("SELECT * FROM enderecos WHERE id = ?").get(id);
+}
+
+export function criarEndereco({ cliente_id, cep, rua, numero, bairro, referencia }) {
+  const id = gerarId();
+  db.prepare(
+    "INSERT INTO enderecos (id, cliente_id, cep, rua, numero, bairro, referencia) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, cliente_id, cep || "", rua || "", numero || "", bairro || "", referencia || "");
+  return buscarEndereco(id);
+}
+
+export function excluirEndereco(id) {
+  return db.prepare("DELETE FROM enderecos WHERE id = ?").run(id).changes > 0;
+}
+
 // ─── PEDIDOS ────────────────────────────────────────────────────────────────
 
 export function listarPedidos(clienteId = null) {
@@ -358,7 +421,7 @@ export function contarPedidosPendentes() {
   return row.count;
 }
 
-export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo }) {
+export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo, metodo_pagamento, endereco }) {
   const id = gerarId();
 
   // Calcular total considerando adicionais
@@ -367,15 +430,17 @@ export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo }) {
     return s + (item.preco_unitario + adicionaisTotal) * item.quantidade;
   }, 0);
 
+  const end = endereco || {};
+
   const inserirPedido = db.prepare(
-    "INSERT INTO pedidos (id, cliente_id, cliente_nome, total, obs, tipo) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO pedidos (id, cliente_id, cliente_nome, total, obs, tipo, metodo_pagamento, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const inserirItem = db.prepare(
     "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
-    inserirPedido.run(id, cliente_id || null, cliente_nome || "", total, obs || "", tipo || "online");
+    inserirPedido.run(id, cliente_id || null, cliente_nome || "", total, obs || "", tipo || "online", metodo_pagamento || "", end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
     for (const item of itens) {
       // Buscar custo do produto no banco
       const produtoDB = buscarProduto(item.produto_id);

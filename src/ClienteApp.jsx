@@ -22,8 +22,246 @@ const STATUS_CORES = {
 };
 const STATUS_PIPELINE = ["pendente", "confirmado", "preparando", "pronto", "entregue"];
 
+const METODOS_PAGAMENTO = [
+  { id: "pix", label: "Pix", icon: "⚡" },
+  { id: "credito", label: "Cartão de Crédito", icon: "💳" },
+  { id: "debito", label: "Cartão de Débito", icon: "💳" },
+];
+
 let uidCounter = 0;
 function nextUid() { return `_${Date.now()}_${++uidCounter}`; }
+
+// ─── MODAL CHECKOUT (ENDEREÇO + PAGAMENTO) ────────────────────────────────────
+function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
+  const [etapa, setEtapa] = useState("endereco"); // "endereco" | "pagamento"
+  const [enderecoTipo, setEnderecoTipo] = useState(enderecosSalvos.length > 0 ? "salvo" : "novo");
+  const [enderecoSelecionado, setEnderecoSelecionado] = useState(enderecosSalvos[0]?.id || "");
+  const [cep, setCep] = useState("");
+  const [rua, setRua] = useState("");
+  const [numero, setNumero] = useState("");
+  const [bairro, setBairro] = useState("");
+  const [referencia, setReferencia] = useState("");
+  const [salvarEndereco, setSalvarEndereco] = useState(true);
+  const [buscandoCep, setBuscandoCep] = useState(false);
+  const [metodoPagamento, setMetodoPagamento] = useState("");
+  const [pixInfo, setPixInfo] = useState({ pix_key: "", pix_nome: "" });
+  const [copiadoPix, setCopiadoPix] = useState(false);
+
+  const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  useEffect(() => {
+    api.pix.obter().then(setPixInfo).catch(() => {});
+  }, []);
+
+  const buscarCep = async () => {
+    const cepLimpo = cep.replace(/\D/g, "");
+    if (cepLimpo.length !== 8) return;
+    setBuscandoCep(true);
+    try {
+      const data = await api.buscarCep(cepLimpo);
+      setRua(data.rua || "");
+      setBairro(data.bairro || "");
+    } catch { /* ignore */ }
+    finally { setBuscandoCep(false); }
+  };
+
+  const handleCepChange = (val) => {
+    // Formatar CEP: 00000-000
+    const limpo = val.replace(/\D/g, "").slice(0, 8);
+    if (limpo.length > 5) {
+      setCep(`${limpo.slice(0, 5)}-${limpo.slice(5)}`);
+    } else {
+      setCep(limpo);
+    }
+  };
+
+  useEffect(() => {
+    const cepLimpo = cep.replace(/\D/g, "");
+    if (cepLimpo.length === 8) buscarCep();
+  }, [cep]);
+
+  const enderecoValido = () => {
+    if (enderecoTipo === "salvo") return !!enderecoSelecionado;
+    return rua.trim() && bairro.trim();
+  };
+
+  const copiarPix = () => {
+    navigator.clipboard.writeText(pixInfo.pix_key).then(() => {
+      setCopiadoPix(true);
+      setTimeout(() => setCopiadoPix(false), 2000);
+    }).catch(() => {});
+  };
+
+  const confirmar = () => {
+    let endereco;
+    if (enderecoTipo === "salvo") {
+      endereco = { endereco_id: enderecoSelecionado };
+    } else {
+      endereco = { cep: cep.replace(/\D/g, ""), rua, numero, bairro, referencia, salvar: salvarEndereco };
+    }
+    onConfirm({ endereco, metodo_pagamento: metodoPagamento });
+  };
+
+  const inputStyle = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
+  const labelStyle = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", width: 480, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500 }}>Finalizar Pedido</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>x</button>
+        </div>
+
+        {/* Etapas */}
+        <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
+          {[["endereco", "1. Endereço"], ["pagamento", "2. Pagamento"]].map(([k, v]) => (
+            <div key={k} style={{ flex: 1, textAlign: "center", padding: "8px 0", borderBottom: `3px solid ${etapa === k ? "#15803d" : "#e7e5e4"}`, fontSize: 13, fontWeight: etapa === k ? 600 : 400, color: etapa === k ? "#15803d" : "#a8a29e", cursor: "pointer", transition: "all 0.2s" }}
+              onClick={() => { if (k === "endereco") setEtapa("endereco"); else if (enderecoValido()) setEtapa("pagamento"); }}>
+              {v}
+            </div>
+          ))}
+        </div>
+
+        {/* ETAPA 1: ENDEREÇO */}
+        {etapa === "endereco" && (
+          <div>
+            {enderecosSalvos.length > 0 && (
+              <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+                <button onClick={() => setEnderecoTipo("salvo")}
+                  style={{ flex: 1, padding: "9px 0", border: `1.5px solid ${enderecoTipo === "salvo" ? "#15803d" : "#e7e5e4"}`, borderRadius: 8, background: enderecoTipo === "salvo" ? "#f0fdf4" : "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: enderecoTipo === "salvo" ? "#15803d" : "#78716c" }}>
+                  Endereço salvo
+                </button>
+                <button onClick={() => setEnderecoTipo("novo")}
+                  style={{ flex: 1, padding: "9px 0", border: `1.5px solid ${enderecoTipo === "novo" ? "#15803d" : "#e7e5e4"}`, borderRadius: 8, background: enderecoTipo === "novo" ? "#f0fdf4" : "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: enderecoTipo === "novo" ? "#15803d" : "#78716c" }}>
+                  Novo endereço
+                </button>
+              </div>
+            )}
+
+            {enderecoTipo === "salvo" && enderecosSalvos.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {enderecosSalvos.map(end => (
+                  <label key={end.id} style={{
+                    display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
+                    background: enderecoSelecionado === end.id ? "#f0fdf4" : "#fafaf9",
+                    border: `1.5px solid ${enderecoSelecionado === end.id ? "#86efac" : "#e7e5e4"}`,
+                    borderRadius: 10, cursor: "pointer", transition: "all 0.15s"
+                  }}>
+                    <input type="radio" name="endereco" checked={enderecoSelecionado === end.id} onChange={() => setEnderecoSelecionado(end.id)} style={{ accentColor: "#15803d", marginTop: 2 }} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>{end.rua}{end.numero ? `, ${end.numero}` : ""}</div>
+                      <div style={{ fontSize: 12, color: "#78716c" }}>{end.bairro}{end.cep ? ` — CEP: ${end.cep}` : ""}</div>
+                      {end.referencia && <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>Ref: {end.referencia}</div>}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={labelStyle}>CEP</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input style={{ ...inputStyle, flex: 1 }} value={cep} onChange={e => handleCepChange(e.target.value)} placeholder="00000-000" maxLength={9} />
+                    {buscandoCep && <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "#15803d", fontWeight: 500, whiteSpace: "nowrap" }}>Buscando...</div>}
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>RUA / LOGRADOURO *</label>
+                  <input style={inputStyle} value={rua} onChange={e => setRua(e.target.value)} placeholder="Ex: Rua das Flores" />
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>NÚMERO</label>
+                    <input style={inputStyle} value={numero} onChange={e => setNumero(e.target.value)} placeholder="123" />
+                  </div>
+                  <div style={{ flex: 2 }}>
+                    <label style={labelStyle}>BAIRRO *</label>
+                    <input style={inputStyle} value={bairro} onChange={e => setBairro(e.target.value)} placeholder="Ex: Centro" />
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>REFERÊNCIA PARA O ENTREGADOR</label>
+                  <input style={inputStyle} value={referencia} onChange={e => setReferencia(e.target.value)} placeholder="Ex: Portão azul, ao lado da padaria" />
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#57534e", cursor: "pointer" }}>
+                  <input type="checkbox" checked={salvarEndereco} onChange={e => setSalvarEndereco(e.target.checked)} style={{ accentColor: "#15803d" }} />
+                  Salvar endereço para próximos pedidos
+                </label>
+              </div>
+            )}
+
+            <button onClick={() => { if (enderecoValido()) setEtapa("pagamento"); }}
+              disabled={!enderecoValido()}
+              style={{ width: "100%", marginTop: 20, padding: 12, background: enderecoValido() ? "#15803d" : "#d6d3d1", color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: enderecoValido() ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif" }}>
+              Continuar para pagamento
+            </button>
+          </div>
+        )}
+
+        {/* ETAPA 2: PAGAMENTO */}
+        {etapa === "pagamento" && (
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#78716c", marginBottom: 10, letterSpacing: "0.06em" }}>ESCOLHA O MÉTODO DE PAGAMENTO</div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {METODOS_PAGAMENTO.map(m => (
+                <label key={m.id} style={{
+                  display: "flex", alignItems: "center", gap: 12, padding: "14px 16px",
+                  background: metodoPagamento === m.id ? "#f0fdf4" : "#fafaf9",
+                  border: `1.5px solid ${metodoPagamento === m.id ? "#86efac" : "#e7e5e4"}`,
+                  borderRadius: 10, cursor: "pointer", transition: "all 0.15s"
+                }}>
+                  <input type="radio" name="pagamento" checked={metodoPagamento === m.id} onChange={() => setMetodoPagamento(m.id)} style={{ accentColor: "#15803d" }} />
+                  <span style={{ fontSize: 18 }}>{m.icon}</span>
+                  <span style={{ fontSize: 14, fontWeight: 500 }}>{m.label}</span>
+                </label>
+              ))}
+            </div>
+
+            {/* Info PIX */}
+            {metodoPagamento === "pix" && pixInfo.pix_key && (
+              <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#15803d", marginBottom: 8, letterSpacing: "0.06em" }}>DADOS PARA PAGAMENTO PIX</div>
+                <div style={{ fontSize: 13, color: "#1c1917", marginBottom: 4 }}>
+                  <span style={{ fontWeight: 600 }}>Chave:</span> {pixInfo.pix_key}
+                </div>
+                <div style={{ fontSize: 13, color: "#1c1917", marginBottom: 10 }}>
+                  <span style={{ fontWeight: 600 }}>Nome:</span> {pixInfo.pix_nome}
+                </div>
+                <button onClick={copiarPix}
+                  style={{ background: copiadoPix ? "#16a34a" : "#15803d", color: "#fff", border: "none", borderRadius: 6, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "background 0.2s" }}>
+                  {copiadoPix ? "✓ Copiado!" : "Copiar chave Pix"}
+                </button>
+              </div>
+            )}
+
+            {/* Total e confirmar */}
+            <div style={{ borderTop: "2px solid #e7e5e4", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600 }}>TOTAL DO PEDIDO</div>
+                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 600, color: "#15803d" }}>{fmt(totalCarrinho)}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => setEtapa("endereco")}
+                  style={{ padding: "12px 18px", background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>
+                  Voltar
+                </button>
+                <button onClick={confirmar}
+                  disabled={!metodoPagamento}
+                  style={{ padding: "12px 24px", background: metodoPagamento ? "#15803d" : "#d6d3d1", color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: metodoPagamento ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif" }}>
+                  Confirmar Pedido
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ─── MODAL ADICIONAIS ──────────────────────────────────────────────────────────
 function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
@@ -105,7 +343,9 @@ export default function ClienteApp({ usuario, onLogout }) {
   const [toast, setToast] = useState("");
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
-  const [modalAdicional, setModalAdicional] = useState(null); // produto selecionado para adicionais
+  const [modalAdicional, setModalAdicional] = useState(null);
+  const [modalCheckout, setModalCheckout] = useState(false);
+  const [enderecosSalvos, setEnderecosSalvos] = useState([]);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -115,16 +355,18 @@ export default function ClienteApp({ usuario, onLogout }) {
 
   const carregar = useCallback(async () => {
     try {
-      const [prods, peds, cats, adds] = await Promise.all([
+      const [prods, peds, cats, adds, ends] = await Promise.all([
         api.produtos.listar(),
         api.pedidos.listar(),
         api.categorias.listar(),
         api.adicionais.listar(),
+        api.enderecos.listar(),
       ]);
       setProdutos(prods.filter(p => p.disponivel));
       setPedidos(peds);
       setCategorias(cats);
       setAdicionaisDisponiveis(adds.filter(a => a.disponivel));
+      setEnderecosSalvos(ends);
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
     } finally {
@@ -193,17 +435,24 @@ export default function ClienteApp({ usuario, onLogout }) {
 
   const totalCarrinho = carrinho.reduce((s, i) => s + calcItemTotal(i), 0);
 
-  const enviarPedido = async () => {
+  const abrirCheckout = () => {
+    if (carrinho.length === 0) return;
+    setModalCheckout(true);
+  };
+
+  const enviarPedido = async ({ endereco, metodo_pagamento }) => {
     if (carrinho.length === 0) return;
     setEnviando(true);
     try {
-      // Limpar campos internos antes de enviar
       const itensLimpos = carrinho.map(({ _uid, _adKey, ...rest }) => rest);
-      const novo = await api.pedidos.criar({ itens: itensLimpos, obs });
+      const novo = await api.pedidos.criar({ itens: itensLimpos, obs, endereco, metodo_pagamento });
       setPedidos(ps => [novo, ...ps]);
       setCarrinho([]);
       setObs("");
+      setModalCheckout(false);
       setTab("pedidos");
+      // Recarregar enderecos salvos (caso tenha salvo um novo)
+      api.enderecos.listar().then(setEnderecosSalvos).catch(() => {});
       showToast("Pedido enviado com sucesso!");
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
@@ -384,7 +633,7 @@ export default function ClienteApp({ usuario, onLogout }) {
                     <div style={{ fontSize: 11, color: "#a8a29e", fontWeight: 600 }}>TOTAL</div>
                     <div style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, color: "#15803d" }}>{fmt(totalCarrinho)}</div>
                   </div>
-                  <button onClick={enviarPedido} disabled={enviando}
+                  <button onClick={abrirCheckout} disabled={enviando}
                     style={{ background: "#15803d", color: "#fff", border: "none", borderRadius: 10, padding: "14px 32px", fontSize: 14, fontWeight: 600, cursor: enviando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: enviando ? 0.7 : 1 }}>
                     {enviando ? "Enviando..." : "Fazer pedido"}
                   </button>
@@ -437,6 +686,21 @@ export default function ClienteApp({ usuario, onLogout }) {
                       </div>
                       {p.obs && <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 8 }}>Obs: {p.obs}</div>}
 
+                      {/* Endereço */}
+                      {p.endereco_rua && (
+                        <div style={{ fontSize: 11, color: "#57534e", marginBottom: 6, padding: "6px 10px", background: "#fafaf9", borderRadius: 6 }}>
+                          <span style={{ fontWeight: 600 }}>Entrega:</span> {p.endereco_rua}{p.endereco_numero ? `, ${p.endereco_numero}` : ""} — {p.endereco_bairro}
+                          {p.endereco_referencia ? ` (${p.endereco_referencia})` : ""}
+                        </div>
+                      )}
+
+                      {/* Pagamento */}
+                      {p.metodo_pagamento && (
+                        <div style={{ fontSize: 11, color: "#57534e", marginBottom: 8 }}>
+                          <span style={{ fontWeight: 600 }}>Pagamento:</span> {p.metodo_pagamento === "pix" ? "Pix" : p.metodo_pagamento === "credito" ? "Cartão de Crédito" : p.metodo_pagamento === "debito" ? "Cartão de Débito" : p.metodo_pagamento}
+                        </div>
+                      )}
+
                       <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, color: "#15803d" }}>{fmt(p.total)}</div>
                     </div>
                   );
@@ -454,6 +718,16 @@ export default function ClienteApp({ usuario, onLogout }) {
           adicionais={adicionaisDisponiveis}
           onConfirm={confirmarAdicionais}
           onClose={() => setModalAdicional(null)}
+        />
+      )}
+
+      {/* Modal Checkout */}
+      {modalCheckout && (
+        <ModalCheckout
+          enderecosSalvos={enderecosSalvos}
+          totalCarrinho={totalCarrinho}
+          onConfirm={enviarPedido}
+          onClose={() => setModalCheckout(false)}
         />
       )}
 
