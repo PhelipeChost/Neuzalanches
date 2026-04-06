@@ -9,7 +9,7 @@ import Pedidos from "./Pedidos";
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
 const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
 const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" };
-const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
+const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
 
 function AdminConfig() {
   const [emails, setEmails] = useState([]);
@@ -174,13 +174,13 @@ function AdminConfig() {
             Itens extras que o cliente pode adicionar aos produtos de categorias com adicionais habilitados. Ex: Cheddar, Bacon, Ovo.
           </div>
 
-          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
             <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
-              placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1 }} />
+              placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
             <input value={novoAd.preco} onChange={e => setNovoAd({ ...novoAd, preco: e.target.value })}
-              placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110 }} />
+              placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
             <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
-              placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110 }} />
+              placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
             <button onClick={adicionarAdicional} style={cfgBtn}>+ Criar</button>
           </div>
 
@@ -218,9 +218,9 @@ function AdminConfig() {
             Adicione emails que terao acesso admin ao se registrarem.
           </div>
 
-          <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
             <input value={novoEmail} onChange={e => setNovoEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionarEmail()}
-              placeholder="email@exemplo.com" style={{ ...cfgInp, flex: 1 }} />
+              placeholder="email@exemplo.com" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
             <button onClick={adicionarEmail} style={cfgBtn}>+ Convidar</button>
           </div>
 
@@ -328,6 +328,15 @@ export default function App() {
         .nav-pill { padding: 7px 18px; border-radius: 8px; border: none; background: none; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; color: #78716c; transition: all 0.15s; position: relative; }
         .nav-pill:hover { background: #f5f5f4; color: #1c1917; }
         .nav-pill.active { background: #fff; color: #15803d; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .header-nav { display: flex; gap: 2px; background: #f5f5f4; border-radius: 10px; padding: 3px; flex-wrap: wrap; }
+        .app-header { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; min-height: 56px; }
+        @media (max-width: 720px) {
+          .app-header { padding: 8px 16px; gap: 12px; }
+          .header-nav { width: 100%; }
+          .nav-pill { flex: 1 1 120px; min-width: 120px; }
+          .header-user { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+          .logout-btn { flex: 0 0 auto; }
+        }
         .fil { padding: 7px 12px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 12px; outline: none; color: #57534e; background: #fff; cursor: pointer; }
         .fil.ativo { border-color: #15803d; color: #15803d; background: #f0fdf4; font-weight: 500; }
         .btn-add { display: flex; align-items: center; gap: 8px; background: #15803d; color: #fff; border: none; border-radius: 9px; padding: 10px 20px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: background 0.2s; }
@@ -335,7 +344,7 @@ export default function App() {
         .icon-btn { background: none; border: 1px solid #e7e5e4; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; color: #78716c; transition: all 0.15s; }
         .icon-btn:hover { background: #f5f5f4; color: #1c1917; }
         .icon-btn.del:hover { background: #fef2f2; border-color: #fecaca; color: #dc2626; }
-        .search { padding: 8px 14px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; background: #fff; width: 220px; color: #1c1917; }
+        .search { padding: 8px 14px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; background: #fff; width: 100%; max-width: 260px; min-width: 0; color: #1c1917; }
         .search:focus { border-color: #15803d88; }
         .anim { animation: fi 0.25s ease; }
         @keyframes fi { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -348,7 +357,7 @@ export default function App() {
       `}</style>
 
       {/* Header Admin */}
-      <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", height: 56, display: "flex", alignItems: "center", gap: 20, position: "sticky", top: 0, zIndex: 50 }}>
+      <header className="app-header" style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", height: "auto", minHeight: 56, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Painel Admin</span>
@@ -357,7 +366,7 @@ export default function App() {
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
         {/* Nav admin */}
-        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3 }}>
+        <div className="header-nav" style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
           {adminNav.map(n => (
             <button key={n.key} className={`nav-pill ${adminTab === n.key ? "active" : ""}`} onClick={() => setAdminTab(n.key)}>
               {n.label}
@@ -370,14 +379,16 @@ export default function App() {
           ))}
         </div>
 
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1, minWidth: 0 }} />
 
-        <div style={{ fontSize: 12, color: "#78716c" }}>
-          {usuario.nome} <span style={{ background: "#f0fdf4", color: "#15803d", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, marginLeft: 4 }}>ADMIN</span>
+        <div className="header-user" style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 12, color: "#78716c" }}>
+            {usuario.nome} <span style={{ background: "#f0fdf4", color: "#15803d", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, marginLeft: 4 }}>ADMIN</span>
+          </div>
+          <button className="logout-btn" onClick={handleLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+            Sair
+          </button>
         </div>
-        <button onClick={handleLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-          Sair
-        </button>
       </header>
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>

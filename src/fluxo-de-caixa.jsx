@@ -158,7 +158,7 @@ function ModalLancamento({ onSave, onClose, editando }) {
             </div>
           ))}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
             <div>
               <label style={lbl}>Data</label>
               <input style={inp} type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} />
@@ -458,12 +458,12 @@ export default function FluxoCaixa() {
     <div className="anim">
       {/* Sub-navegação financeira + controles */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3 }}>
+        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", width: "100%", maxWidth: 900 }}>
           {nav.map(n => (
             <button key={n.key} className={`nav-pill ${tab === n.key ? "active" : ""}`} onClick={() => setTab(n.key)}>{n.label}</button>
           ))}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 12, color: "#a8a29e" }}>Mês:</span>
             <input type="month" className="mes-sel" value={mesSel} onChange={e => setMesSel(e.target.value)} />
@@ -477,7 +477,7 @@ export default function FluxoCaixa() {
         {/* ── VISÃO GERAL ──────────────────────────────────────────────────── */}
         {tab === "visao-geral" && (
           <div className="anim">
-            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
               <div className="saldo-card">
                 <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 600, letterSpacing: "0.08em", marginBottom: 10 }}>SALDO ATUAL</div>
                 <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 34, fontWeight: 600, lineHeight: 1 }}>{fmt(saldoAtual)}</div>
@@ -505,7 +505,7 @@ export default function FluxoCaixa() {
               ))}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 14, marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
               <div className="card">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>Entradas × Saídas</div>
@@ -569,7 +569,7 @@ export default function FluxoCaixa() {
         {tab === "indicadores" && (
           <div className="anim">
             {/* KPI Cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
               {[
                 { label: "RECEITA TOTAL", valor: fmt(receitaVendas), cor: "#2563eb", desc: `${pedidosMes.length} pedidos entregues` },
                 { label: "CMV TOTAL", valor: fmt(cmvTotal), cor: "#f59e0b", desc: "Custo das mercadorias vendidas" },
@@ -585,7 +585,7 @@ export default function FluxoCaixa() {
             </div>
 
             {/* Segunda linha de KPIs */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 20 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
               {[
                 { label: "MARKUP", valor: `${markup.toFixed(1)}%`, cor: "#7c3aed", desc: "Margem sobre o custo" },
                 { label: "TICKET MEDIO", valor: fmt(ticketMedio), cor: "#2563eb", desc: "Valor medio por pedido" },
@@ -601,7 +601,7 @@ export default function FluxoCaixa() {
             </div>
 
             {/* Gráficos */}
-            <div style={{ display: "grid", gridTemplateColumns: "1.3fr 0.7fr", gap: 14, marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
               {/* Gráfico Receita vs CMV */}
               <div className="card">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
@@ -708,7 +708,7 @@ export default function FluxoCaixa() {
               <div style={{ fontSize: 12, color: "#a8a29e" }}>{lancamentosFiltrados.length} registros</div>
             </div>
 
-            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <div className="card" style={{ padding: 0, overflowX: "auto" }}>
               <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 110px 110px 100px 90px 80px", gap: 0, padding: "10px 16px", borderBottom: "1px solid #f5f5f4", background: "#fafaf9" }}>
                 {["Data", "Descrição", "Categoria", "Valor", "Tipo", "Status", ""].map(h => (
                   <div key={h} style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em" }}>{h.toUpperCase()}</div>
@@ -762,7 +762,7 @@ export default function FluxoCaixa() {
         {/* ── CATEGORIAS ───────────────────────────────────────────────────── */}
         {tab === "categorias" && (
           <div className="anim">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
               {["entrada", "saida"].map(tipo => {
                 const cats = categorias.filter(c => c[tipo] > 0).sort((a, b) => b[tipo] - a[tipo]);
                 const total = cats.reduce((s, c) => s + c[tipo], 0);
@@ -805,7 +805,7 @@ export default function FluxoCaixa() {
               })}
             </div>
 
-            <div className="card" style={{ marginTop: 14, padding: 0, overflow: "hidden" }}>
+            <div className="card" style={{ marginTop: 14, padding: 0, overflowX: "auto" }}>
               <div style={{ padding: "12px 18px", borderBottom: "1px solid #f5f5f4", fontSize: 13, fontWeight: 600 }}>Resumo por categoria</div>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
@@ -837,7 +837,7 @@ export default function FluxoCaixa() {
         {/* ── PROJEÇÃO ─────────────────────────────────────────────────────── */}
         {tab === "projecao" && (
           <div className="anim">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 16 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14, marginBottom: 16 }}>
               {[
                 { label: "SALDO ATUAL", valor: saldoAtual, cor: corSaldo, desc: "Baseado nos lançamentos realizados" },
                 { label: "PREVISÃO DE ENTRADAS", valor: lancamentos.filter(l => l.tipo === "entrada" && l.status === "previsto" && l.data.startsWith(mesSel)).reduce((s, l) => s + l.valor, 0), cor: "#15803d", desc: "Lançamentos previstos não realizados" },
@@ -888,7 +888,7 @@ export default function FluxoCaixa() {
 
             <div className="card">
               <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 18 }}>Indicadores financeiros</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 20 }}>
                 {[
                   { label: "Margem do mês", valor: entradas > 0 ? `${Math.round((saldoMes / entradas) * 100)}%` : "—", desc: "Lucro sobre receita", cor: saldoMes / (entradas || 1) > 0.2 ? "#15803d" : "#d97706" },
                   { label: "Taxa de realização", valor: lancamentosMes.length > 0 ? `${Math.round((lancamentosMes.filter(l => l.status === "realizado").length / lancamentosMes.length) * 100)}%` : "—", desc: "Lançamentos confirmados", cor: "#2563eb" },

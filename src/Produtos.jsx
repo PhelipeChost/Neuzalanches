@@ -121,7 +121,7 @@ function ModalProduto({ onSave, onClose, editando, categorias }) {
             <label style={lbl}>Descrição</label>
             <input style={inp} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Breve descrição do produto" />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             <div>
               <label style={lbl}>Preço de venda (R$)</label>
               <input style={inp} type="number" step="0.01" value={form.preco} onChange={e => setForm({ ...form, preco: e.target.value })} placeholder="0,00" />
@@ -224,14 +224,14 @@ export default function Produtos() {
 
   return (
     <div className="anim">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Produtos</div>
           <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{produtos.length} produtos cadastrados</div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} />
-          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
+          <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} style={{ flex: 1, minWidth: 0, width: "100%" }} />
+          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24", flex: "0 0 auto" }}>
             <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo produto
           </button>
         </div>

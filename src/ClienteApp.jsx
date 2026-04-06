@@ -481,13 +481,22 @@ export default function ClienteApp({ usuario, onLogout }) {
         .nav-pill { padding: 7px 18px; border-radius: 8px; border: none; background: none; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 13px; color: #78716c; transition: all 0.15s; }
         .nav-pill:hover { background: #f5f5f4; color: #1c1917; }
         .nav-pill.active { background: #fff; color: #15803d; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+        .header-nav { display: flex; gap: 2px; background: #f5f5f4; border-radius: 10px; padding: 3px; flex-wrap: wrap; }
+        .client-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; min-height: 56px; }
+        @media (max-width: 720px) {
+          .client-header { padding: 8px 16px; gap: 12px; }
+          .header-nav { width: 100%; }
+          .nav-pill { flex: 1 1 120px; min-width: 120px; }
+          .client-user { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+          .logout-btn { flex: 0 0 auto; }
+        }
         .anim { animation: fi 0.25s ease; }
         @keyframes fi { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         .toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: 10px; font-size: 13px; font-weight: 500; z-index: 999; animation: fi 0.3s ease; color: #fff; }
       `}</style>
 
       {/* Header */}
-      <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 24px", height: 56, display: "flex", alignItems: "center", gap: 16, position: "sticky", top: 0, zIndex: 50 }}>
+      <header className="client-header" style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 24px", height: "auto", minHeight: 56, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 700 }}>NeuzaLanches</span>
@@ -495,18 +504,20 @@ export default function ClienteApp({ usuario, onLogout }) {
 
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
-        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3 }}>
+        <div className="header-nav" style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
           {[["catalogo", "Cardapio"], ["carrinho", `Carrinho (${carrinho.length})`], ["pedidos", "Meus Pedidos"]].map(([k, v]) => (
             <button key={k} className={`nav-pill ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{v}</button>
           ))}
         </div>
 
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1, minWidth: 0 }} />
 
-        <div style={{ fontSize: 12, color: "#78716c" }}>Ola, {usuario.nome.split(" ")[0]}</div>
-        <button onClick={onLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-          Sair
-        </button>
+        <div className="client-user" style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 12, color: "#78716c" }}>Ola, {usuario.nome.split(" ")[0]}</div>
+          <button className="logout-btn" onClick={onLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+            Sair
+          </button>
+        </div>
       </header>
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px" }}>
