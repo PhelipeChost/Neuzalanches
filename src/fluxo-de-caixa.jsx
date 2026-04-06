@@ -137,7 +137,7 @@ function ModalLancamento({ onSave, onClose, editando }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 480, boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500 }}>{editando ? "Editar" : "Novo"} Lançamento</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 500 }}>{editando ? "Editar" : "Novo"} Lançamento</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e", lineHeight: 1 }}>×</button>
         </div>
 
@@ -216,7 +216,7 @@ function ModalSaldoInicial({ valorAtual, onSave, onClose }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 380, boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
-        <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500, marginBottom: 18 }}>Saldo Inicial</div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 500, marginBottom: 18 }}>Saldo Inicial</div>
         <label style={lbl}>Valor (R$)</label>
         <input style={inp} type="number" value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
@@ -468,7 +468,7 @@ export default function FluxoCaixa() {
             <span style={{ fontSize: 12, color: "#a8a29e" }}>Mês:</span>
             <input type="month" className="mes-sel" value={mesSel} onChange={e => setMesSel(e.target.value)} />
           </div>
-          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }}>
+          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24" }}>
             <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo lançamento
           </button>
         </div>
@@ -480,7 +480,7 @@ export default function FluxoCaixa() {
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 14, marginBottom: 20 }}>
               <div className="saldo-card">
                 <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 600, letterSpacing: "0.08em", marginBottom: 10 }}>SALDO ATUAL</div>
-                <div style={{ fontFamily: "'Fraunces', serif", fontSize: 34, fontWeight: 600, lineHeight: 1 }}>{fmt(saldoAtual)}</div>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 34, fontWeight: 600, lineHeight: 1 }}>{fmt(saldoAtual)}</div>
                 <div style={{ fontSize: 11, opacity: 0.6, marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
                   Saldo inicial: {fmt(saldoInicial)}
                   <button className="saldo-edit-btn" onClick={() => setModalSaldo(true)}>Editar</button>
@@ -498,7 +498,7 @@ export default function FluxoCaixa() {
               ].map(m => (
                 <div key={m.label} className="metric">
                   <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{m.label}</div>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{fmt(m.valor)}</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{fmt(m.valor)}</div>
                   <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6 }}>{m.sub}</div>
                   <MiniBar pct={m.pct} cor={m.cor} />
                 </div>
@@ -578,7 +578,7 @@ export default function FluxoCaixa() {
               ].map(m => (
                 <div key={m.label} className="metric">
                   <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{m.label}</div>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{m.valor}</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{m.valor}</div>
                   <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6 }}>{m.desc}</div>
                 </div>
               ))}
@@ -594,7 +594,7 @@ export default function FluxoCaixa() {
               ].map(m => (
                 <div key={m.label} className="metric">
                   <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{m.label}</div>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{m.valor}</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{m.valor}</div>
                   <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6 }}>{m.desc}</div>
                 </div>
               ))}
@@ -751,7 +751,7 @@ export default function FluxoCaixa() {
                 ].map(([l, v, c]) => (
                   <div key={l} style={{ textAlign: "right" }}>
                     <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em" }}>{l.toUpperCase()}</div>
-                    <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, color: c }}>{fmt(v)}</div>
+                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 500, color: c }}>{fmt(v)}</div>
                   </div>
                 ))}
               </div>
@@ -775,7 +775,7 @@ export default function FluxoCaixa() {
                   <div key={tipo} className="card">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
                       <div style={{ fontSize: 13, fontWeight: 600 }}>{tipo === "entrada" ? "↑ Receitas" : "↓ Despesas"} por categoria</div>
-                      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, color: cor, fontWeight: 500 }}>{fmt(total)}</div>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, color: cor, fontWeight: 500 }}>{fmt(total)}</div>
                     </div>
 
                     {cats.length === 0 ? (
@@ -845,7 +845,7 @@ export default function FluxoCaixa() {
               ].map(m => (
                 <div key={m.label} className="metric">
                   <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{m.label}</div>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 26, fontWeight: 500, color: m.cor }}>{fmt(m.valor)}</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 26, fontWeight: 500, color: m.cor }}>{fmt(m.valor)}</div>
                   <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6 }}>{m.desc}</div>
                 </div>
               ))}
@@ -863,7 +863,7 @@ export default function FluxoCaixa() {
                 return (
                   <div key={m} style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, padding: "14px 16px", background: isAtual ? "#f0fdf4" : "#fafaf9", borderRadius: 10, border: isAtual ? "1.5px solid #bbf7d0" : "1.5px solid transparent" }}>
                     <div style={{ width: 52, textAlign: "center" }}>
-                      <div style={{ fontSize: 18, fontFamily: "'Fraunces', serif", fontWeight: 500 }}>{nomeMes}</div>
+                      <div style={{ fontSize: 18, fontFamily: "'Inter', sans-serif", fontWeight: 500 }}>{nomeMes}</div>
                       {isAtual && <div style={{ fontSize: 9, color: "#15803d", fontWeight: 600, letterSpacing: "0.08em" }}>ATUAL</div>}
                       {idx > 0 && <div style={{ fontSize: 9, color: "#a8a29e", letterSpacing: "0.06em" }}>PREVISTO</div>}
                     </div>
@@ -879,7 +879,7 @@ export default function FluxoCaixa() {
                     </div>
                     <div style={{ textAlign: "right", minWidth: 100 }}>
                       <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 2 }}>RESULTADO</div>
-                      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500, color: sal >= 0 ? "#15803d" : "#dc2626" }}>{fmt(sal)}</div>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: sal >= 0 ? "#15803d" : "#dc2626" }}>{fmt(sal)}</div>
                     </div>
                   </div>
                 );
@@ -896,7 +896,7 @@ export default function FluxoCaixa() {
                 ].map(i => (
                   <div key={i.label} style={{ textAlign: "center", padding: "16px", background: "#fafaf9", borderRadius: 10 }}>
                     <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{i.label.toUpperCase()}</div>
-                    <div style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 500, color: i.cor }}>{i.valor}</div>
+                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 500, color: i.cor }}>{i.valor}</div>
                     <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>{i.desc}</div>
                   </div>
                 ))}

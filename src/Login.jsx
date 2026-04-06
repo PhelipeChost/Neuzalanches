@@ -40,10 +40,8 @@ export default function Login({ onLogin }) {
       <div style={{ background: "#fff", borderRadius: 16, padding: "36px 34px", width: 420, border: "1px solid #e7e5e4", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ width: 44, height: 44, background: "#15803d", borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-            <span style={{ color: "#fff", fontSize: 22 }}>$</span>
-          </div>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600 }}>Fluxo de Caixa</div>
+          <img src="/logo.png" alt="NeuzaLanches" style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", marginBottom: 12 }} />
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700 }}>NeuzaLanches</div>
           <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>
             {modo === "login" ? "Acesse sua conta" : "Crie sua conta"}
           </div>
@@ -89,7 +87,7 @@ export default function Login({ onLogin }) {
           )}
 
           <button type="submit" disabled={carregando}
-            style={{ padding: 12, background: "#15803d", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: carregando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", marginTop: 4, opacity: carregando ? 0.7 : 1, transition: "opacity 0.15s" }}>
+            style={{ padding: 12, background: "#F38C24", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: carregando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", marginTop: 4, opacity: carregando ? 0.7 : 1, transition: "opacity 0.15s" }}>
             {carregando ? "Aguarde..." : modo === "login" ? "Entrar" : "Criar conta"}
           </button>
         </form>

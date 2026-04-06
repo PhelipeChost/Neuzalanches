@@ -111,7 +111,7 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
 
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500 }}>Finalizar Pedido</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Finalizar Pedido</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>x</button>
         </div>
 
@@ -489,10 +489,8 @@ export default function ClienteApp({ usuario, onLogout }) {
       {/* Header */}
       <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 24px", height: 56, display: "flex", alignItems: "center", gap: 16, position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 30, height: 30, background: "#15803d", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#fff", fontSize: 15 }}>$</span>
-          </div>
-          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 600 }}>Cardapio</span>
+          <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
+          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 700 }}>NeuzaLanches</span>
         </div>
 
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
@@ -524,25 +522,25 @@ export default function ClienteApp({ usuario, onLogout }) {
               <>
                 {categoriasUnicas.length > 0 ? categoriasUnicas.map(cat => (
                   <div key={cat} style={{ marginBottom: 24 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#57534e", marginBottom: 10, padding: "4px 0", borderBottom: "1px solid #e7e5e4" }}>{cat}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: cat === "Lanches" ? "#F38C24" : "#57534e", marginBottom: 10, padding: "4px 0", borderBottom: "1px solid #e7e5e4" }}>{cat}</div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
                       {produtos.filter(p => p.categoria === cat).map(p => (
                         <div key={p.id} className="card" style={{ padding: "16px 18px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
                           <div style={{ display: "flex", gap: 12 }}>
                             <ImagemProduto src={p.imagem} tamanho={64} borderRadius={10} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nome}</div>
+                              <div style={{ fontSize: 14, fontWeight: 600, color: p.categoria === "Lanches" ? "#7B4532" : "inherit" }}>{p.nome}</div>
                               {p.descricao && <div style={{ fontSize: 12, color: "#78716c", marginTop: 4 }}>{p.descricao}</div>}
                             </div>
                           </div>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
                             <div>
-                              <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500, color: "#15803d" }}>{fmt(p.preco)}</span>
+                              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>{fmt(p.preco)}</span>
                               {catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.length > 0 && (
                                 <div style={{ fontSize: 10, color: "#78716c", marginTop: 2 }}>Adicionais disponiveis</div>
                               )}
                             </div>
-                            <button onClick={() => handleAddProduto(p)} style={{ background: "#15803d", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                            <button onClick={() => handleAddProduto(p)} style={{ background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
                               + Adicionar
                             </button>
                           </div>
@@ -557,13 +555,13 @@ export default function ClienteApp({ usuario, onLogout }) {
                         <div style={{ display: "flex", gap: 12 }}>
                           <ImagemProduto src={p.imagem} tamanho={64} borderRadius={10} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 14, fontWeight: 600 }}>{p.nome}</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: p.categoria === "Lanches" ? "#7B4532" : "inherit" }}>{p.nome}</div>
                             {p.descricao && <div style={{ fontSize: 12, color: "#78716c", marginTop: 4 }}>{p.descricao}</div>}
                           </div>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-                          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500, color: "#15803d" }}>{fmt(p.preco)}</span>
-                          <button onClick={() => handleAddProduto(p)} style={{ background: "#15803d", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>{fmt(p.preco)}</span>
+                          <button onClick={() => handleAddProduto(p)} style={{ background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
                             + Adicionar
                           </button>
                         </div>
@@ -579,13 +577,13 @@ export default function ClienteApp({ usuario, onLogout }) {
         {/* CARRINHO */}
         {tab === "carrinho" && (
           <div className="anim">
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500, marginBottom: 16 }}>Seu Carrinho</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Seu Carrinho</div>
 
             {carrinho.length === 0 ? (
               <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e" }}>
                 Seu carrinho esta vazio. Adicione produtos do cardapio.
                 <div style={{ marginTop: 12 }}>
-                  <button onClick={() => setTab("catalogo")} style={{ background: "#15803d", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                  <button onClick={() => setTab("catalogo")} style={{ background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
                     Ver cardapio
                   </button>
                 </div>
@@ -614,7 +612,7 @@ export default function ClienteApp({ usuario, onLogout }) {
                         <button onClick={() => updateQtd(item._uid, item.quantidade - 1)} style={{ width: 28, height: 28, border: "1px solid #e7e5e4", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>-</button>
                         <span style={{ fontSize: 14, fontWeight: 600, minWidth: 24, textAlign: "center" }}>{item.quantidade}</span>
                         <button onClick={() => updateQtd(item._uid, item.quantidade + 1)} style={{ width: 28, height: 28, border: "1px solid #e7e5e4", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>+</button>
-                        <span style={{ fontFamily: "'Fraunces', serif", fontSize: 16, fontWeight: 500, color: "#15803d", minWidth: 90, textAlign: "right" }}>{fmt(itemTotal)}</span>
+                        <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 600, color: "#15803d", minWidth: 90, textAlign: "right" }}>{fmt(itemTotal)}</span>
                       </div>
                     </div>
                   );
@@ -631,7 +629,7 @@ export default function ClienteApp({ usuario, onLogout }) {
                 <div style={{ padding: "18px", borderTop: "2px solid #e7e5e4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <div style={{ fontSize: 11, color: "#a8a29e", fontWeight: 600 }}>TOTAL</div>
-                    <div style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, color: "#15803d" }}>{fmt(totalCarrinho)}</div>
+                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 700, color: "#15803d" }}>{fmt(totalCarrinho)}</div>
                   </div>
                   <button onClick={abrirCheckout} disabled={enviando}
                     style={{ background: "#15803d", color: "#fff", border: "none", borderRadius: 10, padding: "14px 32px", fontSize: 14, fontWeight: 600, cursor: enviando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: enviando ? 0.7 : 1 }}>
@@ -646,7 +644,7 @@ export default function ClienteApp({ usuario, onLogout }) {
         {/* MEUS PEDIDOS */}
         {tab === "pedidos" && (
           <div className="anim">
-            <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500, marginBottom: 16 }}>Meus Pedidos</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Meus Pedidos</div>
 
             {pedidos.length === 0 ? (
               <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e" }}>
@@ -661,7 +659,7 @@ export default function ClienteApp({ usuario, onLogout }) {
                     <div key={p.id} className="card">
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                         <div>
-                          <span style={{ fontSize: 14, fontWeight: 600 }}>Pedido #{p.id.slice(0, 6)}</span>
+                          <span style={{ fontSize: 14, fontWeight: 600, color: "#7B4532" }}>Pedido #{p.id.slice(0, 6)}</span>
                           <span style={{ fontSize: 11, color: "#a8a29e", marginLeft: 8 }}>{new Date(p.created_at).toLocaleString("pt-BR")}</span>
                         </div>
                         <span style={{ background: STATUS_CORES[p.status].bg, color: STATUS_CORES[p.status].color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
@@ -701,7 +699,7 @@ export default function ClienteApp({ usuario, onLogout }) {
                         </div>
                       )}
 
-                      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, color: "#15803d" }}>{fmt(p.total)}</div>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#15803d" }}>{fmt(p.total)}</div>
                     </div>
                   );
                 })}

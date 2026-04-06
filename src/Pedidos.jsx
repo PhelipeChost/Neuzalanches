@@ -122,7 +122,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 560, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500 }}>Pedido Manual (Presencial)</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Pedido Manual (Presencial)</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>x</button>
         </div>
 
@@ -187,7 +187,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
             ))}
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTop: "2px solid #e7e5e4" }}>
               <span style={{ fontSize: 14, fontWeight: 600 }}>Total</span>
-              <span style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 600, color: "#15803d" }}>{fmt(total)}</span>
+              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: "#15803d" }}>{fmt(total)}</span>
             </div>
           </div>
         )}
@@ -199,7 +199,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
 
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
-          <button onClick={salvar} disabled={salvando || itens.length === 0} style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (salvando || itens.length === 0) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (salvando || itens.length === 0) ? 0.5 : 1 }}>
+          <button onClick={salvar} disabled={salvando || itens.length === 0} style={{ flex: 2, padding: 11, background: "#F38C24", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (salvando || itens.length === 0) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (salvando || itens.length === 0) ? 0.5 : 1 }}>
             {salvando ? "Registrando..." : `Registrar pedido — ${fmt(total)}`}
           </button>
         </div>
@@ -388,7 +388,7 @@ export default function Pedidos() {
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500 }}>Pedidos</div>
           <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{pedidos.length} pedidos no total</div>
         </div>
-        <button className="btn-add" onClick={() => setModalManual(true)}>
+        <button className="btn-add" onClick={() => setModalManual(true)} style={{ background: "#F38C24" }}>
           <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Pedido manual
         </button>
       </div>
@@ -432,7 +432,7 @@ export default function Pedidos() {
                       {new Date(p.created_at).toLocaleString("pt-BR")} . {p.itens?.length || 0} {p.itens?.length === 1 ? "item" : "itens"}
                     </div>
                   </div>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 500, color: "#1c1917", marginRight: 12 }}>{fmt(p.total)}</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#1c1917", marginRight: 12 }}>{fmt(p.total)}</div>
                   <span style={{ fontSize: 14, color: "#a8a29e", transform: aberto ? "rotate(180deg)" : "", transition: "transform 0.2s" }}>▼</span>
                 </div>
 

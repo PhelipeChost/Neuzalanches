@@ -79,7 +79,7 @@ function ModalProduto({ onSave, onClose, editando, categorias }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500 }}>{editando ? "Editar" : "Novo"} Produto</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>{editando ? "Editar" : "Novo"} Produto</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
         </div>
 
@@ -226,12 +226,12 @@ export default function Produtos() {
     <div className="anim">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
-          <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500 }}>Produtos</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Produtos</div>
           <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{produtos.length} produtos cadastrados</div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} />
-          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }}>
+          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24" }}>
             <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo produto
           </button>
         </div>
@@ -249,7 +249,7 @@ export default function Produtos() {
                 <ImagemProduto src={p.imagem} tamanho={72} borderRadius={10} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "#1c1917" }}>{p.nome}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: p.categoria === "Lanches" ? "#7B4532" : "#1c1917" }}>{p.nome}</div>
                     <span style={{ background: p.disponivel ? "#dcfce7" : "#fee2e2", color: p.disponivel ? "#15803d" : "#dc2626", padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
                       {p.disponivel ? "Disponível" : "Indisponível"}
                     </span>
@@ -260,7 +260,7 @@ export default function Produtos() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <div style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 500, color: "#15803d" }}>{fmt(p.preco)}</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>{fmt(p.preco)}</div>
                   {p.custo > 0 && <div style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmt(p.custo)}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>

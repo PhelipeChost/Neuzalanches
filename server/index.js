@@ -426,6 +426,6 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
 
 // ─── START ──────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor API rodando em http://localhost:${PORT}`);
 });

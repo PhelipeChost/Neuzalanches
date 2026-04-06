@@ -7,7 +7,7 @@ import Produtos from "./Produtos";
 import Pedidos from "./Pedidos";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
-const cfgBtn = { background: "#15803d", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
+const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
 const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" };
 const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
 
@@ -120,7 +120,7 @@ function AdminConfig() {
 
   return (
     <div className="anim">
-      <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500, marginBottom: 4 }}>Configuracoes</div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600, marginBottom: 4 }}>Configuracoes</div>
       <div style={{ fontSize: 12, color: "#a8a29e", marginBottom: 24 }}>Gerencie categorias, adicionais e acessos administrativos</div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
@@ -350,10 +350,8 @@ export default function App() {
       {/* Header Admin */}
       <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", height: 56, display: "flex", alignItems: "center", gap: 20, position: "sticky", top: 0, zIndex: 50 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 30, height: 30, background: "#15803d", borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#fff", fontSize: 15 }}>$</span>
-          </div>
-          <span style={{ fontFamily: "'Fraunces', serif", fontSize: 17, fontWeight: 600 }}>Painel Admin</span>
+          <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
+          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Painel Admin</span>
         </div>
 
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
