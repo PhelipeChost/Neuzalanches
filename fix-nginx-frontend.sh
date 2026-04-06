@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script para configurar Nginx com SSL/HTTPS, servir frontend Vite e proxy para Node.js API
+# Script para corrigir configuração Nginx - servir frontend + API backend
 
 cat > /etc/nginx/sites-available/neuzalanches << 'EOL'
 # Redirecionar HTTP para HTTPS
@@ -86,16 +86,15 @@ server {
 }
 EOL
 
-# Remover configuração padrão se existir
-rm -f /etc/nginx/sites-enabled/default
-
-# Criar symlink
-ln -sf /etc/nginx/sites-available/neuzalanches /etc/nginx/sites-enabled/neuzalanches
-
 # Testar configuração
+echo "Testando configuração Nginx..."
 nginx -t
 
-# Recarregar Nginx
-systemctl reload nginx
-
-echo "✅ Nginx configurado com SSL/HTTPS, frontend Vite e API backend"
+if [ $? -eq 0 ]; then
+    # Recarregar Nginx
+    systemctl reload nginx
+    echo "✅ Nginx recarregado com sucesso"
+else
+    echo "❌ Erro na configuração Nginx"
+    exit 1
+fi
