@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script para configurar Nginx com SSL/HTTPS, servir frontend Vite e proxy para Node.js API
+# Script para corrigir Nginx - servir assets corretamente
 
 cat > /etc/nginx/sites-available/neuzalanches << 'EOL'
 # Redirecionar HTTP para HTTPS
@@ -89,22 +89,13 @@ server {
 }
 EOL
 
-# Remover configuração padrão se existir
-rm -f /etc/nginx/sites-enabled/default
-
-# Criar symlink
-ln -sf /etc/nginx/sites-available/neuzalanches /etc/nginx/sites-enabled/neuzalanches
-
-# Corrigir permissões do Vite build
-chmod -R 755 /var/www/neuzalanches/dist
-chmod -R 644 /var/www/neuzalanches/dist/*
-find /var/www/neuzalanches/dist -type d -exec chmod 755 {} \;
-
-# Testar configuração
+echo "Testando configuração..."
 nginx -t
 
-# Recarregar Nginx
-systemctl reload nginx
-
-echo "✅ Nginx configurado com SSL/HTTPS, frontend Vite e API backend"
-echo "✅ Permissões ajustadas para www-data acessar assets"
+if [ $? -eq 0 ]; then
+    systemctl reload nginx
+    echo "✅ Nginx recarregado com sucesso"
+else
+    echo "❌ Erro na configuração"
+    exit 1
+fi
