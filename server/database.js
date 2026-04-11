@@ -18,10 +18,10 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS usuarios (
     id TEXT PRIMARY KEY,
     nome TEXT NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE,
     senha TEXT NOT NULL,
     tipo TEXT NOT NULL DEFAULT 'cliente' CHECK(tipo IN ('admin', 'cliente')),
-    telefone TEXT DEFAULT '',
+    telefone TEXT UNIQUE,
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -136,6 +136,28 @@ if (!existePixNome) {
   db.prepare("INSERT INTO config (key, value) VALUES ('pix_nome', 'Neuza Lanches')").run();
 }
 
+// Migração: permitir email NULL e telefone UNIQUE na tabela usuarios (para bancos já existentes)
+try {
+  const colsUsuarios = db.prepare("PRAGMA table_info(usuarios)").all();
+  const emailCol = colsUsuarios.find(c => c.name === "email");
+  if (emailCol && emailCol.notnull === 1) {
+    db.exec(`
+      CREATE TABLE usuarios_new (
+        id TEXT PRIMARY KEY,
+        nome TEXT NOT NULL,
+        email TEXT UNIQUE,
+        senha TEXT NOT NULL,
+        tipo TEXT NOT NULL DEFAULT 'cliente' CHECK(tipo IN ('admin', 'cliente')),
+        telefone TEXT UNIQUE,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO usuarios_new SELECT id, nome, NULLIF(email,''), senha, tipo, NULLIF(telefone,''), created_at FROM usuarios;
+      DROP TABLE usuarios;
+      ALTER TABLE usuarios_new RENAME TO usuarios;
+    `);
+  }
+} catch (e) { /* migration already done */ }
+
 // Migração: adicionar colunas novas na tabela pedidos (para bancos já existentes)
 const colsPedidos = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
 if (!colsPedidos.includes("metodo_pagamento")) {
@@ -221,7 +243,7 @@ export function criarUsuario({ nome, email, senha, tipo, telefone }) {
   const id = gerarId();
   db.prepare(
     "INSERT INTO usuarios (id, nome, email, senha, tipo, telefone) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(id, nome, email, senha, tipo || "cliente", telefone || "");
+  ).run(id, nome, email || null, senha, tipo || "cliente", telefone || null);
   return buscarUsuarioPorId(id);
 }
 
@@ -435,7 +457,7 @@ export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo, metodo
 
   // Calcular total considerando adicionais
   const total = itens.reduce((s, item) => {
-    const adicionaisTotal = (item.adicionais || []).reduce((a, ad) => a + ad.preco, 0);
+    const adicionaisTotal = (item.adicionais || []).reduce((a, ad) => a + ad.preco * (ad.quantidade || 1), 0);
     return s + (item.preco_unitario + adicionaisTotal) * item.quantidade;
   }, 0);
 
@@ -459,7 +481,7 @@ export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo, metodo
         const adDB = buscarAdicional(ad.id);
         return { ...ad, custo: adDB ? adDB.custo : 0 };
       });
-      const custoAdicionais = adicionaisComCusto.reduce((s, a) => s + (a.custo || 0), 0);
+      const custoAdicionais = adicionaisComCusto.reduce((s, a) => s + (a.custo || 0) * (a.quantidade || 1), 0);
       const custoTotal = custoProduto + custoAdicionais;
 
       inserirItem.run(

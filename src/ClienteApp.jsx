@@ -268,15 +268,21 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
 function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
   const [selecionados, setSelecionados] = useState([]);
 
-  const toggle = (ad) => {
-    setSelecionados(prev =>
-      prev.find(s => s.id === ad.id)
-        ? prev.filter(s => s.id !== ad.id)
-        : [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco }]
-    );
+  const updateQtdAd = (ad, delta) => {
+    setSelecionados(prev => {
+      const existing = prev.find(s => s.id === ad.id);
+      if (existing) {
+        const newQtd = existing.quantidade + delta;
+        if (newQtd <= 0) return prev.filter(s => s.id !== ad.id);
+        return prev.map(s => s.id === ad.id ? { ...s, quantidade: newQtd } : s);
+      } else if (delta > 0) {
+        return [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco, quantidade: 1 }];
+      }
+      return prev;
+    });
   };
 
-  const totalAdicionais = selecionados.reduce((s, a) => s + a.preco, 0);
+  const totalAdicionais = selecionados.reduce((s, a) => s + a.preco * a.quantidade, 0);
   const totalItem = produto.preco + totalAdicionais;
 
   return (
@@ -302,17 +308,24 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
             {adicionais.map(ad => {
-              const ativo = selecionados.find(s => s.id === ad.id);
+              const sel = selecionados.find(s => s.id === ad.id);
+              const qtd = sel ? sel.quantidade : 0;
               return (
-                <label key={ad.id} style={{
+                <div key={ad.id} style={{
                   display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
-                  background: ativo ? "#f0fdf4" : "#fff", border: `1.5px solid ${ativo ? "#86efac" : "#e7e5e4"}`,
-                  borderRadius: 10, cursor: "pointer", transition: "all 0.15s"
+                  background: qtd > 0 ? "#f0fdf4" : "#fff", border: `1.5px solid ${qtd > 0 ? "#86efac" : "#e7e5e4"}`,
+                  borderRadius: 10, transition: "all 0.15s"
                 }}>
-                  <input type="checkbox" checked={!!ativo} onChange={() => toggle(ad)} style={{ accentColor: "#15803d" }} />
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{ad.nome}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>+ {fmt(ad.preco)}</span>
-                </label>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0}
+                      style={{ width: 26, height: 26, border: "1px solid #e7e5e4", borderRadius: 6, background: "#fff", cursor: qtd > 0 ? "pointer" : "default", fontSize: 14, lineHeight: 1, color: qtd > 0 ? "#1c1917" : "#d6d3d1" }}>-</button>
+                    <span style={{ fontSize: 13, fontWeight: 600, minWidth: 20, textAlign: "center" }}>{qtd}</span>
+                    <button onClick={() => updateQtdAd(ad, 1)}
+                      style={{ width: 26, height: 26, border: "1px solid #e7e5e4", borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>+</button>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -407,7 +420,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
 
   const addCarrinhoSimples = (produto, adicionaisSelecionados) => {
     const adTotal = adicionaisSelecionados.reduce((s, a) => s + a.preco, 0);
-    const adKey = adicionaisSelecionados.map(a => a.id).sort().join(",");
+    const adKey = adicionaisSelecionados.map(a => `${a.id}:${a.quantidade || 1}`).sort().join(",");
 
     // Verificar se já tem o mesmo produto com os mesmos adicionais
     const existente = carrinho.find(i => i.produto_id === produto.id && (i._adKey || "") === adKey);
@@ -469,7 +482,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
   };
 
   const calcItemTotal = (item) => {
-    const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco, 0);
+    const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
     return (item.preco_unitario + adTotal) * item.quantidade;
   };
 
@@ -654,7 +667,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
             ) : (
               <div className="card" style={{ padding: 0 }}>
                 {carrinho.map((item, i) => {
-                  const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco, 0);
+                  const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
                   const itemTotal = calcItemTotal(item);
                   return (
                     <div key={item._uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: i < carrinho.length - 1 ? "1px solid #f5f5f4" : "none" }}>
@@ -665,7 +678,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
                           <div style={{ marginTop: 4 }}>
                             {item.adicionais.map(a => (
                               <span key={a.id} style={{ display: "inline-block", background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4, marginRight: 4, marginBottom: 2 }}>
-                                + {a.nome} ({fmt(a.preco)})
+                                {(a.quantidade || 1) > 1 ? `${a.quantidade}x ` : "+ "}{a.nome} ({fmt(a.preco * (a.quantidade || 1))})
                               </span>
                             ))}
                           </div>
@@ -740,7 +753,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
                       <div style={{ fontSize: 12, color: "#78716c", marginBottom: 8 }}>
                         {p.itens?.map((item, idx) => {
                           const adTexto = item.adicionais && item.adicionais.length > 0
-                            ? ` (+ ${item.adicionais.map(a => a.nome).join(", ")})`
+                            ? ` (+ ${item.adicionais.map(a => (a.quantidade || 1) > 1 ? `${a.quantidade}x ${a.nome}` : a.nome).join(", ")})`
                             : "";
                           return `${item.quantidade}x ${item.produto_nome}${adTexto}`;
                         }).join(", ")}

@@ -73,7 +73,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
   };
 
   const addItem = (produto, adicionaisSel) => {
-    const adKey = adicionaisSel.map(a => a.id).sort().join(",");
+    const adKey = adicionaisSel.map(a => `${a.id}:${a.quantidade || 1}`).sort().join(",");
     const existente = itens.find(i => i.produto_id === produto.id && (i._adKey || "") === adKey);
     if (existente) {
       setItens(itens.map(i => i._uid === existente._uid ? { ...i, quantidade: i.quantidade + 1 } : i));
@@ -100,7 +100,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
   };
 
   const calcItemTotal = (item) => {
-    const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco, 0);
+    const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
     return (item.preco_unitario + adTotal) * item.quantidade;
   };
 
@@ -170,7 +170,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
                     <div style={{ marginTop: 2 }}>
                       {item.adicionais.map(a => (
                         <span key={a.id} style={{ display: "inline-block", background: "#f0fdf4", color: "#15803d", fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 3, marginRight: 3 }}>
-                          + {a.nome} ({fmt(a.preco)})
+                          {(a.quantidade || 1) > 1 ? `${a.quantidade}x ` : "+ "}{a.nome} ({fmt(a.preco * (a.quantidade || 1))})
                         </span>
                       ))}
                     </div>
@@ -224,15 +224,21 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
 function ModalAdicionaisInline({ produto, adicionais, onConfirm, onClose }) {
   const [selecionados, setSelecionados] = useState([]);
 
-  const toggle = (ad) => {
-    setSelecionados(prev =>
-      prev.find(s => s.id === ad.id)
-        ? prev.filter(s => s.id !== ad.id)
-        : [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco }]
-    );
+  const updateQtdAd = (ad, delta) => {
+    setSelecionados(prev => {
+      const existing = prev.find(s => s.id === ad.id);
+      if (existing) {
+        const newQtd = existing.quantidade + delta;
+        if (newQtd <= 0) return prev.filter(s => s.id !== ad.id);
+        return prev.map(s => s.id === ad.id ? { ...s, quantidade: newQtd } : s);
+      } else if (delta > 0) {
+        return [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco, quantidade: 1 }];
+      }
+      return prev;
+    });
   };
 
-  const totalAdicionais = selecionados.reduce((s, a) => s + a.preco, 0);
+  const totalAdicionais = selecionados.reduce((s, a) => s + a.preco * a.quantidade, 0);
   const totalItem = produto.preco + totalAdicionais;
 
   return (
@@ -243,17 +249,24 @@ function ModalAdicionaisInline({ produto, adicionais, onConfirm, onClose }) {
       <div style={{ fontSize: 11, fontWeight: 600, color: "#78716c", marginBottom: 8, letterSpacing: "0.06em" }}>ADICIONAIS</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 14 }}>
         {adicionais.map(ad => {
-          const ativo = selecionados.find(s => s.id === ad.id);
+          const sel = selecionados.find(s => s.id === ad.id);
+          const qtd = sel ? sel.quantidade : 0;
           return (
-            <label key={ad.id} style={{
+            <div key={ad.id} style={{
               display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-              background: ativo ? "#f0fdf4" : "#fafaf9", border: `1px solid ${ativo ? "#86efac" : "#e7e5e4"}`,
-              borderRadius: 8, cursor: "pointer", fontSize: 12
+              background: qtd > 0 ? "#f0fdf4" : "#fafaf9", border: `1px solid ${qtd > 0 ? "#86efac" : "#e7e5e4"}`,
+              borderRadius: 8, fontSize: 12
             }}>
-              <input type="checkbox" checked={!!ativo} onChange={() => toggle(ad)} style={{ accentColor: "#15803d" }} />
               <span style={{ flex: 1, fontWeight: 500 }}>{ad.nome}</span>
               <span style={{ fontWeight: 600, color: "#15803d" }}>+ {fmt(ad.preco)}</span>
-            </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0}
+                  style={{ width: 22, height: 22, border: "1px solid #e7e5e4", borderRadius: 4, background: "#fff", cursor: qtd > 0 ? "pointer" : "default", fontSize: 12, lineHeight: 1, color: qtd > 0 ? "#1c1917" : "#d6d3d1" }}>-</button>
+                <span style={{ fontSize: 12, fontWeight: 600, minWidth: 18, textAlign: "center" }}>{qtd}</span>
+                <button onClick={() => updateQtdAd(ad, 1)}
+                  style={{ width: 22, height: 22, border: "1px solid #e7e5e4", borderRadius: 4, background: "#fff", cursor: "pointer", fontSize: 12, lineHeight: 1 }}>+</button>
+              </div>
+            </div>
           );
         })}
       </div>
@@ -444,7 +457,7 @@ export default function Pedidos() {
 
                     <div style={{ background: "#fafaf9", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
                       {p.itens?.map((item, i) => {
-                        const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco, 0);
+                        const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
                         const itemTotal = (item.preco_unitario + adTotal) * item.quantidade;
                         return (
                           <div key={i} style={{ padding: "6px 0", borderBottom: i < p.itens.length - 1 ? "1px solid #f5f5f4" : "none" }}>
@@ -456,7 +469,7 @@ export default function Pedidos() {
                               <div style={{ marginTop: 3 }}>
                                 {item.adicionais.map(a => (
                                   <span key={a.id || a.nome} style={{ display: "inline-block", background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "1px 6px", borderRadius: 3, marginRight: 3 }}>
-                                    + {a.nome} ({fmt(a.preco)})
+                                    {(a.quantidade || 1) > 1 ? `${a.quantidade}x ` : "+ "}{a.nome} ({fmt(a.preco * (a.quantidade || 1))})
                                   </span>
                                 ))}
                               </div>
