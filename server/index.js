@@ -1,9 +1,11 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { reportarReceitaNexo } from "./services/nexo.js";
 import {
-  criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorId,
+  criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
   isEmailAdmin, listarAdminEmails, adicionarAdminEmail, removerAdminEmail,
   listarLancamentos, buscarLancamento, criarLancamento, atualizarLancamento, excluirLancamento,
   obterConfig, salvarConfig,
@@ -48,31 +50,40 @@ function adminOnly(req, res, next) {
 
 app.post("/api/auth/registro", async (req, res) => {
   const { nome, email, senha, telefone } = req.body;
-  if (!nome || !email || !senha) {
-    return res.status(400).json({ error: "Nome, email e senha são obrigatórios" });
+  if (!nome || !telefone || !senha) {
+    return res.status(400).json({ error: "Nome, telefone e senha são obrigatórios" });
   }
-  if (buscarUsuarioPorEmail(email)) {
+  // Check duplicate by phone
+  if (buscarUsuarioPorTelefone(telefone)) {
+    return res.status(409).json({ error: "Telefone já cadastrado" });
+  }
+  // Check duplicate by email if provided
+  if (email && buscarUsuarioPorEmail(email)) {
     return res.status(409).json({ error: "Email já cadastrado" });
   }
-  const tipo = isEmailAdmin(email) ? "admin" : "cliente";
+  const tipo = email && isEmailAdmin(email) ? "admin" : "cliente";
   const hash = await bcrypt.hash(senha, 10);
-  const usuario = criarUsuario({ nome, email, senha: hash, tipo, telefone });
+  const usuario = criarUsuario({ nome, email: email || null, senha: hash, tipo, telefone });
   const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo }, JWT_SECRET, { expiresIn: "7d" });
   res.status(201).json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, telefone: usuario.telefone }, token });
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, senha } = req.body;
-  if (!email || !senha) {
-    return res.status(400).json({ error: "Email e senha são obrigatórios" });
+  const { email, senha, telefone } = req.body;
+  // Login by phone or email
+  const identifier = telefone || email;
+  if (!identifier || !senha) {
+    return res.status(400).json({ error: "Telefone (ou email) e senha são obrigatórios" });
   }
-  const usuario = buscarUsuarioPorEmail(email);
+  // Try phone first, then email
+  let usuario = telefone ? buscarUsuarioPorTelefone(telefone) : null;
+  if (!usuario && email) usuario = buscarUsuarioPorEmail(email);
   if (!usuario) {
-    return res.status(401).json({ error: "Email ou senha inválidos" });
+    return res.status(401).json({ error: "Credenciais inválidas" });
   }
   const valid = await bcrypt.compare(senha, usuario.senha);
   if (!valid) {
-    return res.status(401).json({ error: "Email ou senha inválidos" });
+    return res.status(401).json({ error: "Credenciais inválidas" });
   }
   const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo }, JWT_SECRET, { expiresIn: "7d" });
   res.json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, telefone: usuario.telefone }, token });
@@ -399,6 +410,13 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       cat: "Vendas",
       status: "realizado",
       obs: `Pedido ${pedido.tipo} entregue automaticamente`,
+    });
+
+    // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
+    reportarReceitaNexo({
+      amount: pedido.total,
+      description: `Pedido #${pedido.id.slice(0, 6)}`,
+      source: pedido.tipo === 'online' ? 'online' : 'presencial',
     });
 
     // Lançamento de CMV (saída) — custo de produção

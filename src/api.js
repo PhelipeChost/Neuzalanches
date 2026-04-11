@@ -18,7 +18,7 @@ async function request(path, options = {}) {
       ...options.headers,
     },
   });
-  if (res.status === 401) {
+  if (res.status === 401 && !path.startsWith("/auth/")) {
     localStorage.removeItem("token");
     localStorage.removeItem("usuario");
     window.location.reload();
@@ -33,7 +33,7 @@ async function request(path, options = {}) {
 
 export const api = {
   // Auth
-  login: (email, senha) => request("/auth/login", { method: "POST", body: JSON.stringify({ email, senha }) }),
+  login: (data) => request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
   registro: (data) => request("/auth/registro", { method: "POST", body: JSON.stringify(data) }),
   me: () => request("/auth/me"),
 

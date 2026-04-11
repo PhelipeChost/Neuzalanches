@@ -226,7 +226,13 @@ export function criarUsuario({ nome, email, senha, tipo, telefone }) {
 }
 
 export function buscarUsuarioPorEmail(email) {
+  if (!email) return null;
   return db.prepare("SELECT * FROM usuarios WHERE email = ?").get(email);
+}
+
+export function buscarUsuarioPorTelefone(telefone) {
+  if (!telefone) return null;
+  return db.prepare("SELECT * FROM usuarios WHERE telefone = ?").get(telefone);
 }
 
 export function buscarUsuarioPorId(id) {

@@ -4,9 +4,16 @@ import { api } from "./api";
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
 const inp = { width: "100%", padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
 
-export default function Login({ onLogin }) {
-  const [modo, setModo] = useState("login"); // login | registro
-  const [form, setForm] = useState({ nome: "", email: "", senha: "", telefone: "", tipo: "cliente" });
+function formatPhone(value) {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+export default function ModalAuth({ onLogin, onClose, defaultMode = "registro" }) {
+  const [modo, setModo] = useState(defaultMode);
+  const [form, setForm] = useState({ nome: "", telefone: "", senha: "", email: "" });
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
 
@@ -17,10 +24,19 @@ export default function Login({ onLogin }) {
     try {
       let result;
       if (modo === "login") {
-        result = await api.login(form.email, form.senha);
+        const tel = form.telefone.replace(/\D/g, "");
+        const loginData = tel ? { telefone: tel, senha: form.senha } : { email: form.email, senha: form.senha };
+        result = await api.login(loginData);
       } else {
         if (!form.nome) { setErro("Nome é obrigatório"); setCarregando(false); return; }
-        result = await api.registro({ nome: form.nome, email: form.email, senha: form.senha, telefone: form.telefone });
+        const tel = form.telefone.replace(/\D/g, "");
+        if (!tel || tel.length < 10) { setErro("Telefone válido é obrigatório"); setCarregando(false); return; }
+        result = await api.registro({
+          nome: form.nome,
+          telefone: tel,
+          senha: form.senha,
+          email: form.email || undefined,
+        });
       }
       localStorage.setItem("token", result.token);
       localStorage.setItem("usuario", JSON.stringify(result.usuario));
@@ -33,23 +49,26 @@ export default function Login({ onLogin }) {
   };
 
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:ital,wght@0,300;0,500;0,600;1,300&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }`}</style>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "32px 30px", width: 420, maxWidth: "92vw", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.18)", position: "relative" }} onClick={e => e.stopPropagation()}>
 
-      <div style={{ background: "#fff", borderRadius: 16, padding: "36px 34px", width: 420, border: "1px solid #e7e5e4", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
+        {/* Close */}
+        <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, background: "none", border: "none", cursor: "pointer", fontSize: 22, color: "#a8a29e", lineHeight: 1 }}>x</button>
+
         {/* Logo */}
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <img src="/logo.png" alt="NeuzaLanches" style={{ width: 80, height: 80, borderRadius: "50%", objectFit: "cover", marginBottom: 12 }} />
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700 }}>NeuzaLanches</div>
-          <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>
-            {modo === "login" ? "Acesse sua conta" : "Crie sua conta"}
+        <div style={{ textAlign: "center", marginBottom: 20 }}>
+          <img src="/logo.png" alt="NeuzaLanches" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", marginBottom: 8 }} />
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700 }}>
+            {modo === "login" ? "Entrar na conta" : "Crie sua conta"}
+          </div>
+          <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>
+            {modo === "login" ? "Acesse com seu telefone ou email" : "Para adicionar itens ao carrinho"}
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 24, background: "#f5f5f4", borderRadius: 8, padding: 3 }}>
-          {[["login", "Entrar"], ["registro", "Criar conta"]].map(([k, v]) => (
+        <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "#f5f5f4", borderRadius: 8, padding: 3 }}>
+          {[["registro", "Criar conta"], ["login", "Ja tenho conta"]].map(([k, v]) => (
             <button key={k} onClick={() => { setModo(k); setErro(""); }}
               style={{ flex: 1, padding: "8px", border: "none", borderRadius: 6, background: modo === k ? "#fff" : "transparent", color: modo === k ? "#15803d" : "#78716c", fontWeight: modo === k ? 600 : 400, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", boxShadow: modo === k ? "0 1px 4px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }}>
               {v}
@@ -59,24 +78,41 @@ export default function Login({ onLogin }) {
 
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {modo === "registro" && (
-            <>
-              <div>
-                <label style={lbl}>Nome</label>
-                <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Seu nome completo" required />
-              </div>
-              <div>
-                <label style={lbl}>Telefone (opcional)</label>
-                <input style={inp} value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} placeholder="(11) 99999-0000" />
-              </div>
-            </>
+            <div>
+              <label style={lbl}>NOME COMPLETO *</label>
+              <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Seu nome completo" required />
+            </div>
           )}
 
           <div>
-            <label style={lbl}>Email</label>
-            <input style={inp} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="seu@email.com" required />
+            <label style={lbl}>{modo === "registro" ? "TELEFONE *" : "TELEFONE"}</label>
+            <input
+              style={inp}
+              type="tel"
+              value={form.telefone}
+              onChange={e => setForm({ ...form, telefone: formatPhone(e.target.value) })}
+              placeholder="(92) 99999-0000"
+              required={modo === "registro"}
+            />
           </div>
+
+          {modo === "login" && (
+            <div>
+              <label style={lbl}>EMAIL</label>
+              <input style={inp} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="ou use seu email" />
+              <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 4 }}>Use telefone ou email para entrar</div>
+            </div>
+          )}
+
+          {modo === "registro" && (
+            <div>
+              <label style={lbl}>EMAIL (OPCIONAL)</label>
+              <input style={inp} type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} placeholder="seu@email.com" />
+            </div>
+          )}
+
           <div>
-            <label style={lbl}>Senha</label>
+            <label style={lbl}>SENHA *</label>
             <input style={inp} type="password" value={form.senha} onChange={e => setForm({ ...form, senha: e.target.value })} placeholder="••••••••" required minLength={4} />
           </div>
 

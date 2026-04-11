@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "./api";
-import Login from "./Login";
 import ClienteApp from "./ClienteApp";
 import FluxoCaixa from "./fluxo-de-caixa";
 import Produtos from "./Produtos";
@@ -300,14 +299,9 @@ export default function App() {
 
   if (loading) return null;
 
-  // Não logado → tela de login
-  if (!usuario) {
-    return <Login onLogin={handleLogin} />;
-  }
-
-  // Cliente → app de catálogo/pedidos
-  if (usuario.tipo === "cliente") {
-    return <ClienteApp usuario={usuario} onLogout={handleLogout} />;
+  // Visitante ou cliente → cardápio
+  if (!usuario || usuario.tipo !== "admin") {
+    return <ClienteApp usuario={usuario} onLogin={handleLogin} onLogout={handleLogout} />;
   }
 
   // Admin → painel completo

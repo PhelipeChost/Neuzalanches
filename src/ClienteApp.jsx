@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "./api";
 import { ImagemProduto } from "./Produtos";
+import ModalAuth from "./Login";
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -332,7 +333,7 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
   );
 }
 
-export default function ClienteApp({ usuario, onLogout }) {
+export default function ClienteApp({ usuario, onLogin, onLogout }) {
   const [tab, setTab] = useState("catalogo");
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
@@ -346,6 +347,8 @@ export default function ClienteApp({ usuario, onLogout }) {
   const [modalAdicional, setModalAdicional] = useState(null);
   const [modalCheckout, setModalCheckout] = useState(false);
   const [enderecosSalvos, setEnderecosSalvos] = useState([]);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState(null);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -355,40 +358,49 @@ export default function ClienteApp({ usuario, onLogout }) {
 
   const carregar = useCallback(async () => {
     try {
-      const [prods, peds, cats, adds, ends] = await Promise.all([
+      const [prods, cats, adds] = await Promise.all([
         api.produtos.listar(),
-        api.pedidos.listar(),
         api.categorias.listar(),
         api.adicionais.listar(),
-        api.enderecos.listar(),
       ]);
       setProdutos(prods.filter(p => p.disponivel));
-      setPedidos(peds);
       setCategorias(cats);
       setAdicionaisDisponiveis(adds.filter(a => a.disponivel));
-      setEnderecosSalvos(ends);
+
+      if (usuario) {
+        const [peds, ends] = await Promise.all([
+          api.pedidos.listar(),
+          api.enderecos.listar(),
+        ]);
+        setPedidos(peds);
+        setEnderecosSalvos(ends);
+      }
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [usuario]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
   useEffect(() => {
+    if (!usuario) return;
     const interval = setInterval(async () => {
       try { setPedidos(await api.pedidos.listar()); } catch { /* ignore */ }
     }, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [usuario]);
 
   const handleAddProduto = (produto) => {
-    // Se a categoria permite adicionais, abrir modal
+    if (!usuario) {
+      setPendingProduct(produto);
+      setShowAuthModal(true);
+      return;
+    }
     if (catPermiteAdicionais[produto.categoria] && adicionaisDisponiveis.length > 0) {
       setModalAdicional(produto);
     } else {
-      // Sem adicionais: adicionar direto
       addCarrinhoSimples(produto, []);
     }
   };
@@ -423,6 +435,34 @@ export default function ClienteApp({ usuario, onLogout }) {
     }
   };
 
+  const handleAuthSuccess = (user, token) => {
+    setShowAuthModal(false);
+    onLogin(user, token);
+  };
+
+  const handleAuthClose = () => {
+    setShowAuthModal(false);
+    setPendingProduct(null);
+  };
+
+  // Process pending product after successful auth
+  useEffect(() => {
+    if (usuario && pendingProduct) {
+      const prod = pendingProduct;
+      setPendingProduct(null);
+      if (catPermiteAdicionais[prod.categoria] && adicionaisDisponiveis.length > 0) {
+        setModalAdicional(prod);
+      } else {
+        addCarrinhoSimples(prod, []);
+      }
+    }
+  }, [usuario, pendingProduct]);
+
+  // Reset tab if user logs out while on pedidos
+  useEffect(() => {
+    if (!usuario && tab === "pedidos") setTab("catalogo");
+  }, [usuario, tab]);
+
   const updateQtd = (uid, qtd) => {
     if (qtd < 1) return setCarrinho(carrinho.filter(i => i._uid !== uid));
     setCarrinho(carrinho.map(i => i._uid === uid ? { ...i, quantidade: qtd } : i));
@@ -437,6 +477,10 @@ export default function ClienteApp({ usuario, onLogout }) {
 
   const abrirCheckout = () => {
     if (carrinho.length === 0) return;
+    if (!usuario) {
+      setShowAuthModal(true);
+      return;
+    }
     setModalCheckout(true);
   };
 
@@ -505,7 +549,7 @@ export default function ClienteApp({ usuario, onLogout }) {
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
         <div className="header-nav" style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
-          {[["catalogo", "Cardapio"], ["carrinho", `Carrinho (${carrinho.length})`], ["pedidos", "Meus Pedidos"]].map(([k, v]) => (
+          {[["catalogo", "Cardapio"], ["carrinho", `Carrinho (${carrinho.length})`], ...(usuario ? [["pedidos", "Meus Pedidos"]] : [])].map(([k, v]) => (
             <button key={k} className={`nav-pill ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{v}</button>
           ))}
         </div>
@@ -513,10 +557,18 @@ export default function ClienteApp({ usuario, onLogout }) {
         <div style={{ flex: 1, minWidth: 0 }} />
 
         <div className="client-user" style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-          <div style={{ fontSize: 12, color: "#78716c" }}>Ola, {usuario.nome.split(" ")[0]}</div>
-          <button className="logout-btn" onClick={onLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-            Sair
-          </button>
+          {usuario ? (
+            <>
+              <div style={{ fontSize: 12, color: "#78716c" }}>Ola, {usuario.nome.split(" ")[0]}</div>
+              <button className="logout-btn" onClick={onLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+                Sair
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setShowAuthModal(true)} style={{ padding: "6px 14px", border: "none", borderRadius: 8, background: "#F38C24", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff" }}>
+              Entrar
+            </button>
+          )}
         </div>
       </header>
 
@@ -737,6 +789,15 @@ export default function ClienteApp({ usuario, onLogout }) {
           totalCarrinho={totalCarrinho}
           onConfirm={enviarPedido}
           onClose={() => setModalCheckout(false)}
+        />
+      )}
+
+      {/* Modal Auth */}
+      {showAuthModal && (
+        <ModalAuth
+          onLogin={handleAuthSuccess}
+          onClose={handleAuthClose}
+          defaultMode={pendingProduct ? "registro" : "login"}
         />
       )}
 
