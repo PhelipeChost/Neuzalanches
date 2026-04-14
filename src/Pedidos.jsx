@@ -369,6 +369,18 @@ export default function Pedidos() {
     }
   };
 
+  const excluirPedido = async (id, clienteNome) => {
+    if (!window.confirm(`Excluir pedido de "${clienteNome || "cliente"}" permanentemente? Esta ação não pode ser desfeita.`)) return;
+    try {
+      await api.pedidos.excluir(id);
+      setPedidos(ps => ps.filter(p => p.id !== id));
+      setExpandido(null);
+      showToast("Pedido excluído.", "#78716c");
+    } catch (err) {
+      showToast("Erro: " + err.message, "#dc2626");
+    }
+  };
+
   const proximoStatus = (statusAtual) => {
     const idx = STATUS_PIPELINE.indexOf(statusAtual);
     return idx >= 0 && idx < STATUS_PIPELINE.length - 1 ? STATUS_PIPELINE[idx + 1] : null;
@@ -526,6 +538,12 @@ export default function Pedidos() {
                         Pedido entregue — Entrada de {fmt(p.total)} registrada automaticamente no fluxo de caixa
                       </div>
                     )}
+                    <div style={{ marginTop: 10, borderTop: "1px solid #f5f5f4", paddingTop: 10 }}>
+                      <button onClick={() => excluirPedido(p.id, p.cliente_nome)}
+                        style={{ padding: "7px 14px", background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#a8a29e", display: "flex", alignItems: "center", gap: 5 }}>
+                        🗑️ Excluir pedido
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

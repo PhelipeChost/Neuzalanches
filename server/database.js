@@ -509,4 +509,13 @@ export function atualizarStatusPedido(id, status) {
   return buscarPedido(id);
 }
 
+export function excluirPedido(id) {
+  const del = db.transaction(() => {
+    db.prepare("DELETE FROM pedido_itens WHERE pedido_id = ?").run(id);
+    const result = db.prepare("DELETE FROM pedidos WHERE id = ?").run(id);
+    return result.changes > 0;
+  });
+  return del();
+}
+
 export default db;

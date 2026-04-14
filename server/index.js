@@ -12,7 +12,7 @@ import {
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
-  listarPedidos, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, contarPedidosPendentes,
+  listarPedidos, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
 } from "./database.js";
 
@@ -468,6 +468,12 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
   }
 
   res.json({ ...pedido, itens: buscarItensPedido(pedido.id) });
+});
+
+app.delete("/api/pedidos/:id", authMiddleware, adminOnly, (req, res) => {
+  const ok = excluirPedido(req.params.id);
+  if (!ok) return res.status(404).json({ error: "Pedido não encontrado" });
+  res.json({ success: true });
 });
 
 // ─── START ──────────────────────────────────────────────────────────────────

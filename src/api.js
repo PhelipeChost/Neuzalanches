@@ -89,6 +89,7 @@ export const api = {
     criar: (data) => request("/pedidos", { method: "POST", body: JSON.stringify(data) }),
     criarPublico: (data) => request("/pedidos/publico", { method: "POST", body: JSON.stringify(data) }),
     atualizarStatus: (id, status) => request(`/pedidos/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+    excluir: (id) => request(`/pedidos/${id}`, { method: "DELETE" }),
     contarPendentes: () => request("/pedidos/pendentes/count"),
   },
 
