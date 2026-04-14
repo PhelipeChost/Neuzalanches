@@ -437,6 +437,7 @@ export default function Pedidos() {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>#{p.id.slice(0, 6)}</span>
                       <span style={{ fontSize: 11, color: "#a8a29e" }}>.</span>
                       <span style={{ fontSize: 12, color: "#57534e" }}>{p.cliente_nome || "Sem nome"}</span>
+                      {p.cliente_telefone && <span style={{ fontSize: 11, color: "#78716c" }}>({p.cliente_telefone})</span>}
                       <span style={{ background: p.tipo === "online" ? "#eff6ff" : "#f5f5f4", color: p.tipo === "online" ? "#2563eb" : "#78716c", padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>
                         {p.tipo === "online" ? "ONLINE" : "PRESENCIAL"}
                       </span>

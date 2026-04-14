@@ -92,6 +92,8 @@ db.exec(`
     id TEXT PRIMARY KEY,
     cliente_id TEXT,
     cliente_nome TEXT DEFAULT '',
+    cliente_telefone TEXT DEFAULT '',
+    cliente_email TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente', 'confirmado', 'preparando', 'pronto', 'entregue', 'cancelado')),
     total REAL NOT NULL DEFAULT 0,
     obs TEXT DEFAULT '',
@@ -169,6 +171,12 @@ if (!colsPedidos.includes("endereco_cep")) {
   db.exec("ALTER TABLE pedidos ADD COLUMN endereco_numero TEXT DEFAULT ''");
   db.exec("ALTER TABLE pedidos ADD COLUMN endereco_bairro TEXT DEFAULT ''");
   db.exec("ALTER TABLE pedidos ADD COLUMN endereco_referencia TEXT DEFAULT ''");
+}
+if (!colsPedidos.includes("cliente_telefone")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN cliente_telefone TEXT DEFAULT ''");
+}
+if (!colsPedidos.includes("cliente_email")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN cliente_email TEXT DEFAULT ''");
 }
 
 // ─── SEED CATEGORIAS PRÉ-DEFINIDAS ─────────────────────────────────────────
@@ -452,7 +460,7 @@ export function contarPedidosPendentes() {
   return row.count;
 }
 
-export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo, metodo_pagamento, endereco }) {
+export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, endereco }) {
   const id = gerarId();
 
   // Calcular total considerando adicionais
@@ -464,14 +472,14 @@ export function criarPedido({ cliente_id, cliente_nome, itens, obs, tipo, metodo
   const end = endereco || {};
 
   const inserirPedido = db.prepare(
-    "INSERT INTO pedidos (id, cliente_id, cliente_nome, total, obs, tipo, metodo_pagamento, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, obs, tipo, metodo_pagamento, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const inserirItem = db.prepare(
     "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
-    inserirPedido.run(id, cliente_id || null, cliente_nome || "", total, obs || "", tipo || "online", metodo_pagamento || "", end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
+    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, obs || "", tipo || "online", metodo_pagamento || "", end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
     for (const item of itens) {
       // Buscar custo do produto no banco
       const produtoDB = buscarProduto(item.produto_id);

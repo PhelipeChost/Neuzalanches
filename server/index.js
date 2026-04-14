@@ -313,7 +313,7 @@ app.delete("/api/enderecos/:id", authMiddleware, (req, res) => {
 
 // ─── CONFIG PIX (público para leitura, admin para escrita) ─────────────
 
-app.get("/api/config/pix", authMiddleware, (req, res) => {
+app.get("/api/config/pix", (req, res) => {
   res.json({
     pix_key: obterConfig("pix_key") || "",
     pix_nome: obterConfig("pix_nome") || "",
@@ -349,6 +349,34 @@ app.get("/api/pedidos/:id", authMiddleware, (req, res) => {
     return res.status(403).json({ error: "Acesso negado" });
   }
   res.json({ ...p, itens: buscarItensPedido(p.id) });
+});
+
+// Pedido público (sem autenticação — cliente envia dados inline)
+app.post("/api/pedidos/publico", (req, res) => {
+  const { itens, obs, cliente_nome, cliente_telefone, cliente_email, metodo_pagamento, endereco } = req.body;
+  if (!cliente_nome || !cliente_telefone) {
+    return res.status(400).json({ error: "Nome e telefone são obrigatórios" });
+  }
+  if (!itens || !Array.isArray(itens) || itens.length === 0) {
+    return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
+  }
+  for (const item of itens) {
+    if (!item.produto_id || !item.quantidade || !item.preco_unitario || !item.produto_nome) {
+      return res.status(400).json({ error: "Cada item precisa de produto_id, produto_nome, quantidade e preco_unitario" });
+    }
+  }
+  const pedido = criarPedido({
+    cliente_id: null,
+    cliente_nome,
+    cliente_telefone,
+    cliente_email: cliente_email || "",
+    itens,
+    obs,
+    tipo: "online",
+    metodo_pagamento: metodo_pagamento || "",
+    endereco: endereco || {},
+  });
+  res.status(201).json(pedido);
 });
 
 app.post("/api/pedidos", authMiddleware, (req, res) => {

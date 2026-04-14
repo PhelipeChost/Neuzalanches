@@ -249,20 +249,34 @@ function AdminConfig() {
 }
 
 export default function App() {
+  const isAdminRoute = window.location.pathname.startsWith('/admin');
+
   const [usuario, setUsuario] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [adminTab, setAdminTab] = useState("pedidos");
   const [pendentesCount, setPendentesCount] = useState(0);
 
-  // Restaurar sessão do localStorage
+  // Admin login form
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginSenha, setLoginSenha] = useState("");
+  const [loginErro, setLoginErro] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // Restaurar sessão admin do localStorage
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
     const savedUser = localStorage.getItem("usuario");
     if (savedToken && savedUser) {
       try {
-        setToken(savedToken);
-        setUsuario(JSON.parse(savedUser));
+        const user = JSON.parse(savedUser);
+        if (user.tipo === "admin") {
+          setToken(savedToken);
+          setUsuario(user);
+        } else {
+          localStorage.removeItem("token");
+          localStorage.removeItem("usuario");
+        }
       } catch {
         localStorage.removeItem("token");
         localStorage.removeItem("usuario");
@@ -285,9 +299,26 @@ export default function App() {
     return () => clearInterval(interval);
   }, [usuario]);
 
-  const handleLogin = (user, tk) => {
-    setUsuario(user);
-    setToken(tk);
+  const handleAdminLogin = async (e) => {
+    e.preventDefault();
+    setLoginErro("");
+    setLoginLoading(true);
+    try {
+      const result = await api.login({ email: loginEmail, senha: loginSenha });
+      if (result.usuario.tipo !== "admin") {
+        setLoginErro("Acesso restrito a administradores");
+        setLoginLoading(false);
+        return;
+      }
+      localStorage.setItem("token", result.token);
+      localStorage.setItem("usuario", JSON.stringify(result.usuario));
+      setToken(result.token);
+      setUsuario(result.usuario);
+    } catch (err) {
+      setLoginErro(err.message);
+    } finally {
+      setLoginLoading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -299,12 +330,50 @@ export default function App() {
 
   if (loading) return null;
 
-  // Visitante ou cliente → cardápio
-  if (!usuario || usuario.tipo !== "admin") {
-    return <ClienteApp usuario={usuario} onLogin={handleLogin} onLogout={handleLogout} />;
+  // ─── ROTA PÚBLICA: Cardápio do cliente ───────────────────────────────────
+  if (!isAdminRoute) {
+    return <ClienteApp />;
   }
 
-  // Admin → painel completo
+  // ─── ROTA /admin: Login do admin ─────────────────────────────────────────
+  if (!usuario || usuario.tipo !== "admin") {
+    const lblStyle = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
+    const inpStyle = { width: "100%", padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, outline: "none", fontFamily: "'DM Sans', sans-serif", color: "#1c1917" };
+    return (
+      <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap');
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+        `}</style>
+        <div style={{ background: "#fff", borderRadius: 16, padding: "40px 36px", width: 400, maxWidth: "92vw", boxShadow: "0 8px 30px rgba(0,0,0,0.08)" }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
+            <img src="/logo.png" alt="NeuzaLanches" style={{ width: 72, height: 72, borderRadius: "50%", objectFit: "cover", marginBottom: 12 }} />
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700 }}>Painel Admin</div>
+            <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>Acesse com suas credenciais</div>
+          </div>
+          <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <label style={lblStyle}>EMAIL</label>
+              <input value={loginEmail} onChange={e => setLoginEmail(e.target.value)} type="email" required placeholder="admin@email.com" style={inpStyle} />
+            </div>
+            <div>
+              <label style={lblStyle}>SENHA</label>
+              <input value={loginSenha} onChange={e => setLoginSenha(e.target.value)} type="password" required placeholder="••••••••" minLength={4} style={inpStyle} />
+            </div>
+            {loginErro && (
+              <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{loginErro}</div>
+            )}
+            <button type="submit" disabled={loginLoading}
+              style={{ padding: 12, background: "#15803d", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: loginLoading ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: loginLoading ? 0.7 : 1, marginTop: 4 }}>
+              {loginLoading ? "Entrando..." : "Entrar"}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── ROTA /admin: Painel admin (logado) ──────────────────────────────────
   const adminNav = [
     { key: "pedidos", label: "Pedidos", badge: pendentesCount },
     { key: "produtos", label: "Produtos" },

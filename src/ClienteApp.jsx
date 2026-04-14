@@ -1,90 +1,69 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "./api";
 import { ImagemProduto } from "./Produtos";
-import ModalAuth from "./Login";
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-const STATUS_LABELS = {
-  pendente: "Pendente",
-  confirmado: "Confirmado",
-  preparando: "Preparando",
-  pronto: "Pronto p/ retirada",
-  entregue: "Entregue",
-  cancelado: "Cancelado",
-};
-const STATUS_CORES = {
-  pendente: { bg: "#fefce8", color: "#ca8a04" },
-  confirmado: { bg: "#eff6ff", color: "#2563eb" },
-  preparando: { bg: "#fef3c7", color: "#d97706" },
-  pronto: { bg: "#f0fdf4", color: "#16a34a" },
-  entregue: { bg: "#dcfce7", color: "#15803d" },
-  cancelado: { bg: "#fee2e2", color: "#dc2626" },
-};
-const STATUS_PIPELINE = ["pendente", "confirmado", "preparando", "pronto", "entregue"];
-
 const METODOS_PAGAMENTO = [
   { id: "pix", label: "Pix", icon: "⚡" },
-  { id: "credito", label: "Cartão de Crédito", icon: "💳" },
-  { id: "debito", label: "Cartão de Débito", icon: "💳" },
+  { id: "credito", label: "Cartao de Credito", icon: "💳" },
+  { id: "debito", label: "Cartao de Debito", icon: "💳" },
 ];
 
 let uidCounter = 0;
 function nextUid() { return `_${Date.now()}_${++uidCounter}`; }
 
-// ─── MODAL CHECKOUT (ENDEREÇO + PAGAMENTO) ────────────────────────────────────
-function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
-  const [etapa, setEtapa] = useState("endereco"); // "endereco" | "pagamento"
-  const [enderecoTipo, setEnderecoTipo] = useState(enderecosSalvos.length > 0 ? "salvo" : "novo");
-  const [enderecoSelecionado, setEnderecoSelecionado] = useState(enderecosSalvos[0]?.id || "");
+function formatPhone(value) {
+  const digits = value.replace(/\D/g, "").slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+// ─── MODAL CHECKOUT (INFO CLIENTE + ENDEREÇO + PAGAMENTO) ─────────────────────
+function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
+  const [etapa, setEtapa] = useState("cliente"); // "cliente" | "endereco" | "pagamento"
+
+  // Info do cliente
+  const [clienteNome, setClienteNome] = useState("");
+  const [clienteTelefone, setClienteTelefone] = useState("");
+  const [clienteEmail, setClienteEmail] = useState("");
+
+  // Endereço
   const [cep, setCep] = useState("");
   const [rua, setRua] = useState("");
   const [numero, setNumero] = useState("");
   const [bairro, setBairro] = useState("");
   const [referencia, setReferencia] = useState("");
-  const [salvarEndereco, setSalvarEndereco] = useState(true);
   const [buscandoCep, setBuscandoCep] = useState(false);
+
+  // Pagamento
   const [metodoPagamento, setMetodoPagamento] = useState("");
   const [pixInfo, setPixInfo] = useState({ pix_key: "", pix_nome: "" });
   const [copiadoPix, setCopiadoPix] = useState(false);
-
-  const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   useEffect(() => {
     api.pix.obter().then(setPixInfo).catch(() => {});
   }, []);
 
-  const buscarCep = async () => {
-    const cepLimpo = cep.replace(/\D/g, "");
-    if (cepLimpo.length !== 8) return;
-    setBuscandoCep(true);
-    try {
-      const data = await api.buscarCep(cepLimpo);
-      setRua(data.rua || "");
-      setBairro(data.bairro || "");
-    } catch { /* ignore */ }
-    finally { setBuscandoCep(false); }
-  };
-
   const handleCepChange = (val) => {
-    // Formatar CEP: 00000-000
     const limpo = val.replace(/\D/g, "").slice(0, 8);
-    if (limpo.length > 5) {
-      setCep(`${limpo.slice(0, 5)}-${limpo.slice(5)}`);
-    } else {
-      setCep(limpo);
-    }
+    setCep(limpo.length > 5 ? `${limpo.slice(0, 5)}-${limpo.slice(5)}` : limpo);
   };
 
   useEffect(() => {
     const cepLimpo = cep.replace(/\D/g, "");
-    if (cepLimpo.length === 8) buscarCep();
+    if (cepLimpo.length === 8) {
+      setBuscandoCep(true);
+      api.buscarCep(cepLimpo).then(data => {
+        setRua(data.rua || "");
+        setBairro(data.bairro || "");
+      }).catch(() => {}).finally(() => setBuscandoCep(false));
+    }
   }, [cep]);
 
-  const enderecoValido = () => {
-    if (enderecoTipo === "salvo") return !!enderecoSelecionado;
-    return rua.trim() && bairro.trim();
-  };
+  const clienteValido = () => clienteNome.trim() && clienteTelefone.replace(/\D/g, "").length >= 10;
+  const enderecoValido = () => rua.trim() && bairro.trim();
 
   const copiarPix = () => {
     navigator.clipboard.writeText(pixInfo.pix_key).then(() => {
@@ -94,13 +73,13 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
   };
 
   const confirmar = () => {
-    let endereco;
-    if (enderecoTipo === "salvo") {
-      endereco = { endereco_id: enderecoSelecionado };
-    } else {
-      endereco = { cep: cep.replace(/\D/g, ""), rua, numero, bairro, referencia, salvar: salvarEndereco };
-    }
-    onConfirm({ endereco, metodo_pagamento: metodoPagamento });
+    onConfirm({
+      cliente_nome: clienteNome.trim(),
+      cliente_telefone: clienteTelefone.replace(/\D/g, ""),
+      cliente_email: clienteEmail.trim(),
+      endereco: { cep: cep.replace(/\D/g, ""), rua, numero, bairro, referencia },
+      metodo_pagamento: metodoPagamento,
+    });
   };
 
   const inputStyle = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
@@ -108,7 +87,7 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", width: 480, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "24px 28px", width: 480, maxWidth: "92vw", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
 
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -118,81 +97,77 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
 
         {/* Etapas */}
         <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-          {[["endereco", "1. Endereço"], ["pagamento", "2. Pagamento"]].map(([k, v]) => (
-            <div key={k} style={{ flex: 1, textAlign: "center", padding: "8px 0", borderBottom: `3px solid ${etapa === k ? "#15803d" : "#e7e5e4"}`, fontSize: 13, fontWeight: etapa === k ? 600 : 400, color: etapa === k ? "#15803d" : "#a8a29e", cursor: "pointer", transition: "all 0.2s" }}
-              onClick={() => { if (k === "endereco") setEtapa("endereco"); else if (enderecoValido()) setEtapa("pagamento"); }}>
+          {[["cliente", "1. Seus Dados"], ["endereco", "2. Endereco"], ["pagamento", "3. Pagamento"]].map(([k, v]) => (
+            <div key={k} style={{
+              flex: 1, textAlign: "center", padding: "8px 0",
+              borderBottom: `3px solid ${etapa === k ? "#15803d" : "#e7e5e4"}`,
+              fontSize: 12, fontWeight: etapa === k ? 600 : 400,
+              color: etapa === k ? "#15803d" : "#a8a29e",
+              cursor: "pointer", transition: "all 0.2s"
+            }}
+              onClick={() => {
+                if (k === "cliente") setEtapa("cliente");
+                else if (k === "endereco" && clienteValido()) setEtapa("endereco");
+                else if (k === "pagamento" && clienteValido() && enderecoValido()) setEtapa("pagamento");
+              }}>
               {v}
             </div>
           ))}
         </div>
 
-        {/* ETAPA 1: ENDEREÇO */}
+        {/* ETAPA 1: INFO DO CLIENTE */}
+        {etapa === "cliente" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={labelStyle}>NOME COMPLETO *</label>
+              <input style={inputStyle} value={clienteNome} onChange={e => setClienteNome(e.target.value)} placeholder="Seu nome completo" />
+            </div>
+            <div>
+              <label style={labelStyle}>TELEFONE *</label>
+              <input style={inputStyle} type="tel" value={clienteTelefone} onChange={e => setClienteTelefone(formatPhone(e.target.value))} placeholder="(92) 99999-0000" />
+            </div>
+            <div>
+              <label style={labelStyle}>EMAIL (OPCIONAL)</label>
+              <input style={inputStyle} type="email" value={clienteEmail} onChange={e => setClienteEmail(e.target.value)} placeholder="seu@email.com" />
+            </div>
+            <button onClick={() => { if (clienteValido()) setEtapa("endereco"); }}
+              disabled={!clienteValido()}
+              style={{ width: "100%", marginTop: 8, padding: 12, background: clienteValido() ? "#15803d" : "#d6d3d1", color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: clienteValido() ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif" }}>
+              Continuar para endereco
+            </button>
+          </div>
+        )}
+
+        {/* ETAPA 2: ENDEREÇO */}
         {etapa === "endereco" && (
           <div>
-            {enderecosSalvos.length > 0 && (
-              <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-                <button onClick={() => setEnderecoTipo("salvo")}
-                  style={{ flex: 1, padding: "9px 0", border: `1.5px solid ${enderecoTipo === "salvo" ? "#15803d" : "#e7e5e4"}`, borderRadius: 8, background: enderecoTipo === "salvo" ? "#f0fdf4" : "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: enderecoTipo === "salvo" ? "#15803d" : "#78716c" }}>
-                  Endereço salvo
-                </button>
-                <button onClick={() => setEnderecoTipo("novo")}
-                  style={{ flex: 1, padding: "9px 0", border: `1.5px solid ${enderecoTipo === "novo" ? "#15803d" : "#e7e5e4"}`, borderRadius: 8, background: enderecoTipo === "novo" ? "#f0fdf4" : "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: enderecoTipo === "novo" ? "#15803d" : "#78716c" }}>
-                  Novo endereço
-                </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label style={labelStyle}>CEP</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input style={{ ...inputStyle, flex: 1 }} value={cep} onChange={e => handleCepChange(e.target.value)} placeholder="00000-000" maxLength={9} />
+                  {buscandoCep && <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "#15803d", fontWeight: 500, whiteSpace: "nowrap" }}>Buscando...</div>}
+                </div>
               </div>
-            )}
-
-            {enderecoTipo === "salvo" && enderecosSalvos.length > 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {enderecosSalvos.map(end => (
-                  <label key={end.id} style={{
-                    display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px",
-                    background: enderecoSelecionado === end.id ? "#f0fdf4" : "#fafaf9",
-                    border: `1.5px solid ${enderecoSelecionado === end.id ? "#86efac" : "#e7e5e4"}`,
-                    borderRadius: 10, cursor: "pointer", transition: "all 0.15s"
-                  }}>
-                    <input type="radio" name="endereco" checked={enderecoSelecionado === end.id} onChange={() => setEnderecoSelecionado(end.id)} style={{ accentColor: "#15803d", marginTop: 2 }} />
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500 }}>{end.rua}{end.numero ? `, ${end.numero}` : ""}</div>
-                      <div style={{ fontSize: 12, color: "#78716c" }}>{end.bairro}{end.cep ? ` — CEP: ${end.cep}` : ""}</div>
-                      {end.referencia && <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>Ref: {end.referencia}</div>}
-                    </div>
-                  </label>
-                ))}
+              <div>
+                <label style={labelStyle}>RUA / LOGRADOURO *</label>
+                <input style={inputStyle} value={rua} onChange={e => setRua(e.target.value)} placeholder="Ex: Rua das Flores" />
               </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <div>
-                  <label style={labelStyle}>CEP</label>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <input style={{ ...inputStyle, flex: 1 }} value={cep} onChange={e => handleCepChange(e.target.value)} placeholder="00000-000" maxLength={9} />
-                    {buscandoCep && <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "#15803d", fontWeight: 500, whiteSpace: "nowrap" }}>Buscando...</div>}
-                  </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>NUMERO</label>
+                  <input style={inputStyle} value={numero} onChange={e => setNumero(e.target.value)} placeholder="123" />
                 </div>
-                <div>
-                  <label style={labelStyle}>RUA / LOGRADOURO *</label>
-                  <input style={inputStyle} value={rua} onChange={e => setRua(e.target.value)} placeholder="Ex: Rua das Flores" />
+                <div style={{ flex: 2 }}>
+                  <label style={labelStyle}>BAIRRO *</label>
+                  <input style={inputStyle} value={bairro} onChange={e => setBairro(e.target.value)} placeholder="Ex: Centro" />
                 </div>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <div style={{ flex: 1 }}>
-                    <label style={labelStyle}>NÚMERO</label>
-                    <input style={inputStyle} value={numero} onChange={e => setNumero(e.target.value)} placeholder="123" />
-                  </div>
-                  <div style={{ flex: 2 }}>
-                    <label style={labelStyle}>BAIRRO *</label>
-                    <input style={inputStyle} value={bairro} onChange={e => setBairro(e.target.value)} placeholder="Ex: Centro" />
-                  </div>
-                </div>
-                <div>
-                  <label style={labelStyle}>REFERÊNCIA PARA O ENTREGADOR</label>
-                  <input style={inputStyle} value={referencia} onChange={e => setReferencia(e.target.value)} placeholder="Ex: Portão azul, ao lado da padaria" />
-                </div>
-                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#57534e", cursor: "pointer" }}>
-                  <input type="checkbox" checked={salvarEndereco} onChange={e => setSalvarEndereco(e.target.checked)} style={{ accentColor: "#15803d" }} />
-                  Salvar endereço para próximos pedidos
-                </label>
               </div>
-            )}
+              <div>
+                <label style={labelStyle}>REFERENCIA PARA O ENTREGADOR</label>
+                <input style={inputStyle} value={referencia} onChange={e => setReferencia(e.target.value)} placeholder="Ex: Portao azul, ao lado da padaria" />
+              </div>
+            </div>
 
             <button onClick={() => { if (enderecoValido()) setEtapa("pagamento"); }}
               disabled={!enderecoValido()}
@@ -202,10 +177,10 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
           </div>
         )}
 
-        {/* ETAPA 2: PAGAMENTO */}
+        {/* ETAPA 3: PAGAMENTO */}
         {etapa === "pagamento" && (
           <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#78716c", marginBottom: 10, letterSpacing: "0.06em" }}>ESCOLHA O MÉTODO DE PAGAMENTO</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#78716c", marginBottom: 10, letterSpacing: "0.06em" }}>ESCOLHA O METODO DE PAGAMENTO</div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
               {METODOS_PAGAMENTO.map(m => (
@@ -240,7 +215,7 @@ function ModalCheckout({ enderecosSalvos, onConfirm, onClose, totalCarrinho }) {
             )}
 
             {/* Total e confirmar */}
-            <div style={{ borderTop: "2px solid #e7e5e4", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ borderTop: "2px solid #e7e5e4", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600 }}>TOTAL DO PEDIDO</div>
                 <div style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 600, color: "#15803d" }}>{fmt(totalCarrinho)}</div>
@@ -346,12 +321,12 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
   );
 }
 
-export default function ClienteApp({ usuario, onLogin, onLogout }) {
+// ─── CLIENTE APP ───────────────────────────────────────────────────────────────
+export default function ClienteApp() {
   const [tab, setTab] = useState("catalogo");
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [adicionaisDisponiveis, setAdicionaisDisponiveis] = useState([]);
-  const [pedidos, setPedidos] = useState([]);
   const [carrinho, setCarrinho] = useState([]);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -359,9 +334,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
   const [enviando, setEnviando] = useState(false);
   const [modalAdicional, setModalAdicional] = useState(null);
   const [modalCheckout, setModalCheckout] = useState(false);
-  const [enderecosSalvos, setEnderecosSalvos] = useState([]);
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [pendingProduct, setPendingProduct] = useState(null);
+  const [pedidoEnviado, setPedidoEnviado] = useState(null);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -379,38 +352,16 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
       setProdutos(prods.filter(p => p.disponivel));
       setCategorias(cats);
       setAdicionaisDisponiveis(adds.filter(a => a.disponivel));
-
-      if (usuario) {
-        const [peds, ends] = await Promise.all([
-          api.pedidos.listar(),
-          api.enderecos.listar(),
-        ]);
-        setPedidos(peds);
-        setEnderecosSalvos(ends);
-      }
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
     } finally {
       setLoading(false);
     }
-  }, [usuario]);
+  }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  useEffect(() => {
-    if (!usuario) return;
-    const interval = setInterval(async () => {
-      try { setPedidos(await api.pedidos.listar()); } catch { /* ignore */ }
-    }, 15000);
-    return () => clearInterval(interval);
-  }, [usuario]);
-
   const handleAddProduto = (produto) => {
-    if (!usuario) {
-      setPendingProduct(produto);
-      setShowAuthModal(true);
-      return;
-    }
     if (catPermiteAdicionais[produto.categoria] && adicionaisDisponiveis.length > 0) {
       setModalAdicional(produto);
     } else {
@@ -419,10 +370,7 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
   };
 
   const addCarrinhoSimples = (produto, adicionaisSelecionados) => {
-    const adTotal = adicionaisSelecionados.reduce((s, a) => s + a.preco, 0);
     const adKey = adicionaisSelecionados.map(a => `${a.id}:${a.quantidade || 1}`).sort().join(",");
-
-    // Verificar se já tem o mesmo produto com os mesmos adicionais
     const existente = carrinho.find(i => i.produto_id === produto.id && (i._adKey || "") === adKey);
 
     if (existente) {
@@ -448,34 +396,6 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
     }
   };
 
-  const handleAuthSuccess = (user, token) => {
-    setShowAuthModal(false);
-    onLogin(user, token);
-  };
-
-  const handleAuthClose = () => {
-    setShowAuthModal(false);
-    setPendingProduct(null);
-  };
-
-  // Process pending product after successful auth
-  useEffect(() => {
-    if (usuario && pendingProduct) {
-      const prod = pendingProduct;
-      setPendingProduct(null);
-      if (catPermiteAdicionais[prod.categoria] && adicionaisDisponiveis.length > 0) {
-        setModalAdicional(prod);
-      } else {
-        addCarrinhoSimples(prod, []);
-      }
-    }
-  }, [usuario, pendingProduct]);
-
-  // Reset tab if user logs out while on pedidos
-  useEffect(() => {
-    if (!usuario && tab === "pedidos") setTab("catalogo");
-  }, [usuario, tab]);
-
   const updateQtd = (uid, qtd) => {
     if (qtd < 1) return setCarrinho(carrinho.filter(i => i._uid !== uid));
     setCarrinho(carrinho.map(i => i._uid === uid ? { ...i, quantidade: qtd } : i));
@@ -490,26 +410,28 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
 
   const abrirCheckout = () => {
     if (carrinho.length === 0) return;
-    if (!usuario) {
-      setShowAuthModal(true);
-      return;
-    }
     setModalCheckout(true);
   };
 
-  const enviarPedido = async ({ endereco, metodo_pagamento }) => {
+  const enviarPedido = async ({ cliente_nome, cliente_telefone, cliente_email, endereco, metodo_pagamento }) => {
     if (carrinho.length === 0) return;
     setEnviando(true);
     try {
       const itensLimpos = carrinho.map(({ _uid, _adKey, ...rest }) => rest);
-      const novo = await api.pedidos.criar({ itens: itensLimpos, obs, endereco, metodo_pagamento });
-      setPedidos(ps => [novo, ...ps]);
+      const novo = await api.pedidos.criarPublico({
+        itens: itensLimpos,
+        obs,
+        cliente_nome,
+        cliente_telefone,
+        cliente_email,
+        metodo_pagamento,
+        endereco,
+      });
       setCarrinho([]);
       setObs("");
       setModalCheckout(false);
-      setTab("pedidos");
-      // Recarregar enderecos salvos (caso tenha salvo um novo)
-      api.enderecos.listar().then(setEnderecosSalvos).catch(() => {});
+      setPedidoEnviado(novo);
+      setTab("confirmacao");
       showToast("Pedido enviado com sucesso!");
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
@@ -544,8 +466,6 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
           .client-header { padding: 8px 16px; gap: 12px; }
           .header-nav { width: 100%; }
           .nav-pill { flex: 1 1 120px; min-width: 120px; }
-          .client-user { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
-          .logout-btn { flex: 0 0 auto; }
         }
         .anim { animation: fi 0.25s ease; }
         @keyframes fi { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -562,26 +482,9 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
         <div className="header-nav" style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
-          {[["catalogo", "Cardapio"], ["carrinho", `Carrinho (${carrinho.length})`], ...(usuario ? [["pedidos", "Meus Pedidos"]] : [])].map(([k, v]) => (
+          {[["catalogo", "Cardapio"], ["carrinho", `Carrinho (${carrinho.length})`]].map(([k, v]) => (
             <button key={k} className={`nav-pill ${tab === k ? "active" : ""}`} onClick={() => setTab(k)}>{v}</button>
           ))}
-        </div>
-
-        <div style={{ flex: 1, minWidth: 0 }} />
-
-        <div className="client-user" style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
-          {usuario ? (
-            <>
-              <div style={{ fontSize: 12, color: "#78716c" }}>Ola, {usuario.nome.split(" ")[0]}</div>
-              <button className="logout-btn" onClick={onLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-                Sair
-              </button>
-            </>
-          ) : (
-            <button onClick={() => setShowAuthModal(true)} style={{ padding: "6px 14px", border: "none", borderRadius: 8, background: "#F38C24", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff" }}>
-              Entrar
-            </button>
-          )}
         </div>
       </header>
 
@@ -667,7 +570,6 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
             ) : (
               <div className="card" style={{ padding: 0 }}>
                 {carrinho.map((item, i) => {
-                  const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
                   const itemTotal = calcItemTotal(item);
                   return (
                     <div key={item._uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: i < carrinho.length - 1 ? "1px solid #f5f5f4" : "none" }}>
@@ -717,70 +619,24 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
           </div>
         )}
 
-        {/* MEUS PEDIDOS */}
-        {tab === "pedidos" && (
-          <div className="anim">
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600, marginBottom: 16 }}>Meus Pedidos</div>
-
-            {pedidos.length === 0 ? (
-              <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e" }}>
-                Voce ainda nao fez nenhum pedido.
+        {/* CONFIRMAÇÃO DO PEDIDO */}
+        {tab === "confirmacao" && pedidoEnviado && (
+          <div className="anim" style={{ textAlign: "center" }}>
+            <div className="card" style={{ padding: 40, maxWidth: 500, margin: "0 auto" }}>
+              <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px", fontSize: 28, color: "#15803d" }}>✓</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, marginBottom: 8, color: "#15803d" }}>Pedido Enviado!</div>
+              <div style={{ fontSize: 14, color: "#78716c", marginBottom: 20 }}>
+                Seu pedido <strong>#{pedidoEnviado.id.slice(0, 6)}</strong> foi recebido com sucesso.
               </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {pedidos.map(p => {
-                  const idx = STATUS_PIPELINE.indexOf(p.status);
-                  const pct = p.status === "cancelado" ? 0 : ((idx + 1) / STATUS_PIPELINE.length) * 100;
-                  return (
-                    <div key={p.id} className="card">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                        <div>
-                          <span style={{ fontSize: 14, fontWeight: 600, color: "#7B4532" }}>Pedido #{p.id.slice(0, 6)}</span>
-                          <span style={{ fontSize: 11, color: "#a8a29e", marginLeft: 8 }}>{new Date(p.created_at).toLocaleString("pt-BR")}</span>
-                        </div>
-                        <span style={{ background: STATUS_CORES[p.status].bg, color: STATUS_CORES[p.status].color, padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
-                          {STATUS_LABELS[p.status]}
-                        </span>
-                      </div>
-
-                      {p.status !== "cancelado" && (
-                        <div style={{ height: 6, background: "#f5f5f4", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
-                          <div style={{ width: `${pct}%`, height: "100%", background: STATUS_CORES[p.status].color, borderRadius: 3, transition: "width 0.8s ease" }} />
-                        </div>
-                      )}
-
-                      {/* Itens resumo com adicionais */}
-                      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 8 }}>
-                        {p.itens?.map((item, idx) => {
-                          const adTexto = item.adicionais && item.adicionais.length > 0
-                            ? ` (+ ${item.adicionais.map(a => (a.quantidade || 1) > 1 ? `${a.quantidade}x ${a.nome}` : a.nome).join(", ")})`
-                            : "";
-                          return `${item.quantidade}x ${item.produto_nome}${adTexto}`;
-                        }).join(", ")}
-                      </div>
-                      {p.obs && <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 8 }}>Obs: {p.obs}</div>}
-
-                      {/* Endereço */}
-                      {p.endereco_rua && (
-                        <div style={{ fontSize: 11, color: "#57534e", marginBottom: 6, padding: "6px 10px", background: "#fafaf9", borderRadius: 6 }}>
-                          <span style={{ fontWeight: 600 }}>Entrega:</span> {p.endereco_rua}{p.endereco_numero ? `, ${p.endereco_numero}` : ""} — {p.endereco_bairro}
-                          {p.endereco_referencia ? ` (${p.endereco_referencia})` : ""}
-                        </div>
-                      )}
-
-                      {/* Pagamento */}
-                      {p.metodo_pagamento && (
-                        <div style={{ fontSize: 11, color: "#57534e", marginBottom: 8 }}>
-                          <span style={{ fontWeight: 600 }}>Pagamento:</span> {p.metodo_pagamento === "pix" ? "Pix" : p.metodo_pagamento === "credito" ? "Cartão de Crédito" : p.metodo_pagamento === "debito" ? "Cartão de Débito" : p.metodo_pagamento}
-                        </div>
-                      )}
-
-                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#15803d" }}>{fmt(p.total)}</div>
-                    </div>
-                  );
-                })}
+              <div style={{ fontSize: 13, color: "#57534e", marginBottom: 8 }}>
+                {pedidoEnviado.itens?.map(item => `${item.quantidade}x ${item.produto_nome}`).join(", ")}
               </div>
-            )}
+              <div style={{ fontFamily: "'Fraunces', serif", fontSize: 28, fontWeight: 600, color: "#15803d", marginBottom: 24 }}>{fmt(pedidoEnviado.total)}</div>
+              <button onClick={() => { setPedidoEnviado(null); setTab("catalogo"); }}
+                style={{ background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "12px 24px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                Fazer novo pedido
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -798,19 +654,9 @@ export default function ClienteApp({ usuario, onLogin, onLogout }) {
       {/* Modal Checkout */}
       {modalCheckout && (
         <ModalCheckout
-          enderecosSalvos={enderecosSalvos}
           totalCarrinho={totalCarrinho}
           onConfirm={enviarPedido}
           onClose={() => setModalCheckout(false)}
-        />
-      )}
-
-      {/* Modal Auth */}
-      {showAuthModal && (
-        <ModalAuth
-          onLogin={handleAuthSuccess}
-          onClose={handleAuthClose}
-          defaultMode={pendingProduct ? "registro" : "login"}
         />
       )}
 
