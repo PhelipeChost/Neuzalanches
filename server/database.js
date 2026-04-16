@@ -121,6 +121,15 @@ db.exec(`
     FOREIGN KEY (produto_id) REFERENCES produtos(id)
   );
 
+  CREATE TABLE IF NOT EXISTS custos_fixos (
+    id TEXT PRIMARY KEY,
+    nome TEXT NOT NULL,
+    valor REAL NOT NULL DEFAULT 0,
+    categoria TEXT NOT NULL DEFAULT 'Outros',
+    ativo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS insumos (
     id TEXT PRIMARY KEY,
     nome TEXT NOT NULL,
@@ -177,6 +186,12 @@ try {
     `);
   }
 } catch (e) { /* migration already done */ }
+
+// Migração: adicionar custo_fixo_id na tabela lancamentos (para bancos já existentes)
+const colsLanc = db.prepare("PRAGMA table_info(lancamentos)").all().map(c => c.name);
+if (!colsLanc.includes("custo_fixo_id")) {
+  db.exec("ALTER TABLE lancamentos ADD COLUMN custo_fixo_id TEXT DEFAULT NULL");
+}
 
 // Migração: adicionar colunas novas na tabela pedidos (para bancos já existentes)
 const colsPedidos = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
@@ -534,6 +549,60 @@ export function excluirPedido(id) {
     return result.changes > 0;
   });
   return del();
+}
+
+// ─── CUSTOS FIXOS ────────────────────────────────────────────────────────────
+
+export function listarCustosFixos() {
+  return db.prepare("SELECT * FROM custos_fixos ORDER BY categoria, nome").all();
+}
+
+export function buscarCustoFixo(id) {
+  return db.prepare("SELECT * FROM custos_fixos WHERE id = ?").get(id);
+}
+
+export function criarCustoFixo({ nome, valor, categoria, ativo }) {
+  const id = gerarId();
+  db.prepare(
+    "INSERT INTO custos_fixos (id, nome, valor, categoria, ativo) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, nome, valor || 0, categoria || "Outros", ativo !== false ? 1 : 0);
+  return buscarCustoFixo(id);
+}
+
+export function atualizarCustoFixo(id, { nome, valor, categoria, ativo }) {
+  const result = db.prepare(
+    "UPDATE custos_fixos SET nome = ?, valor = ?, categoria = ?, ativo = ? WHERE id = ?"
+  ).run(nome, valor || 0, categoria || "Outros", ativo ? 1 : 0, id);
+  if (result.changes === 0) return null;
+  return buscarCustoFixo(id);
+}
+
+export function excluirCustoFixo(id) {
+  // Remove lançamentos gerados por este custo fixo que ainda estão como previsto
+  db.prepare("DELETE FROM lancamentos WHERE custo_fixo_id = ? AND status = 'previsto'").run(id);
+  return db.prepare("DELETE FROM custos_fixos WHERE id = ?").run(id).changes > 0;
+}
+
+// Gera lançamentos previsto para custos fixos ativos no mês informado (YYYY-MM)
+// Evita duplicatas: verifica se já existe lançamento do mesmo custo_fixo_id no mês
+export function gerarLancamentosCustosFixos(mes) {
+  const ativos = db.prepare("SELECT * FROM custos_fixos WHERE ativo = 1").all();
+  const gerados = [];
+  for (const cf of ativos) {
+    // Verifica se já existe lançamento para este custo fixo neste mês
+    const jaExiste = db.prepare(
+      "SELECT 1 FROM lancamentos WHERE custo_fixo_id = ? AND data LIKE ?"
+    ).get(cf.id, `${mes}%`);
+    if (!jaExiste) {
+      const dia = `${mes}-01`;
+      const id = gerarId();
+      db.prepare(
+        "INSERT INTO lancamentos (id, tipo, descricao, valor, data, cat, status, obs, custo_fixo_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(id, "saida", cf.nome, cf.valor, dia, cf.categoria, "previsto", "Custo fixo mensal", cf.id);
+      gerados.push(buscarLancamento(id));
+    }
+  }
+  return gerados;
 }
 
 // ─── INSUMOS ─────────────────────────────────────────────────────────────────

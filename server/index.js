@@ -16,6 +16,7 @@ import {
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
   listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
   listarComposicaoProduto, salvarComposicaoProduto,
+  listarCustosFixos, buscarCustoFixo, criarCustoFixo, atualizarCustoFixo, excluirCustoFixo, gerarLancamentosCustosFixos,
 } from "./database.js";
 
 const app = express();
@@ -476,6 +477,41 @@ app.delete("/api/pedidos/:id", authMiddleware, adminOnly, (req, res) => {
   const ok = excluirPedido(req.params.id);
   if (!ok) return res.status(404).json({ error: "Pedido não encontrado" });
   res.json({ success: true });
+});
+
+// ─── CUSTOS FIXOS (admin only) ───────────────────────────────────────────────
+
+app.get("/api/custos-fixos", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarCustosFixos());
+});
+
+app.post("/api/custos-fixos", authMiddleware, adminOnly, (req, res) => {
+  const { nome, valor, categoria, ativo } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  if (typeof valor !== "number" || valor < 0) return res.status(400).json({ error: "Valor inválido" });
+  res.status(201).json(criarCustoFixo({ nome, valor, categoria, ativo }));
+});
+
+app.put("/api/custos-fixos/:id", authMiddleware, adminOnly, (req, res) => {
+  const { nome, valor, categoria, ativo } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  if (typeof valor !== "number" || valor < 0) return res.status(400).json({ error: "Valor inválido" });
+  const cf = atualizarCustoFixo(req.params.id, { nome, valor, categoria, ativo });
+  if (!cf) return res.status(404).json({ error: "Custo fixo não encontrado" });
+  res.json(cf);
+});
+
+app.delete("/api/custos-fixos/:id", authMiddleware, adminOnly, (req, res) => {
+  if (!excluirCustoFixo(req.params.id)) return res.status(404).json({ error: "Custo fixo não encontrado" });
+  res.json({ success: true });
+});
+
+// Gera lançamentos previsto para o mês informado (YYYY-MM)
+app.post("/api/custos-fixos/gerar/:mes", authMiddleware, adminOnly, (req, res) => {
+  const { mes } = req.params;
+  if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: "Mês inválido (use YYYY-MM)" });
+  const gerados = gerarLancamentosCustosFixos(mes);
+  res.json({ gerados: gerados.length, lancamentos: gerados });
 });
 
 // ─── INSUMOS (admin only) ────────────────────────────────────────────────────

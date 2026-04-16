@@ -44,7 +44,7 @@ function ImagemProduto({ src, tamanho = 80, borderRadius = 8 }) {
 }
 
 // ─── MODAL PRODUTO ────────────────────────────────────────────────────────────
-function ModalProduto({ onSave, onClose, editando, categorias, insumos }) {
+function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, insumos }) {
   const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true });
   const [salvando, setSalvando] = useState(false);
   const [previewImg, setPreviewImg] = useState(editando?.imagem || "");
@@ -103,11 +103,17 @@ function ModalProduto({ onSave, onClose, editando, categorias, insumos }) {
     if (!editando?.id) return;
     setSalvando(true);
     try {
-      const { produto } = await api.composicao.salvar(editando.id, composicao.map(r => ({ insumo_id: r.insumo_id, quantidade: r.quantidade })));
-      // Atualiza custo no form para refletir o CMV calculado
+      const { produto } = await api.composicao.salvar(
+        editando.id,
+        composicao.map(r => ({ insumo_id: r.insumo_id, quantidade: r.quantidade }))
+      );
+      // Atualiza o form localmente com o novo CMV
       setForm(f => ({ ...f, custo: produto.custo }));
-      await onSave({ ...form, preco: parseFloat(form.preco), custo: produto.custo, disponivel: form.disponivel }, true);
-    } catch {
+      // Notifica o pai para atualizar o card do produto (sem chamar PUT /api/produtos novamente)
+      onFichaSalva(produto);
+    } catch (err) {
+      // erro já exibido via toast do pai se necessário
+    } finally {
       setSalvando(false);
     }
   };
@@ -359,23 +365,29 @@ export default function Produtos() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // skipClose=true quando chamado pela ficha técnica (não fecha modal, apenas atualiza lista)
-  const salvar = async (p, skipClose = false) => {
+  const salvar = async (p) => {
     try {
       if (editando) {
-        const atualizado = await api.produtos.atualizar(editando.id, { ...p, id: editando.id });
+        const atualizado = await api.produtos.atualizar(editando.id, { ...p });
         setProdutos(ps => ps.map(x => x.id === editando.id ? atualizado : x));
-        showToast(skipClose ? "Ficha técnica salva! CMV atualizado." : "Produto atualizado!");
+        showToast("Produto atualizado!");
       } else {
         const novo = await api.produtos.criar(p);
         setProdutos(ps => [...ps, novo]);
         showToast("Produto cadastrado!");
       }
-      if (!skipClose) setEditando(null);
+      setEditando(null);
+      setModal(false);
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
       throw err;
     }
+  };
+
+  // Chamado pela ficha técnica após salvar composição (já atualizou CMV no servidor)
+  const fichaSalva = (produto) => {
+    setProdutos(ps => ps.map(x => x.id === produto.id ? produto : x));
+    showToast("Ficha técnica salva! CMV atualizado.");
   };
 
   const excluir = async (id) => {
@@ -446,7 +458,7 @@ export default function Produtos() {
         </div>
       )}
 
-      {modal && <ModalProduto onSave={salvar} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} />}
+      {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} />}
 
       {confirmDel && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setConfirmDel(null)}>

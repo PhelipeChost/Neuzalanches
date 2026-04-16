@@ -276,6 +276,21 @@ export default function FluxoCaixa() {
 
   useEffect(() => { carregarDados(); }, [carregarDados]);
 
+  // ─── AUTO-GERAR CUSTOS FIXOS AO MUDAR MÊS ────────────────────────────────
+  useEffect(() => {
+    if (loading) return;
+    const gerarCustosFixos = async () => {
+      try {
+        const gerados = await api.custosFixos.gerar(mesSel);
+        if (gerados.length > 0) {
+          setLancamentos(ls => [...ls, ...gerados]);
+          showToast(`${gerados.length} custo(s) fixo(s) lançado(s) automaticamente.`);
+        }
+      } catch { /* silencioso — não bloqueia o fluxo */ }
+    };
+    gerarCustosFixos();
+  }, [mesSel, loading]);
+
   // Filtrar por mês selecionado
   const lancamentosMes = useMemo(() => lancamentos.filter(l => l.data.startsWith(mesSel)), [lancamentos, mesSel]);
 

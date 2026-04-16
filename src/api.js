@@ -109,6 +109,15 @@ export const api = {
     salvar: (data) => request("/config/pix", { method: "PUT", body: JSON.stringify(data) }),
   },
 
+  // Custos Fixos Mensais
+  custosFixos: {
+    listar: () => request("/custos-fixos"),
+    criar: (data) => request("/custos-fixos", { method: "POST", body: JSON.stringify(data) }),
+    atualizar: (id, data) => request(`/custos-fixos/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    excluir: (id) => request(`/custos-fixos/${id}`, { method: "DELETE" }),
+    gerar: (mes) => request(`/custos-fixos/gerar/${mes}`, { method: "POST" }),
+  },
+
   // Insumos (ficha técnica)
   insumos: {
     listar: () => request("/insumos"),
