@@ -44,11 +44,16 @@ function ImagemProduto({ src, tamanho = 80, borderRadius = 8 }) {
 }
 
 // ─── MODAL PRODUTO ────────────────────────────────────────────────────────────
-function ModalProduto({ onSave, onClose, editando, categorias }) {
+function ModalProduto({ onSave, onClose, editando, categorias, insumos }) {
   const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true });
   const [salvando, setSalvando] = useState(false);
   const [previewImg, setPreviewImg] = useState(editando?.imagem || "");
   const fileRef = useRef(null);
+  const [abaModal, setAbaModal] = useState("produto"); // "produto" | "ficha"
+  const [composicao, setComposicao] = useState([]); // [{ insumo_id, quantidade, insumo_nome, unidade, preco_unitario }]
+  const [loadingComposicao, setLoadingComposicao] = useState(false);
+  const [insumoSel, setInsumoSel] = useState("");
+  const [qtdInsumo, setQtdInsumo] = useState("");
 
   const handleImagem = async (e) => {
     const file = e.target.files[0];
@@ -64,6 +69,49 @@ function ModalProduto({ onSave, onClose, editando, categorias }) {
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  // Carregar composição ao abrir ficha técnica
+  useEffect(() => {
+    if (abaModal === "ficha" && editando?.id) {
+      setLoadingComposicao(true);
+      api.composicao.listar(editando.id)
+        .then(rows => setComposicao(rows))
+        .catch(() => {})
+        .finally(() => setLoadingComposicao(false));
+    }
+  }, [abaModal, editando?.id]);
+
+  // CMV calculado pela ficha técnica
+  const cmvFicha = composicao.reduce((s, r) => s + r.preco_unitario * r.quantidade, 0);
+  const temFicha = composicao.length > 0;
+
+  const adicionarInsumoFicha = () => {
+    if (!insumoSel || !qtdInsumo || parseFloat(qtdInsumo) <= 0) return;
+    const ins = insumos.find(i => i.id === insumoSel);
+    if (!ins) return;
+    if (composicao.find(r => r.insumo_id === insumoSel)) {
+      // atualiza quantidade
+      setComposicao(c => c.map(r => r.insumo_id === insumoSel ? { ...r, quantidade: parseFloat(qtdInsumo) } : r));
+    } else {
+      setComposicao(c => [...c, { insumo_id: ins.id, insumo_nome: ins.nome, unidade: ins.unidade, preco_unitario: ins.preco_unitario, quantidade: parseFloat(qtdInsumo) }]);
+    }
+    setInsumoSel(""); setQtdInsumo("");
+  };
+
+  const removerInsumoFicha = (insumoId) => setComposicao(c => c.filter(r => r.insumo_id !== insumoId));
+
+  const salvarFicha = async () => {
+    if (!editando?.id) return;
+    setSalvando(true);
+    try {
+      const { produto } = await api.composicao.salvar(editando.id, composicao.map(r => ({ insumo_id: r.insumo_id, quantidade: r.quantidade })));
+      // Atualiza custo no form para refletir o CMV calculado
+      setForm(f => ({ ...f, custo: produto.custo }));
+      await onSave({ ...form, preco: parseFloat(form.preco), custo: produto.custo, disponivel: form.disponivel }, true);
+    } catch {
+      setSalvando(false);
+    }
+  };
+
   const salvar = async () => {
     if (!form.nome || !form.preco) return;
     setSalvando(true);
@@ -75,83 +123,204 @@ function ModalProduto({ onSave, onClose, editando, categorias }) {
     }
   };
 
+  const fmt = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 520, maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>{editando ? "Editar" : "Novo"} Produto</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Foto do produto */}
-          <div>
-            <label style={lbl}>Foto do produto</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              {previewImg ? (
-                <img src={previewImg} alt="Preview" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 10, border: "1px solid #e7e5e4" }} />
-              ) : (
-                <div style={{ width: 90, height: 90, background: "#fafaf9", borderRadius: 10, border: "2px dashed #d6d3d1", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontSize: 24 }}>📷</span>
-                  <span style={{ fontSize: 10, color: "#a8a29e" }}>Sem foto</span>
-                </div>
-              )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <button type="button" onClick={() => fileRef.current?.click()}
-                  style={{ padding: "7px 14px", background: "#f5f5f4", border: "1px solid #e7e5e4", borderRadius: 6, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e", fontWeight: 500 }}>
-                  {previewImg ? "Trocar foto" : "Selecionar foto"}
-                </button>
-                {previewImg && (
-                  <button type="button" onClick={removerImagem}
-                    style={{ padding: "5px 14px", background: "none", border: "1px solid #fecaca", borderRadius: 6, fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
-                    Remover
-                  </button>
+        {/* Abas — só mostra Ficha Técnica se está editando */}
+        {editando && (
+          <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 8, padding: 3, marginBottom: 20 }}>
+            {[["produto", "Produto"], ["ficha", "Ficha Técnica"]].map(([k, v]) => (
+              <button key={k} onClick={() => setAbaModal(k)}
+                style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", background: abaModal === k ? "#fff" : "none", color: abaModal === k ? "#15803d" : "#78716c", fontWeight: abaModal === k ? 600 : 400, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", boxShadow: abaModal === k ? "0 1px 4px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }}>
+                {v}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ─── ABA: PRODUTO ─── */}
+        {abaModal === "produto" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Foto */}
+            <div>
+              <label style={lbl}>Foto do produto</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                {previewImg ? (
+                  <img src={previewImg} alt="Preview" style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 10, border: "1px solid #e7e5e4" }} />
+                ) : (
+                  <div style={{ width: 90, height: 90, background: "#fafaf9", borderRadius: 10, border: "2px dashed #d6d3d1", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 4 }}>
+                    <span style={{ fontSize: 24 }}>📷</span>
+                    <span style={{ fontSize: 10, color: "#a8a29e" }}>Sem foto</span>
+                  </div>
                 )}
-                <span style={{ fontSize: 10, color: "#a8a29e" }}>JPG, PNG — comprimida automaticamente</span>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    style={{ padding: "7px 14px", background: "#f5f5f4", border: "1px solid #e7e5e4", borderRadius: 6, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e", fontWeight: 500 }}>
+                    {previewImg ? "Trocar foto" : "Selecionar foto"}
+                  </button>
+                  {previewImg && (
+                    <button type="button" onClick={removerImagem}
+                      style={{ padding: "5px 14px", background: "none", border: "1px solid #fecaca", borderRadius: 6, fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
+                      Remover
+                    </button>
+                  )}
+                  <span style={{ fontSize: 10, color: "#a8a29e" }}>JPG, PNG — comprimida automaticamente</span>
+                </div>
+                <input ref={fileRef} type="file" accept="image/*" onChange={handleImagem} style={{ display: "none" }} />
               </div>
-              <input ref={fileRef} type="file" accept="image/*" onChange={handleImagem} style={{ display: "none" }} />
-            </div>
-          </div>
-
-          <div>
-            <label style={lbl}>Nome do produto</label>
-            <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Ex: Hambúrguer artesanal" />
-          </div>
-          <div>
-            <label style={lbl}>Descrição</label>
-            <input style={inp} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Breve descrição do produto" />
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            <div>
-              <label style={lbl}>Preço de venda (R$)</label>
-              <input style={inp} type="number" step="0.01" value={form.preco} onChange={e => setForm({ ...form, preco: e.target.value })} placeholder="0,00" />
             </div>
             <div>
-              <label style={lbl}>Custo de produção — CMV (R$)</label>
-              <input style={inp} type="number" step="0.01" value={form.custo} onChange={e => setForm({ ...form, custo: e.target.value })} placeholder="0,00" />
+              <label style={lbl}>Nome do produto</label>
+              <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Ex: Hambúrguer artesanal" />
             </div>
+            <div>
+              <label style={lbl}>Descrição</label>
+              <input style={inp} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Breve descrição do produto" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+              <div>
+                <label style={lbl}>Preço de venda (R$)</label>
+                <input style={inp} type="number" step="0.01" value={form.preco} onChange={e => setForm({ ...form, preco: e.target.value })} placeholder="0,00" />
+              </div>
+              <div>
+                <label style={lbl}>
+                  CMV — Custo (R$)
+                  {temFicha && <span style={{ marginLeft: 6, background: "#f0fdf4", color: "#15803d", padding: "1px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>AUTO</span>}
+                </label>
+                <input style={{ ...inp, background: temFicha ? "#fafaf9" : "#fff", color: temFicha ? "#78716c" : "#1c1917" }}
+                  type="number" step="0.01" value={temFicha ? cmvFicha.toFixed(2) : form.custo}
+                  readOnly={temFicha}
+                  onChange={e => !temFicha && setForm({ ...form, custo: e.target.value })}
+                  placeholder="0,00" />
+                {temFicha && <div style={{ fontSize: 11, color: "#78716c", marginTop: 4 }}>Calculado pela ficha técnica • <button style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 11, padding: 0 }} onClick={() => setAbaModal("ficha")}>ver composição →</button></div>}
+              </div>
+            </div>
+            <div>
+              <label style={lbl}>Categoria</label>
+              <select style={{ ...inp, cursor: "pointer" }} value={form.categoria} onChange={e => setForm({ ...form, categoria: e.target.value })}>
+                <option value="">Selecione...</option>
+                {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+              </select>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+              <input type="checkbox" checked={form.disponivel} onChange={e => setForm({ ...form, disponivel: e.target.checked })} />
+              <span style={{ color: form.disponivel ? "#15803d" : "#a8a29e", fontWeight: 500 }}>
+                {form.disponivel ? "Disponível para venda" : "Indisponível"}
+              </span>
+            </label>
           </div>
-          <div>
-            <label style={lbl}>Categoria</label>
-            <select style={{ ...inp, cursor: "pointer" }} value={form.categoria} onChange={e => setForm({ ...form, categoria: e.target.value })}>
-              <option value="">Selecione...</option>
-              {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-            </select>
-          </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
-            <input type="checkbox" checked={form.disponivel} onChange={e => setForm({ ...form, disponivel: e.target.checked })} />
-            <span style={{ color: form.disponivel ? "#15803d" : "#a8a29e", fontWeight: 500 }}>
-              {form.disponivel ? "Disponível para venda" : "Indisponível"}
-            </span>
-          </label>
-        </div>
+        )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
-          <button onClick={salvar} disabled={salvando} style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
-            {salvando ? "Salvando..." : editando ? "Salvar alterações" : "Cadastrar produto"}
-          </button>
-        </div>
+        {/* ─── ABA: FICHA TÉCNICA ─── */}
+        {abaModal === "ficha" && (
+          <div>
+            {loadingComposicao ? (
+              <div style={{ textAlign: "center", padding: 32, color: "#a8a29e", fontSize: 13 }}>Carregando...</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {/* Adicionar insumo */}
+                <div style={{ background: "#fafaf9", borderRadius: 10, padding: "14px 16px", border: "1px solid #e7e5e4" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 10 }}>ADICIONAR INSUMO</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <select style={{ ...inp, flex: "1 1 180px", cursor: "pointer" }} value={insumoSel} onChange={e => setInsumoSel(e.target.value)}>
+                      <option value="">Selecione o insumo...</option>
+                      {insumos.map(i => <option key={i.id} value={i.id}>{i.nome} ({i.unidade}) — {fmt(i.preco_unitario)}/{i.unidade}</option>)}
+                    </select>
+                    <input style={{ ...inp, width: 110, flex: "0 0 110px" }} type="number" step="0.001" min="0.001"
+                      placeholder="Qtd" value={qtdInsumo} onChange={e => setQtdInsumo(e.target.value)} />
+                    <button onClick={adicionarInsumoFicha}
+                      style={{ padding: "9px 16px", background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", whiteSpace: "nowrap" }}>
+                      + Adicionar
+                    </button>
+                  </div>
+                  {insumoSel && qtdInsumo && (() => {
+                    const ins = insumos.find(i => i.id === insumoSel);
+                    if (!ins) return null;
+                    const custo = ins.preco_unitario * parseFloat(qtdInsumo || 0);
+                    return <div style={{ fontSize: 11, color: "#78716c", marginTop: 6 }}>Custo: {fmt(custo)} ({qtdInsumo} {ins.unidade} × {fmt(ins.preco_unitario)})</div>;
+                  })()}
+                </div>
+
+                {/* Lista da composição */}
+                {composicao.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "#a8a29e", fontSize: 13 }}>
+                    Nenhum insumo na ficha técnica. Adicione acima.
+                  </div>
+                ) : (
+                  <div>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ borderBottom: "1px solid #e7e5e4" }}>
+                          <th style={{ padding: "6px 8px", textAlign: "left", fontSize: 11, color: "#78716c", fontWeight: 600 }}>INSUMO</th>
+                          <th style={{ padding: "6px 8px", textAlign: "center", fontSize: 11, color: "#78716c", fontWeight: 600 }}>QUANTIDADE</th>
+                          <th style={{ padding: "6px 8px", textAlign: "right", fontSize: 11, color: "#78716c", fontWeight: 600 }}>CUSTO</th>
+                          <th style={{ width: 32 }} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {composicao.map(r => (
+                          <tr key={r.insumo_id} style={{ borderBottom: "1px solid #f5f5f4" }}>
+                            <td style={{ padding: "8px 8px", fontWeight: 500 }}>{r.insumo_nome}</td>
+                            <td style={{ padding: "8px 8px", textAlign: "center", color: "#57534e" }}>
+                              <input type="number" step="0.001" min="0.001" value={r.quantidade}
+                                onChange={e => setComposicao(c => c.map(x => x.insumo_id === r.insumo_id ? { ...x, quantidade: parseFloat(e.target.value) || 0 } : x))}
+                                style={{ width: 80, padding: "4px 8px", border: "1.5px solid #e7e5e4", borderRadius: 6, fontSize: 12, textAlign: "center", fontFamily: "'DM Sans', sans-serif", outline: "none" }} />
+                              <span style={{ marginLeft: 4, fontSize: 11, color: "#a8a29e" }}>{r.unidade}</span>
+                            </td>
+                            <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 600, color: "#15803d" }}>
+                              {fmt(r.preco_unitario * r.quantidade)}
+                            </td>
+                            <td style={{ padding: "8px 4px", textAlign: "right" }}>
+                              <button onClick={() => removerInsumoFicha(r.insumo_id)}
+                                style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 14, padding: "2px 6px" }}>×</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ borderTop: "2px solid #e7e5e4", background: "#fafaf9" }}>
+                          <td colSpan={2} style={{ padding: "10px 8px", fontWeight: 700, fontSize: 13 }}>CMV Total</td>
+                          <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, fontSize: 15, color: "#15803d", fontFamily: "'Inter', sans-serif" }}>
+                            {fmt(cmvFicha)}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+                  <button onClick={() => setAbaModal("produto")}
+                    style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>
+                    ← Voltar
+                  </button>
+                  <button onClick={salvarFicha} disabled={salvando}
+                    style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
+                    {salvando ? "Salvando..." : "Salvar ficha técnica"}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Botões da aba Produto */}
+        {abaModal === "produto" && (
+          <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+            <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
+            <button onClick={salvar} disabled={salvando} style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
+              {salvando ? "Salvando..." : editando ? "Salvar alterações" : "Cadastrar produto"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -161,6 +330,7 @@ function ModalProduto({ onSave, onClose, editando, categorias }) {
 export default function Produtos() {
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
+  const [insumos, setInsumos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editando, setEditando] = useState(null);
@@ -172,12 +342,14 @@ export default function Produtos() {
 
   const carregar = useCallback(async () => {
     try {
-      const [prods, cats] = await Promise.all([
+      const [prods, cats, ins] = await Promise.all([
         api.produtos.listar(),
         api.categorias.listar(),
+        api.insumos.listar(),
       ]);
       setProdutos(prods);
       setCategorias(cats);
+      setInsumos(ins);
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
     } finally {
@@ -187,18 +359,19 @@ export default function Produtos() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  const salvar = async (p) => {
+  // skipClose=true quando chamado pela ficha técnica (não fecha modal, apenas atualiza lista)
+  const salvar = async (p, skipClose = false) => {
     try {
       if (editando) {
-        const atualizado = await api.produtos.atualizar(p.id, p);
-        setProdutos(ps => ps.map(x => x.id === p.id ? atualizado : x));
-        showToast("Produto atualizado!");
+        const atualizado = await api.produtos.atualizar(editando.id, { ...p, id: editando.id });
+        setProdutos(ps => ps.map(x => x.id === editando.id ? atualizado : x));
+        showToast(skipClose ? "Ficha técnica salva! CMV atualizado." : "Produto atualizado!");
       } else {
         const novo = await api.produtos.criar(p);
         setProdutos(ps => [...ps, novo]);
         showToast("Produto cadastrado!");
       }
-      setEditando(null);
+      if (!skipClose) setEditando(null);
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
       throw err;
@@ -273,7 +446,7 @@ export default function Produtos() {
         </div>
       )}
 
-      {modal && <ModalProduto onSave={salvar} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} />}
+      {modal && <ModalProduto onSave={salvar} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} />}
 
       {confirmDel && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setConfirmDel(null)}>

@@ -14,6 +14,8 @@ import {
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
   listarPedidos, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
+  listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
+  listarComposicaoProduto, salvarComposicaoProduto,
 } from "./database.js";
 
 const app = express();
@@ -474,6 +476,51 @@ app.delete("/api/pedidos/:id", authMiddleware, adminOnly, (req, res) => {
   const ok = excluirPedido(req.params.id);
   if (!ok) return res.status(404).json({ error: "Pedido não encontrado" });
   res.json({ success: true });
+});
+
+// ─── INSUMOS (admin only) ────────────────────────────────────────────────────
+
+app.get("/api/insumos", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarInsumos());
+});
+
+app.post("/api/insumos", authMiddleware, adminOnly, (req, res) => {
+  const { nome, unidade, preco_unitario } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  if (typeof preco_unitario !== "number" || preco_unitario < 0)
+    return res.status(400).json({ error: "Preço inválido" });
+  res.status(201).json(criarInsumo({ nome, unidade, preco_unitario }));
+});
+
+app.put("/api/insumos/:id", authMiddleware, adminOnly, (req, res) => {
+  const { nome, unidade, preco_unitario } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  if (typeof preco_unitario !== "number" || preco_unitario < 0)
+    return res.status(400).json({ error: "Preço inválido" });
+  const ins = atualizarInsumo(req.params.id, { nome, unidade, preco_unitario });
+  if (!ins) return res.status(404).json({ error: "Insumo não encontrado" });
+  // Retorna o insumo atualizado + lista de produtos afetados com novo CMV
+  res.json(ins);
+});
+
+app.delete("/api/insumos/:id", authMiddleware, adminOnly, (req, res) => {
+  if (!excluirInsumo(req.params.id)) return res.status(404).json({ error: "Insumo não encontrado" });
+  res.json({ success: true });
+});
+
+// ─── COMPOSIÇÃO DE PRODUTO (ficha técnica) ────────────────────────────────────
+
+app.get("/api/produtos/:id/composicao", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarComposicaoProduto(req.params.id));
+});
+
+app.put("/api/produtos/:id/composicao", authMiddleware, adminOnly, (req, res) => {
+  const { itens } = req.body;
+  if (!Array.isArray(itens)) return res.status(400).json({ error: "itens deve ser um array" });
+  const composicao = salvarComposicaoProduto(req.params.id, itens);
+  // Retorna a composição salva + o produto atualizado (com novo custo)
+  const produto = buscarProduto(req.params.id);
+  res.json({ composicao, produto });
 });
 
 // ─── START ──────────────────────────────────────────────────────────────────

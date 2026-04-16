@@ -108,4 +108,18 @@ export const api = {
     obter: () => request("/config/pix"),
     salvar: (data) => request("/config/pix", { method: "PUT", body: JSON.stringify(data) }),
   },
+
+  // Insumos (ficha técnica)
+  insumos: {
+    listar: () => request("/insumos"),
+    criar: (data) => request("/insumos", { method: "POST", body: JSON.stringify(data) }),
+    atualizar: (id, data) => request(`/insumos/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    excluir: (id) => request(`/insumos/${id}`, { method: "DELETE" }),
+  },
+
+  // Composição de produto (ficha técnica por produto)
+  composicao: {
+    listar: (produtoId) => request(`/produtos/${produtoId}/composicao`),
+    salvar: (produtoId, itens) => request(`/produtos/${produtoId}/composicao`, { method: "PUT", body: JSON.stringify({ itens }) }),
+  },
 };

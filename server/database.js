@@ -120,6 +120,24 @@ db.exec(`
     FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE,
     FOREIGN KEY (produto_id) REFERENCES produtos(id)
   );
+
+  CREATE TABLE IF NOT EXISTS insumos (
+    id TEXT PRIMARY KEY,
+    nome TEXT NOT NULL,
+    unidade TEXT NOT NULL DEFAULT 'un',
+    preco_unitario REAL NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS produto_insumos (
+    id TEXT PRIMARY KEY,
+    produto_id TEXT NOT NULL,
+    insumo_id TEXT NOT NULL,
+    quantidade REAL NOT NULL DEFAULT 0,
+    FOREIGN KEY (produto_id) REFERENCES produtos(id) ON DELETE CASCADE,
+    FOREIGN KEY (insumo_id) REFERENCES insumos(id) ON DELETE CASCADE,
+    UNIQUE(produto_id, insumo_id)
+  );
 `);
 
 // Inserir saldo inicial padrão se não existir
@@ -516,6 +534,89 @@ export function excluirPedido(id) {
     return result.changes > 0;
   });
   return del();
+}
+
+// ─── INSUMOS ─────────────────────────────────────────────────────────────────
+
+export function listarInsumos() {
+  return db.prepare("SELECT * FROM insumos ORDER BY nome").all();
+}
+
+export function buscarInsumo(id) {
+  return db.prepare("SELECT * FROM insumos WHERE id = ?").get(id);
+}
+
+export function criarInsumo({ nome, unidade, preco_unitario }) {
+  const id = gerarId();
+  db.prepare(
+    "INSERT INTO insumos (id, nome, unidade, preco_unitario) VALUES (?, ?, ?, ?)"
+  ).run(id, nome, unidade || "un", preco_unitario || 0);
+  return buscarInsumo(id);
+}
+
+export function atualizarInsumo(id, { nome, unidade, preco_unitario }) {
+  const result = db.prepare(
+    "UPDATE insumos SET nome = ?, unidade = ?, preco_unitario = ? WHERE id = ?"
+  ).run(nome, unidade || "un", preco_unitario || 0, id);
+  if (result.changes === 0) return null;
+  // Recalcular CMV de todos os produtos que usam este insumo
+  recalcularCMVPorInsumo(id);
+  return buscarInsumo(id);
+}
+
+export function excluirInsumo(id) {
+  // produto_insumos é deletado em cascata pelo FK
+  const ok = db.prepare("DELETE FROM insumos WHERE id = ?").run(id).changes > 0;
+  return ok;
+}
+
+// ─── COMPOSIÇÃO (FICHA TÉCNICA) ───────────────────────────────────────────────
+
+export function listarComposicaoProduto(produtoId) {
+  return db.prepare(`
+    SELECT pi.id, pi.produto_id, pi.insumo_id, pi.quantidade,
+           i.nome AS insumo_nome, i.unidade, i.preco_unitario
+    FROM produto_insumos pi
+    JOIN insumos i ON i.id = pi.insumo_id
+    WHERE pi.produto_id = ?
+    ORDER BY i.nome
+  `).all(produtoId);
+}
+
+export function salvarComposicaoProduto(produtoId, itens) {
+  // itens = [{ insumo_id, quantidade }]
+  const transacao = db.transaction(() => {
+    db.prepare("DELETE FROM produto_insumos WHERE produto_id = ?").run(produtoId);
+    for (const item of itens) {
+      if (!item.insumo_id || !item.quantidade) continue;
+      db.prepare(
+        "INSERT OR REPLACE INTO produto_insumos (id, produto_id, insumo_id, quantidade) VALUES (?, ?, ?, ?)"
+      ).run(gerarId(), produtoId, item.insumo_id, item.quantidade);
+    }
+    recalcularCMVProduto(produtoId);
+  });
+  transacao();
+  return listarComposicaoProduto(produtoId);
+}
+
+export function recalcularCMVProduto(produtoId) {
+  const composicao = listarComposicaoProduto(produtoId);
+  if (composicao.length === 0) return; // sem ficha técnica: CMV manual
+  const cmv = composicao.reduce((s, row) => s + row.preco_unitario * row.quantidade, 0);
+  db.prepare("UPDATE produtos SET custo = ? WHERE id = ?").run(
+    Math.round(cmv * 100) / 100,
+    produtoId
+  );
+}
+
+export function recalcularCMVPorInsumo(insumoId) {
+  // Busca todos os produtos que usam este insumo e recalcula o CMV de cada um
+  const produtos = db.prepare(
+    "SELECT DISTINCT produto_id FROM produto_insumos WHERE insumo_id = ?"
+  ).all(insumoId);
+  for (const { produto_id } of produtos) {
+    recalcularCMVProduto(produto_id);
+  }
 }
 
 export default db;
