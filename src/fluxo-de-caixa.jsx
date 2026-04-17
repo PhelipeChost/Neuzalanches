@@ -251,6 +251,55 @@ function DiagItem({ ok, warn, label, desc }) {
   );
 }
 
+// ─── GRÁFICO PONTO DE EQUILÍBRIO ─────────────────────────────────────────────
+function GraficoEquilibrio({ dados, pe }) {
+  const maxAcum = dados.length > 0 ? dados[dados.length - 1].acumulado : 0;
+  const maxY = Math.max(maxAcum, pe) * 1.18 || 1;
+  const W = 580, H = 160, padL = 8, padR = 34, padT = 10, padB = 22;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+  const n = dados.length;
+  if (n < 2) return null;
+
+  const cx = (i) => padL + (i / (n - 1)) * chartW;
+  const cy = (v) => padT + chartH - (v / maxY) * chartH;
+
+  const pts = dados.map((d, i) => `${cx(i).toFixed(1)},${cy(d.acumulado).toFixed(1)}`).join(" ");
+  const areaPts = `${cx(0).toFixed(1)},${(padT + chartH).toFixed(1)} ${pts} ${cx(n - 1).toFixed(1)},${(padT + chartH).toFixed(1)}`;
+  const peY = cy(pe);
+  const crossIdx = pe > 0 ? dados.findIndex(d => d.acumulado >= pe) : -1;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", display: "block" }}>
+      <defs>
+        <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2563eb" stopOpacity="0.2" />
+          <stop offset="100%" stopColor="#2563eb" stopOpacity="0.01" />
+        </linearGradient>
+      </defs>
+      <line x1={padL} y1={padT + chartH} x2={W - padR} y2={padT + chartH} stroke="#e7e5e4" strokeWidth={1} />
+      {pe > 0 && pe <= maxY * 1.05 && (
+        <>
+          <line x1={padL} y1={peY} x2={W - padR} y2={peY} stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="5 3" />
+          <text x={W - padR + 4} y={peY + 4} fontSize={9} fill="#f59e0b" fontFamily="DM Sans,sans-serif" fontWeight="700">PE</text>
+        </>
+      )}
+      <polygon points={areaPts} fill="url(#eqGrad)" />
+      <polyline points={pts} fill="none" stroke="#2563eb" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+      {crossIdx >= 0 && (
+        <>
+          <line x1={cx(crossIdx).toFixed(1)} y1={padT} x2={cx(crossIdx).toFixed(1)} y2={padT + chartH} stroke="#15803d" strokeWidth={1.5} strokeDasharray="4 3" opacity={0.7} />
+          <circle cx={cx(crossIdx)} cy={cy(dados[crossIdx].acumulado)} r={5} fill="#15803d" stroke="#fff" strokeWidth={2} />
+        </>
+      )}
+      {dados.map((d, i) => {
+        if (i % 5 !== 0 && i !== n - 1) return null;
+        return <text key={d.dia} x={cx(i)} y={H - 5} textAnchor="middle" fontSize={9} fill="#a8a29e" fontFamily="DM Sans,sans-serif">{d.dia}</text>;
+      })}
+    </svg>
+  );
+}
+
 // ─── FLUXO DE CAIXA PRINCIPAL ──────────────────────────────────────────────────
 export default function FluxoCaixa() {
   const [tab, setTab] = useState("visao-geral");
@@ -495,9 +544,35 @@ export default function FluxoCaixa() {
     return Object.entries(acc).sort((a, b) => b[1] - a[1]);
   }, [custosFixosList]);
 
+  // ─── PONTO DE EQUILÍBRIO ──────────────────────────────────────────────────────
+  const margemContribDecimal = receitaVendas > 0 ? (receitaVendas - cmvTotal) / receitaVendas : 0;
+  const pontoEquilibrio = margemContribDecimal > 0 ? totalCustosFixos / margemContribDecimal : 0;
+  const folga = receitaVendas - pontoEquilibrio;
+  const margemSeguranca = pontoEquilibrio > 0 && receitaVendas > 0 ? (folga / receitaVendas) * 100 : 0;
+
+  // Faturamento diário acumulado no mês (para o gráfico e cálculo do dia de equilíbrio)
+  const vendasDiariasAcum = useMemo(() => {
+    const [ano, mes] = mesSel.split("-").map(Number);
+    const diasNoMes = new Date(ano, mes, 0).getDate();
+    let acum = 0;
+    return Array.from({ length: diasNoMes }, (_, i) => {
+      const dia = String(i + 1).padStart(2, "0");
+      const vendas = pedidosMes
+        .filter(p => p.created_at && p.created_at.startsWith(`${mesSel}-${dia}`))
+        .reduce((s, p) => s + p.total, 0);
+      acum += vendas;
+      return { dia: i + 1, vendas, acumulado: acum };
+    });
+  }, [pedidosMes, mesSel]);
+
+  const diaEquilibrio = pontoEquilibrio > 0
+    ? vendasDiariasAcum.find(d => d.acumulado >= pontoEquilibrio)
+    : null;
+
   const nav = [
     { key: "visao-geral", label: "Visão Geral" },
     { key: "dre", label: "DRE" },
+    { key: "equilibrio", label: "Equilíbrio" },
     { key: "indicadores", label: "Indicadores CMV" },
     { key: "lancamentos", label: "Lançamentos" },
     { key: "custos-fixos", label: "Custos Fixos" },
@@ -806,6 +881,171 @@ export default function FluxoCaixa() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ── PONTO DE EQUILÍBRIO ──────────────────────────────────────────── */}
+        {tab === "equilibrio" && (
+          <div className="anim">
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>Ponto de Equilíbrio — {MESES[parseInt(mesSel.split("-")[1]) - 1]}/{mesSel.split("-")[0]}</div>
+              <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 3 }}>
+                Faturamento mínimo necessário para cobrir todos os custos fixos com a margem atual.
+              </div>
+            </div>
+
+            {/* Estado sem dados suficientes */}
+            {receitaVendas === 0 && (
+              <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: 12, padding: "20px 24px", fontSize: 13, color: "#92400e" }}>
+                ⚠ Sem pedidos entregues neste mês. O cálculo precisa de dados de vendas para determinar a margem de contribuição.
+              </div>
+            )}
+            {receitaVendas > 0 && totalCustosFixos === 0 && (
+              <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "20px 24px", fontSize: 13, color: "#1e40af" }}>
+                💡 Nenhum custo fixo ativo cadastrado. Vá em <strong>Custos Fixos</strong> para configurar e o ponto de equilíbrio será calculado automaticamente.
+              </div>
+            )}
+
+            {/* Conteúdo principal */}
+            {receitaVendas > 0 && totalCustosFixos > 0 && (
+              <>
+                {/* KPI Cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 16 }}>
+                  {/* PE */}
+                  <div className="card" style={{ padding: "16px 18px", borderTop: "3px solid #f59e0b" }}>
+                    <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 6 }}>PONTO DE EQUILÍBRIO</div>
+                    <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 22, fontWeight: 700, color: "#f59e0b" }}>{fmt(pontoEquilibrio)}</div>
+                    <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>por mês</div>
+                  </div>
+                  {/* Faturamento atual */}
+                  <div className="card" style={{ padding: "16px 18px", borderTop: "3px solid #2563eb" }}>
+                    <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 6 }}>FATURAMENTO ATUAL</div>
+                    <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 22, fontWeight: 700, color: "#2563eb" }}>{fmt(receitaVendas)}</div>
+                    <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>{pedidosMes.length} pedidos entregues</div>
+                  </div>
+                  {/* Resultado vs PE */}
+                  <div className="card" style={{ padding: "16px 18px", borderTop: `3px solid ${folga >= 0 ? "#15803d" : "#dc2626"}` }}>
+                    <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 6 }}>
+                      {folga >= 0 ? "ACIMA DO PE" : "ABAIXO DO PE"}
+                    </div>
+                    <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 22, fontWeight: 700, color: folga >= 0 ? "#15803d" : "#dc2626" }}>
+                      {folga >= 0 ? "+" : ""}{fmt(folga)}
+                    </div>
+                    <div style={{ fontSize: 11, marginTop: 4, color: folga >= 0 ? "#15803d" : "#dc2626", fontWeight: 500 }}>
+                      {folga >= 0 ? `✓ PE atingido — margem de segurança ${margemSeguranca.toFixed(1)}%` : `Faltam ${fmt(Math.abs(folga))} para cobrir os fixos`}
+                    </div>
+                  </div>
+                  {/* Dia em que atingiu */}
+                  <div className="card" style={{ padding: "16px 18px", borderTop: `3px solid ${diaEquilibrio ? "#15803d" : "#a8a29e"}` }}>
+                    <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 6 }}>DIA DO EQUILÍBRIO</div>
+                    {diaEquilibrio ? (
+                      <>
+                        <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 28, fontWeight: 700, color: "#15803d", lineHeight: 1 }}>
+                          Dia {diaEquilibrio.dia}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6 }}>
+                          de {vendasDiariasAcum.length} dias no mês
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 22, fontWeight: 700, color: "#a8a29e" }}>—</div>
+                        <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Ainda não atingido</div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Gráfico + Fórmula */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 300px", gap: 14, marginBottom: 14 }}>
+                  {/* Gráfico acumulado */}
+                  <div className="card">
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>Faturamento acumulado no mês</div>
+                        <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>Cada dia soma o faturamento dos pedidos entregues</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#78716c" }}>
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ display: "inline-block", width: 20, borderTop: "2px dashed #f59e0b" }} /> PE
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#15803d" }} /> Equilíbrio
+                        </span>
+                      </div>
+                    </div>
+                    <GraficoEquilibrio dados={vendasDiariasAcum} pe={pontoEquilibrio} />
+                  </div>
+
+                  {/* Fórmula e detalhes */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {/* Cálculo */}
+                    <div className="card" style={{ padding: "16px 18px", background: "#fafaf9" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 12, letterSpacing: "0.06em" }}>COMO FOI CALCULADO</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        <div style={{ fontSize: 12 }}>
+                          <div style={{ color: "#a8a29e", fontSize: 10, marginBottom: 2 }}>CUSTOS FIXOS TOTAIS</div>
+                          <div style={{ fontWeight: 600, color: "#dc2626" }}>{fmt(totalCustosFixos)}</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: "#a8a29e", textAlign: "center" }}>÷</div>
+                        <div style={{ fontSize: 12 }}>
+                          <div style={{ color: "#a8a29e", fontSize: 10, marginBottom: 2 }}>MARGEM DE CONTRIBUIÇÃO</div>
+                          <div style={{ fontWeight: 600, color: "#2563eb" }}>{(margemContribDecimal * 100).toFixed(1)}%</div>
+                          <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 2 }}>
+                            ({fmt(receitaVendas)} − {fmt(cmvTotal)}) ÷ {fmt(receitaVendas)}
+                          </div>
+                        </div>
+                        <div style={{ borderTop: "1px solid #e7e5e4", paddingTop: 8 }}>
+                          <div style={{ color: "#a8a29e", fontSize: 10, marginBottom: 2 }}>= PONTO DE EQUILÍBRIO</div>
+                          <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 18, fontWeight: 700, color: "#f59e0b" }}>{fmt(pontoEquilibrio)}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Margem de segurança */}
+                    <div className="card" style={{ padding: "16px 18px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 10, letterSpacing: "0.06em" }}>MARGEM DE SEGURANÇA</div>
+                      <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 22, fontWeight: 700, color: margemSeguranca >= 20 ? "#15803d" : margemSeguranca >= 0 ? "#d97706" : "#dc2626" }}>
+                        {margemSeguranca.toFixed(1)}%
+                      </div>
+                      <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
+                        {margemSeguranca >= 20 ? "Negócio bem protegido" : margemSeguranca >= 0 ? "Atenção: margem pequena" : "Operando abaixo do PE"}
+                      </div>
+                      <div style={{ marginTop: 10, height: 6, background: "#f5f5f4", borderRadius: 3 }}>
+                        <div style={{ width: `${Math.min(Math.abs(margemSeguranca), 100)}%`, height: "100%", background: margemSeguranca >= 20 ? "#15803d" : margemSeguranca >= 0 ? "#d97706" : "#dc2626", borderRadius: 3, transition: "width 0.8s" }} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tabela de faturamento diário */}
+                {vendasDiariasAcum.some(d => d.vendas > 0) && (
+                  <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+                    <div style={{ padding: "12px 18px", borderBottom: "1px solid #f5f5f4", fontSize: 13, fontWeight: 600 }}>
+                      Faturamento por dia
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <div style={{ display: "flex", gap: 0, padding: "10px 16px", flexWrap: "wrap" }}>
+                        {vendasDiariasAcum.filter(d => d.vendas > 0).map(d => {
+                          const atingiu = d.acumulado >= pontoEquilibrio;
+                          const esteEODia = diaEquilibrio && d.dia === diaEquilibrio.dia;
+                          return (
+                            <div key={d.dia} style={{ minWidth: 90, padding: "8px 10px", margin: "3px", background: esteEODia ? "#f0fdf4" : "#fafaf9", borderRadius: 8, border: esteEODia ? "1.5px solid #86efac" : "1px solid #f5f5f4", textAlign: "center" }}>
+                              <div style={{ fontSize: 10, color: "#a8a29e", marginBottom: 3 }}>Dia {d.dia}</div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#1c1917" }}>{fmt(d.vendas)}</div>
+                              <div style={{ fontSize: 10, color: atingiu ? "#15803d" : "#a8a29e", marginTop: 2, fontWeight: atingiu ? 600 : 400 }}>
+                                {fmt(d.acumulado)} acum.
+                              </div>
+                              {esteEODia && <div style={{ fontSize: 9, color: "#15803d", fontWeight: 700, marginTop: 2 }}>✓ PE atingido</div>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
