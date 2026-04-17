@@ -380,7 +380,6 @@ export default function App() {
     { key: "pedidos", label: "Pedidos", badge: pendentesCount },
     { key: "produtos", label: "Produtos" },
     { key: "insumos", label: "Insumos" },
-    { key: "custos-fixos", label: "Custos Fixos" },
     { key: "financeiro", label: "Financeiro" },
     { key: "config", label: "Configurações" },
   ];
@@ -462,7 +461,6 @@ export default function App() {
         {adminTab === "pedidos" && <Pedidos />}
         {adminTab === "produtos" && <Produtos />}
         {adminTab === "insumos" && <Insumos />}
-        {adminTab === "custos-fixos" && <CustosFixos />}
         {adminTab === "financeiro" && <FluxoCaixa />}
         {adminTab === "config" && <AdminConfig />}
       </div>

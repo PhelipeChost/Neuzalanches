@@ -114,7 +114,7 @@ function ModalCustoFixo({ editando, onSave, onClose }) {
 }
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
-export default function CustosFixos() {
+export default function CustosFixos({ onCustosChange }) {
   const [custos, setCustos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -124,26 +124,37 @@ export default function CustosFixos() {
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 3000); };
 
+  // Notifica o pai (FluxoCaixa) sempre que a lista mudar
+  const setCustosSync = (updater) => {
+    setCustos(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      if (onCustosChange) onCustosChange(next);
+      return next;
+    });
+  };
+
   const carregar = useCallback(async () => {
     try {
-      setCustos(await api.custosFixos.listar());
+      const lista = await api.custosFixos.listar();
+      setCustos(lista);
+      if (onCustosChange) onCustosChange(lista);
     } catch (err) {
       showToast("Erro ao carregar: " + err.message, "#dc2626");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { carregar(); }, [carregar]);
 
   const salvar = async (data) => {
     if (editando) {
       const atualizado = await api.custosFixos.atualizar(editando.id, data);
-      setCustos(cs => cs.map(c => c.id === editando.id ? atualizado : c));
+      setCustosSync(cs => cs.map(c => c.id === editando.id ? atualizado : c));
       showToast("Custo fixo atualizado!");
     } else {
       const novo = await api.custosFixos.criar(data);
-      setCustos(cs => [...cs, novo]);
+      setCustosSync(cs => [...cs, novo]);
       showToast("Custo fixo cadastrado! Será lançado como previsto no mês atual.");
     }
     setEditando(null);
@@ -153,7 +164,7 @@ export default function CustosFixos() {
   const toggleAtivo = async (cf) => {
     try {
       const atualizado = await api.custosFixos.atualizar(cf.id, { ...cf, ativo: !cf.ativo });
-      setCustos(cs => cs.map(c => c.id === cf.id ? atualizado : c));
+      setCustosSync(cs => cs.map(c => c.id === cf.id ? atualizado : c));
       showToast(atualizado.ativo ? "Custo ativado." : "Custo desativado.", "#78716c");
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
@@ -163,7 +174,7 @@ export default function CustosFixos() {
   const excluir = async (cf) => {
     try {
       await api.custosFixos.excluir(cf.id);
-      setCustos(cs => cs.filter(c => c.id !== cf.id));
+      setCustosSync(cs => cs.filter(c => c.id !== cf.id));
       setConfirmDel(null);
       showToast("Custo fixo excluído. Lançamentos previstos pendentes foram removidos.", "#78716c");
     } catch (err) {

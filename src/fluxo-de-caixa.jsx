@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { api } from "./api";
+import CustosFixos from "./CustosFixos";
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
 const CATEGORIAS_ENTRADA = ["Vendas", "Serviços", "Investimento", "Empréstimo", "Outros"];
@@ -499,6 +500,7 @@ export default function FluxoCaixa() {
     { key: "dre", label: "DRE" },
     { key: "indicadores", label: "Indicadores CMV" },
     { key: "lancamentos", label: "Lançamentos" },
+    { key: "custos-fixos", label: "Custos Fixos" },
     { key: "categorias", label: "Por Categoria" },
     { key: "projecao", label: "Projeção" },
   ];
@@ -1075,6 +1077,9 @@ export default function FluxoCaixa() {
             </div>
           </div>
         )}
+
+        {/* ── CUSTOS FIXOS ─────────────────────────────────────────────────── */}
+        {tab === "custos-fixos" && <CustosFixos onCustosChange={setCustosFixosList} />}
 
         {/* ── PROJEÇÃO ─────────────────────────────────────────────────────── */}
         {tab === "projecao" && (
