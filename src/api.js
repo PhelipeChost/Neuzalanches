@@ -131,4 +131,40 @@ export const api = {
     listar: (produtoId) => request(`/produtos/${produtoId}/composicao`),
     salvar: (produtoId, itens) => request(`/produtos/${produtoId}/composicao`, { method: "PUT", body: JSON.stringify({ itens }) }),
   },
+
+  // Estoque
+  estoque: {
+    dashboard: () => request("/estoque/dashboard"),
+    categorias: {
+      listar: () => request("/estoque/categorias"),
+      criar: (data) => request("/estoque/categorias", { method: "POST", body: JSON.stringify(data) }),
+      excluir: (id) => request(`/estoque/categorias/${id}`, { method: "DELETE" }),
+    },
+    fornecedores: {
+      listar: () => request("/estoque/fornecedores"),
+      criar: (data) => request("/estoque/fornecedores", { method: "POST", body: JSON.stringify(data) }),
+      atualizar: (id, data) => request(`/estoque/fornecedores/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+      excluir: (id) => request(`/estoque/fornecedores/${id}`, { method: "DELETE" }),
+    },
+    itens: {
+      listar: () => request("/estoque/itens"),
+      buscar: (id) => request(`/estoque/itens/${id}`),
+      criar: (data) => request("/estoque/itens", { method: "POST", body: JSON.stringify(data) }),
+      atualizar: (id, data) => request(`/estoque/itens/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+      excluir: (id) => request(`/estoque/itens/${id}`, { method: "DELETE" }),
+    },
+    entradas: {
+      listar: (itemId) => request(`/estoque/entradas${itemId ? `?item_id=${itemId}` : ""}`),
+      registrar: (data) => request("/estoque/entradas", { method: "POST", body: JSON.stringify(data) }),
+      lote: (entradas) => request("/estoque/entradas/lote", { method: "POST", body: JSON.stringify({ entradas }) }),
+    },
+    saidas: {
+      listar: (itemId) => request(`/estoque/saidas${itemId ? `?item_id=${itemId}` : ""}`),
+      registrar: (data) => request("/estoque/saidas", { method: "POST", body: JSON.stringify(data) }),
+    },
+    ajustes: {
+      listar: (itemId) => request(`/estoque/ajustes${itemId ? `?item_id=${itemId}` : ""}`),
+      registrar: (data) => request("/estoque/ajustes", { method: "POST", body: JSON.stringify(data) }),
+    },
+  },
 };

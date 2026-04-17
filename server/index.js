@@ -17,6 +17,13 @@ import {
   listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
   listarComposicaoProduto, salvarComposicaoProduto,
   listarCustosFixos, buscarCustoFixo, criarCustoFixo, atualizarCustoFixo, excluirCustoFixo, gerarLancamentosCustosFixos,
+  listarEstoqueCategorias, criarEstoqueCategoria, excluirEstoqueCategoria,
+  listarFornecedores, buscarFornecedor, criarFornecedor, atualizarFornecedor, excluirFornecedor,
+  listarEstoqueItens, buscarEstoqueItem, criarEstoqueItem, atualizarEstoqueItem, excluirEstoqueItem,
+  listarEstoqueEntradas, registrarEntrada, registrarEntradaLote,
+  listarEstoqueSaidas, registrarSaida,
+  listarEstoqueAjustes, registrarAjuste,
+  estoqueDashboard,
 } from "./database.js";
 
 const app = express();
@@ -557,6 +564,162 @@ app.put("/api/produtos/:id/composicao", authMiddleware, adminOnly, (req, res) =>
   // Retorna a composição salva + o produto atualizado (com novo custo)
   const produto = buscarProduto(req.params.id);
   res.json({ composicao, produto });
+});
+
+// ─── ESTOQUE: CATEGORIAS ─────────────────────────────────────────────────────
+
+app.get("/api/estoque/categorias", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarEstoqueCategorias());
+});
+
+app.post("/api/estoque/categorias", authMiddleware, adminOnly, (req, res) => {
+  const { nome } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  try {
+    res.status(201).json(criarEstoqueCategoria({ nome }));
+  } catch (err) {
+    if (err.message.includes("UNIQUE")) return res.status(409).json({ error: "Categoria já existe" });
+    throw err;
+  }
+});
+
+app.delete("/api/estoque/categorias/:id", authMiddleware, adminOnly, (req, res) => {
+  if (!excluirEstoqueCategoria(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
+  res.json({ success: true });
+});
+
+// ─── ESTOQUE: FORNECEDORES ────────────────────────────────────────────────────
+
+app.get("/api/estoque/fornecedores", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarFornecedores());
+});
+
+app.post("/api/estoque/fornecedores", authMiddleware, adminOnly, (req, res) => {
+  const { nome, telefone, email, obs } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  res.status(201).json(criarFornecedor({ nome, telefone, email, obs }));
+});
+
+app.put("/api/estoque/fornecedores/:id", authMiddleware, adminOnly, (req, res) => {
+  const { nome, telefone, email, obs } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  const f = atualizarFornecedor(req.params.id, { nome, telefone, email, obs });
+  if (!f) return res.status(404).json({ error: "Não encontrado" });
+  res.json(f);
+});
+
+app.delete("/api/estoque/fornecedores/:id", authMiddleware, adminOnly, (req, res) => {
+  if (!excluirFornecedor(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
+  res.json({ success: true });
+});
+
+// ─── ESTOQUE: ITENS ───────────────────────────────────────────────────────────
+
+app.get("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarEstoqueItens());
+});
+
+app.get("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
+  const item = buscarEstoqueItem(req.params.id);
+  if (!item) return res.status(404).json({ error: "Item não encontrado" });
+  res.json(item);
+});
+
+app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo } = req.body;
+  if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
+  try {
+    res.status(201).json(criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo }));
+  } catch (err) {
+    if (err.message.includes("UNIQUE")) return res.status(409).json({ error: "Código já existe" });
+    throw err;
+  }
+});
+
+app.put("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo } = req.body;
+  if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
+  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo });
+  if (!item) return res.status(404).json({ error: "Não encontrado" });
+  res.json(item);
+});
+
+app.delete("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
+  if (!excluirEstoqueItem(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
+  res.json({ success: true });
+});
+
+// ─── ESTOQUE: ENTRADAS ────────────────────────────────────────────────────────
+
+app.get("/api/estoque/entradas", authMiddleware, adminOnly, (req, res) => {
+  const { item_id } = req.query;
+  res.json(listarEstoqueEntradas(item_id || null));
+});
+
+app.post("/api/estoque/entradas", authMiddleware, adminOnly, (req, res) => {
+  const { item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs } = req.body;
+  if (!item_id || !quantidade) return res.status(400).json({ error: "item_id e quantidade são obrigatórios" });
+  if (parseFloat(quantidade) <= 0) return res.status(400).json({ error: "Quantidade deve ser positiva" });
+  try {
+    res.status(201).json(registrarEntrada({ item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/estoque/entradas/lote", authMiddleware, adminOnly, (req, res) => {
+  const { entradas } = req.body;
+  if (!Array.isArray(entradas) || entradas.length === 0) {
+    return res.status(400).json({ error: "Forneça um array de entradas" });
+  }
+  try {
+    const resultado = registrarEntradaLote(entradas);
+    res.status(201).json({ processadas: resultado.length, entradas: resultado });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── ESTOQUE: SAIDAS ──────────────────────────────────────────────────────────
+
+app.get("/api/estoque/saidas", authMiddleware, adminOnly, (req, res) => {
+  const { item_id } = req.query;
+  res.json(listarEstoqueSaidas(item_id || null));
+});
+
+app.post("/api/estoque/saidas", authMiddleware, adminOnly, (req, res) => {
+  const { item_id, quantidade, motivo, data, obs } = req.body;
+  if (!item_id || !quantidade) return res.status(400).json({ error: "item_id e quantidade são obrigatórios" });
+  if (parseFloat(quantidade) <= 0) return res.status(400).json({ error: "Quantidade deve ser positiva" });
+  try {
+    res.status(201).json(registrarSaida({ item_id, quantidade, motivo, data, obs }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── ESTOQUE: AJUSTES ─────────────────────────────────────────────────────────
+
+app.get("/api/estoque/ajustes", authMiddleware, adminOnly, (req, res) => {
+  const { item_id } = req.query;
+  res.json(listarEstoqueAjustes(item_id || null));
+});
+
+app.post("/api/estoque/ajustes", authMiddleware, adminOnly, (req, res) => {
+  const { item_id, saldo_novo, motivo, data, obs } = req.body;
+  if (!item_id || saldo_novo === undefined) return res.status(400).json({ error: "item_id e saldo_novo são obrigatórios" });
+  if (parseFloat(saldo_novo) < 0) return res.status(400).json({ error: "Saldo não pode ser negativo" });
+  try {
+    res.status(201).json(registrarAjuste({ item_id, saldo_novo, motivo, data, obs }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── ESTOQUE: DASHBOARD ───────────────────────────────────────────────────────
+
+app.get("/api/estoque/dashboard", authMiddleware, adminOnly, (req, res) => {
+  res.json(estoqueDashboard());
 });
 
 // ─── START ──────────────────────────────────────────────────────────────────

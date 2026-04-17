@@ -147,6 +147,75 @@ db.exec(`
     FOREIGN KEY (insumo_id) REFERENCES insumos(id) ON DELETE CASCADE,
     UNIQUE(produto_id, insumo_id)
   );
+
+  CREATE TABLE IF NOT EXISTS estoque_categorias (
+    id TEXT PRIMARY KEY,
+    nome TEXT UNIQUE NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS fornecedores (
+    id TEXT PRIMARY KEY,
+    nome TEXT NOT NULL,
+    telefone TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    obs TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS estoque_itens (
+    id TEXT PRIMARY KEY,
+    codigo TEXT UNIQUE NOT NULL,
+    nome TEXT NOT NULL,
+    unidade TEXT NOT NULL DEFAULT 'un',
+    categoria_id TEXT DEFAULT NULL,
+    fornecedor_id TEXT DEFAULT NULL,
+    saldo_atual REAL NOT NULL DEFAULT 0,
+    custo_medio REAL NOT NULL DEFAULT 0,
+    estoque_minimo REAL DEFAULT 0,
+    estoque_maximo REAL DEFAULT 0,
+    ativo INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (categoria_id) REFERENCES estoque_categorias(id),
+    FOREIGN KEY (fornecedor_id) REFERENCES fornecedores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS estoque_entradas (
+    id TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL,
+    quantidade REAL NOT NULL,
+    custo_unitario REAL NOT NULL DEFAULT 0,
+    fornecedor_id TEXT DEFAULT NULL,
+    data TEXT NOT NULL,
+    nf TEXT DEFAULT '',
+    obs TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (item_id) REFERENCES estoque_itens(id),
+    FOREIGN KEY (fornecedor_id) REFERENCES fornecedores(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS estoque_saidas (
+    id TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL,
+    quantidade REAL NOT NULL,
+    motivo TEXT DEFAULT 'consumo',
+    data TEXT NOT NULL,
+    obs TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (item_id) REFERENCES estoque_itens(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS estoque_ajustes (
+    id TEXT PRIMARY KEY,
+    item_id TEXT NOT NULL,
+    saldo_anterior REAL NOT NULL,
+    saldo_novo REAL NOT NULL,
+    motivo TEXT DEFAULT '',
+    data TEXT NOT NULL,
+    obs TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (item_id) REFERENCES estoque_itens(id)
+  );
 `);
 
 // Inserir saldo inicial padrão se não existir
@@ -686,6 +755,271 @@ export function recalcularCMVPorInsumo(insumoId) {
   for (const { produto_id } of produtos) {
     recalcularCMVProduto(produto_id);
   }
+}
+
+// ─── ESTOQUE CATEGORIAS ───────────────────────────────────────────────────────
+
+export function listarEstoqueCategorias() {
+  return db.prepare("SELECT * FROM estoque_categorias ORDER BY nome").all();
+}
+
+export function criarEstoqueCategoria({ nome }) {
+  const id = gerarId();
+  db.prepare("INSERT INTO estoque_categorias (id, nome) VALUES (?, ?)").run(id, nome);
+  return db.prepare("SELECT * FROM estoque_categorias WHERE id = ?").get(id);
+}
+
+export function excluirEstoqueCategoria(id) {
+  return db.prepare("DELETE FROM estoque_categorias WHERE id = ?").run(id).changes > 0;
+}
+
+// ─── FORNECEDORES ─────────────────────────────────────────────────────────────
+
+export function listarFornecedores() {
+  return db.prepare("SELECT * FROM fornecedores ORDER BY nome").all();
+}
+
+export function buscarFornecedor(id) {
+  return db.prepare("SELECT * FROM fornecedores WHERE id = ?").get(id);
+}
+
+export function criarFornecedor({ nome, telefone, email, obs }) {
+  const id = gerarId();
+  db.prepare("INSERT INTO fornecedores (id, nome, telefone, email, obs) VALUES (?, ?, ?, ?, ?)")
+    .run(id, nome, telefone || "", email || "", obs || "");
+  return buscarFornecedor(id);
+}
+
+export function atualizarFornecedor(id, { nome, telefone, email, obs }) {
+  const r = db.prepare("UPDATE fornecedores SET nome=?, telefone=?, email=?, obs=? WHERE id=?")
+    .run(nome, telefone || "", email || "", obs || "", id);
+  if (r.changes === 0) return null;
+  return buscarFornecedor(id);
+}
+
+export function excluirFornecedor(id) {
+  return db.prepare("DELETE FROM fornecedores WHERE id = ?").run(id).changes > 0;
+}
+
+// ─── ESTOQUE ITENS ────────────────────────────────────────────────────────────
+
+export function listarEstoqueItens() {
+  return db.prepare(`
+    SELECT ei.*, ec.nome AS categoria_nome, f.nome AS fornecedor_nome
+    FROM estoque_itens ei
+    LEFT JOIN estoque_categorias ec ON ec.id = ei.categoria_id
+    LEFT JOIN fornecedores f ON f.id = ei.fornecedor_id
+    ORDER BY ei.nome
+  `).all();
+}
+
+export function buscarEstoqueItem(id) {
+  return db.prepare(`
+    SELECT ei.*, ec.nome AS categoria_nome, f.nome AS fornecedor_nome
+    FROM estoque_itens ei
+    LEFT JOIN estoque_categorias ec ON ec.id = ei.categoria_id
+    LEFT JOIN fornecedores f ON f.id = ei.fornecedor_id
+    WHERE ei.id = ?
+  `).get(id);
+}
+
+export function buscarEstoqueItemPorCodigo(codigo) {
+  return db.prepare("SELECT * FROM estoque_itens WHERE codigo = ?").get(codigo);
+}
+
+export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo }) {
+  const id = gerarId();
+  db.prepare(`
+    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
+    estoque_minimo || 0, estoque_maximo || 0);
+  return buscarEstoqueItem(id);
+}
+
+export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo }) {
+  const r = db.prepare(`
+    UPDATE estoque_itens SET codigo=?, nome=?, unidade=?, categoria_id=?, fornecedor_id=?,
+    estoque_minimo=?, estoque_maximo=?, ativo=? WHERE id=?
+  `).run(codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
+    estoque_minimo || 0, estoque_maximo || 0, ativo !== false ? 1 : 0, id);
+  if (r.changes === 0) return null;
+  return buscarEstoqueItem(id);
+}
+
+export function excluirEstoqueItem(id) {
+  return db.prepare("DELETE FROM estoque_itens WHERE id = ?").run(id).changes > 0;
+}
+
+// ─── ESTOQUE ENTRADAS ─────────────────────────────────────────────────────────
+
+export function listarEstoqueEntradas(itemId = null) {
+  if (itemId) {
+    return db.prepare(`
+      SELECT ee.*, ei.nome AS item_nome, ei.codigo AS item_codigo, ei.unidade,
+             f.nome AS fornecedor_nome
+      FROM estoque_entradas ee
+      JOIN estoque_itens ei ON ei.id = ee.item_id
+      LEFT JOIN fornecedores f ON f.id = ee.fornecedor_id
+      WHERE ee.item_id = ?
+      ORDER BY ee.data DESC, ee.created_at DESC
+    `).all(itemId);
+  }
+  return db.prepare(`
+    SELECT ee.*, ei.nome AS item_nome, ei.codigo AS item_codigo, ei.unidade,
+           f.nome AS fornecedor_nome
+    FROM estoque_entradas ee
+    JOIN estoque_itens ei ON ei.id = ee.item_id
+    LEFT JOIN fornecedores f ON f.id = ee.fornecedor_id
+    ORDER BY ee.data DESC, ee.created_at DESC
+    LIMIT 200
+  `).all();
+}
+
+export function registrarEntrada({ item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs }) {
+  const item = db.prepare("SELECT * FROM estoque_itens WHERE id = ?").get(item_id);
+  if (!item) throw new Error("Item não encontrado");
+
+  const qtd = parseFloat(quantidade);
+  const custo = parseFloat(custo_unitario) || 0;
+
+  // Custo médio ponderado
+  const novoSaldo = item.saldo_atual + qtd;
+  const novoCustoMedio = novoSaldo > 0
+    ? (item.saldo_atual * item.custo_medio + qtd * custo) / novoSaldo
+    : custo;
+
+  const id = gerarId();
+  const txn = db.transaction(() => {
+    db.prepare("INSERT INTO estoque_entradas (id, item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(id, item_id, qtd, custo, fornecedor_id || null, data || new Date().toISOString().split("T")[0], nf || "", obs || "");
+    db.prepare("UPDATE estoque_itens SET saldo_atual=?, custo_medio=? WHERE id=?")
+      .run(Math.round(novoSaldo * 1000) / 1000, Math.round(novoCustoMedio * 100) / 100, item_id);
+  });
+  txn();
+
+  return db.prepare("SELECT * FROM estoque_entradas WHERE id = ?").get(id);
+}
+
+export function registrarEntradaLote(entradas) {
+  // entradas = [{ item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs }]
+  const resultado = [];
+  const txn = db.transaction(() => {
+    for (const e of entradas) {
+      if (!e.item_id || !e.quantidade) continue;
+      const item = db.prepare("SELECT * FROM estoque_itens WHERE id = ?").get(e.item_id);
+      if (!item) continue;
+      const qtd = parseFloat(e.quantidade);
+      const custo = parseFloat(e.custo_unitario) || 0;
+      const novoSaldo = item.saldo_atual + qtd;
+      const novoCustoMedio = novoSaldo > 0
+        ? (item.saldo_atual * item.custo_medio + qtd * custo) / novoSaldo
+        : custo;
+      const id = gerarId();
+      db.prepare("INSERT INTO estoque_entradas (id, item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(id, e.item_id, qtd, custo, e.fornecedor_id || null, e.data || new Date().toISOString().split("T")[0], e.nf || "", e.obs || "");
+      db.prepare("UPDATE estoque_itens SET saldo_atual=?, custo_medio=? WHERE id=?")
+        .run(Math.round(novoSaldo * 1000) / 1000, Math.round(novoCustoMedio * 100) / 100, e.item_id);
+      resultado.push(db.prepare("SELECT * FROM estoque_entradas WHERE id = ?").get(id));
+    }
+  });
+  txn();
+  return resultado;
+}
+
+// ─── ESTOQUE SAIDAS ───────────────────────────────────────────────────────────
+
+export function listarEstoqueSaidas(itemId = null) {
+  if (itemId) {
+    return db.prepare(`
+      SELECT es.*, ei.nome AS item_nome, ei.codigo AS item_codigo, ei.unidade
+      FROM estoque_saidas es
+      JOIN estoque_itens ei ON ei.id = es.item_id
+      WHERE es.item_id = ?
+      ORDER BY es.data DESC, es.created_at DESC
+    `).all(itemId);
+  }
+  return db.prepare(`
+    SELECT es.*, ei.nome AS item_nome, ei.codigo AS item_codigo, ei.unidade
+    FROM estoque_saidas es
+    JOIN estoque_itens ei ON ei.id = es.item_id
+    ORDER BY es.data DESC, es.created_at DESC
+    LIMIT 200
+  `).all();
+}
+
+export function registrarSaida({ item_id, quantidade, motivo, data, obs }) {
+  const item = db.prepare("SELECT * FROM estoque_itens WHERE id = ?").get(item_id);
+  if (!item) throw new Error("Item não encontrado");
+  const qtd = parseFloat(quantidade);
+  if (item.saldo_atual < qtd) throw new Error("Saldo insuficiente");
+
+  const id = gerarId();
+  const txn = db.transaction(() => {
+    db.prepare("INSERT INTO estoque_saidas (id, item_id, quantidade, motivo, data, obs) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, item_id, qtd, motivo || "consumo", data || new Date().toISOString().split("T")[0], obs || "");
+    db.prepare("UPDATE estoque_itens SET saldo_atual=? WHERE id=?")
+      .run(Math.round((item.saldo_atual - qtd) * 1000) / 1000, item_id);
+  });
+  txn();
+  return db.prepare("SELECT * FROM estoque_saidas WHERE id = ?").get(id);
+}
+
+// ─── ESTOQUE AJUSTES ──────────────────────────────────────────────────────────
+
+export function listarEstoqueAjustes(itemId = null) {
+  if (itemId) {
+    return db.prepare(`
+      SELECT ea.*, ei.nome AS item_nome, ei.codigo AS item_codigo, ei.unidade
+      FROM estoque_ajustes ea
+      JOIN estoque_itens ei ON ei.id = ea.item_id
+      WHERE ea.item_id = ?
+      ORDER BY ea.data DESC, ea.created_at DESC
+    `).all(itemId);
+  }
+  return db.prepare(`
+    SELECT ea.*, ei.nome AS item_nome, ei.codigo AS item_codigo, ei.unidade
+    FROM estoque_ajustes ea
+    JOIN estoque_itens ei ON ei.id = ea.item_id
+    ORDER BY ea.data DESC, ea.created_at DESC
+    LIMIT 200
+  `).all();
+}
+
+export function registrarAjuste({ item_id, saldo_novo, motivo, data, obs }) {
+  const item = db.prepare("SELECT * FROM estoque_itens WHERE id = ?").get(item_id);
+  if (!item) throw new Error("Item não encontrado");
+  const novoSaldo = parseFloat(saldo_novo);
+  const id = gerarId();
+  const txn = db.transaction(() => {
+    db.prepare("INSERT INTO estoque_ajustes (id, item_id, saldo_anterior, saldo_novo, motivo, data, obs) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(id, item_id, item.saldo_atual, novoSaldo, motivo || "", data || new Date().toISOString().split("T")[0], obs || "");
+    db.prepare("UPDATE estoque_itens SET saldo_atual=? WHERE id=?")
+      .run(Math.round(novoSaldo * 1000) / 1000, item_id);
+  });
+  txn();
+  return db.prepare("SELECT * FROM estoque_ajustes WHERE id = ?").get(id);
+}
+
+// ─── ESTOQUE DASHBOARD ────────────────────────────────────────────────────────
+
+export function estoqueDashboard() {
+  const itens = db.prepare("SELECT * FROM estoque_itens WHERE ativo = 1").all();
+  const totalItens = itens.length;
+  const estoqueValor = itens.reduce((s, i) => s + i.saldo_atual * i.custo_medio, 0);
+  const itensBaixos = itens.filter(i => i.estoque_minimo > 0 && i.saldo_atual <= i.estoque_minimo);
+  const itensSemEstoque = itens.filter(i => i.saldo_atual <= 0);
+  const ultimasEntradas = db.prepare(`
+    SELECT ee.*, ei.nome AS item_nome FROM estoque_entradas ee
+    JOIN estoque_itens ei ON ei.id = ee.item_id
+    ORDER BY ee.created_at DESC LIMIT 10
+  `).all();
+  const ultimasSaidas = db.prepare(`
+    SELECT es.*, ei.nome AS item_nome FROM estoque_saidas es
+    JOIN estoque_itens ei ON ei.id = es.item_id
+    ORDER BY es.created_at DESC LIMIT 10
+  `).all();
+  return { totalItens, estoqueValor, itensBaixos, itensSemEstoque, ultimasEntradas, ultimasSaidas };
 }
 
 export default db;

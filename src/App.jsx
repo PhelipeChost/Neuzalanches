@@ -6,6 +6,7 @@ import Produtos from "./Produtos";
 import Pedidos from "./Pedidos";
 import Insumos from "./Insumos";
 import CustosFixos from "./CustosFixos";
+import Estoque from "./Estoque";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
 const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
@@ -380,6 +381,7 @@ export default function App() {
     { key: "pedidos", label: "Pedidos", badge: pendentesCount },
     { key: "produtos", label: "Produtos" },
     { key: "insumos", label: "Insumos" },
+    { key: "estoque", label: "Estoque" },
     { key: "financeiro", label: "Financeiro" },
     { key: "config", label: "Configurações" },
   ];
@@ -461,6 +463,7 @@ export default function App() {
         {adminTab === "pedidos" && <Pedidos />}
         {adminTab === "produtos" && <Produtos />}
         {adminTab === "insumos" && <Insumos />}
+        {adminTab === "estoque" && <Estoque />}
         {adminTab === "financeiro" && <FluxoCaixa />}
         {adminTab === "config" && <AdminConfig />}
       </div>
