@@ -848,7 +848,13 @@ export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, 
 }
 
 export function excluirEstoqueItem(id) {
-  return db.prepare("DELETE FROM estoque_itens WHERE id = ?").run(id).changes > 0;
+  const del = db.transaction(() => {
+    db.prepare("DELETE FROM estoque_entradas WHERE item_id = ?").run(id);
+    db.prepare("DELETE FROM estoque_saidas WHERE item_id = ?").run(id);
+    db.prepare("DELETE FROM estoque_ajustes WHERE item_id = ?").run(id);
+    return db.prepare("DELETE FROM estoque_itens WHERE id = ?").run(id).changes > 0;
+  });
+  return del();
 }
 
 // ─── ESTOQUE ENTRADAS ─────────────────────────────────────────────────────────
