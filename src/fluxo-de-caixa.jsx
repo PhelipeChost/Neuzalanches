@@ -233,11 +233,29 @@ function ModalSaldoInicial({ valorAtual, onSave, onClose }) {
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
 const inp = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
 
+// ─── COMPONENTES DRE ──────────────────────────────────────────────────────────
+function lubroBrutoColor(v) { return v >= 0 ? "#15803d" : "#dc2626"; }
+
+function DiagItem({ ok, warn, label, desc }) {
+  const cor = ok ? "#15803d" : warn ? "#d97706" : "#dc2626";
+  const icon = ok ? "✓" : warn ? "⚠" : "✕";
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <span style={{ color: cor, fontWeight: 700, fontSize: 13, flexShrink: 0, marginTop: 1 }}>{icon}</span>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#1c1917" }}>{label}</div>
+        <div style={{ fontSize: 11, color: cor }}>{desc}</div>
+      </div>
+    </div>
+  );
+}
+
 // ─── FLUXO DE CAIXA PRINCIPAL ──────────────────────────────────────────────────
 export default function FluxoCaixa() {
   const [tab, setTab] = useState("visao-geral");
   const [lancamentos, setLancamentos] = useState([]);
   const [pedidos, setPedidos] = useState([]);
+  const [custosFixosList, setCustosFixosList] = useState([]);
   const [saldoInicial, setSaldoInicial] = useState(0);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -259,14 +277,16 @@ export default function FluxoCaixa() {
   // ─── CARREGAR DADOS DO BANCO ───────────────────────────────────────────────
   const carregarDados = useCallback(async () => {
     try {
-      const [lancs, config, peds] = await Promise.all([
+      const [lancs, config, peds, custos] = await Promise.all([
         api.lancamentos.listar(),
         api.config.obter(),
         api.pedidos.listar(),
+        api.custosFixos.listar(),
       ]);
       setLancamentos(lancs);
       setSaldoInicial(config.saldo_inicial);
       setPedidos(peds);
+      setCustosFixosList(custos);
     } catch (err) {
       showToast("Erro ao carregar dados: " + err.message, "#dc2626");
     } finally {
@@ -455,8 +475,28 @@ export default function FluxoCaixa() {
     }
   };
 
+  // ─── DRE: CUSTOS FIXOS ATIVOS + LUCRO LÍQUIDO ────────────────────────────────
+  const totalCustosFixos = useMemo(
+    () => custosFixosList.filter(c => c.ativo).reduce((s, c) => s + c.valor, 0),
+    [custosFixosList]
+  );
+  const lucroLiquido = lucroBruto - totalCustosFixos;
+  const margemLiquida = receitaVendas > 0 ? (lucroLiquido / receitaVendas) * 100 : 0;
+
+  // Custos fixos agrupados por categoria (para detalhe do DRE)
+  const custosFixosPorCat = useMemo(() => {
+    const ativos = custosFixosList.filter(c => c.ativo);
+    const acc = {};
+    ativos.forEach(c => {
+      if (!acc[c.categoria]) acc[c.categoria] = 0;
+      acc[c.categoria] += c.valor;
+    });
+    return Object.entries(acc).sort((a, b) => b[1] - a[1]);
+  }, [custosFixosList]);
+
   const nav = [
     { key: "visao-geral", label: "Visão Geral" },
+    { key: "dre", label: "DRE" },
     { key: "indicadores", label: "Indicadores CMV" },
     { key: "lancamentos", label: "Lançamentos" },
     { key: "categorias", label: "Por Categoria" },
@@ -577,6 +617,193 @@ export default function FluxoCaixa() {
                 </div>
               );
             })()}
+          </div>
+        )}
+
+        {/* ── DRE ─────────────────────────────────────────────────────────── */}
+        {tab === "dre" && (
+          <div className="anim">
+            {/* Título do DRE */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "#1c1917" }}>
+                Demonstração do Resultado — {MESES[parseInt(mesSel.split("-")[1]) - 1]}/{mesSel.split("-")[0]}
+              </div>
+              <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 3 }}>
+                Resultado automático baseado nos pedidos entregues e custos fixos cadastrados.
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, alignItems: "start" }}>
+
+              {/* ── COLUNA PRINCIPAL: DRE ── */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+
+                {/* Receita Bruta */}
+                <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderRadius: "12px 12px 0 0", padding: "20px 24px", borderBottom: "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 4 }}>RECEITA BRUTA DE VENDAS</div>
+                      <div style={{ fontSize: 11, color: "#78716c" }}>{pedidosMes.length} pedido{pedidosMes.length !== 1 ? "s" : ""} entregue{pedidosMes.length !== 1 ? "s" : ""}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 26, fontWeight: 700, color: "#15803d" }}>{fmt(receitaVendas)}</div>
+                      <div style={{ fontSize: 11, color: "#a8a29e" }}>100%</div>
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 12, height: 6, background: "#f0fdf4", borderRadius: 3 }}>
+                    <div style={{ width: "100%", height: "100%", background: "#15803d", borderRadius: 3 }} />
+                  </div>
+                </div>
+
+                {/* CMV */}
+                <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderLeft: "1px solid #e7e5e4", borderRight: "1px solid #e7e5e4", padding: "16px 24px", borderBottom: "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#78716c", fontWeight: 500 }}>
+                        <span style={{ color: "#dc2626", fontWeight: 700, marginRight: 6 }}>(−)</span>
+                        Custo das Mercadorias Vendidas (CMV)
+                      </div>
+                      <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 2 }}>Custo de produção dos pedidos entregues</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#dc2626" }}>− {fmt(cmvTotal)}</div>
+                      <div style={{ fontSize: 11, color: "#a8a29e" }}>{receitaVendas > 0 ? ((cmvTotal / receitaVendas) * 100).toFixed(1) : 0}% da receita</div>
+                    </div>
+                  </div>
+                  {receitaVendas > 0 && (
+                    <div style={{ marginTop: 10, height: 4, background: "#f5f5f4", borderRadius: 2 }}>
+                      <div style={{ width: `${Math.min((cmvTotal / receitaVendas) * 100, 100)}%`, height: "100%", background: "#fca5a5", borderRadius: 2 }} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Lucro Bruto */}
+                <div style={{ background: lucroBruto >= 0 ? "#f0fdf4" : "#fef2f2", border: "2px solid " + (lucroBruto >= 0 ? "#86efac" : "#fecaca"), padding: "18px 24px", borderBottom: "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: "#15803d", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 2 }}>(=) LUCRO BRUTO</div>
+                      <div style={{ fontSize: 11, color: "#57534e" }}>Receita após dedução do CMV</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: lucroBruto >= 0 ? "#15803d" : "#dc2626" }}>{fmt(lucroBruto)}</div>
+                      <div style={{ background: lucroBruto >= 0 ? "#dcfce7" : "#fee2e2", color: lubroBrutoColor(lucroBruto), padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, display: "inline-block", marginTop: 2 }}>
+                        Margem {margemBruta.toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Custos Fixos — cabeçalho */}
+                <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderTop: "none", padding: "16px 24px 0", borderBottom: "none" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: custosFixosPorCat.length > 0 ? 12 : 0 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#78716c", fontWeight: 500 }}>
+                        <span style={{ color: "#dc2626", fontWeight: 700, marginRight: 6 }}>(−)</span>
+                        Custos Fixos Mensais
+                      </div>
+                      <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 2 }}>
+                        {custosFixosList.filter(c => c.ativo).length} custo{custosFixosList.filter(c => c.ativo).length !== 1 ? "s" : ""} fixo{custosFixosList.filter(c => c.ativo).length !== 1 ? "s" : ""} ativo{custosFixosList.filter(c => c.ativo).length !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#dc2626" }}>− {fmt(totalCustosFixos)}</div>
+                      <div style={{ fontSize: 11, color: "#a8a29e" }}>{receitaVendas > 0 ? ((totalCustosFixos / receitaVendas) * 100).toFixed(1) : "—"}% da receita</div>
+                    </div>
+                  </div>
+
+                  {/* Breakdown por categoria */}
+                  {custosFixosPorCat.length > 0 && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 16 }}>
+                      {custosFixosPorCat.map(([cat, val]) => (
+                        <div key={cat} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "#fafaf9", borderRadius: 6 }}>
+                          <span style={{ fontSize: 12, color: "#57534e" }}>{cat}</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: "#78716c" }}>{fmt(val)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {custosFixosPorCat.length === 0 && (
+                    <div style={{ padding: "12px 0 16px", fontSize: 12, color: "#a8a29e", fontStyle: "italic" }}>
+                      Nenhum custo fixo ativo cadastrado. Acesse a aba "Custos Fixos" para configurar.
+                    </div>
+                  )}
+                </div>
+
+                {/* Lucro Líquido */}
+                <div style={{ background: lucroLiquido >= 0 ? "linear-gradient(135deg, #15803d 0%, #166534 100%)" : "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)", borderRadius: "0 0 12px 12px", padding: "22px 24px", color: "#fff" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", opacity: 0.85, marginBottom: 4 }}>(=) LUCRO LÍQUIDO REAL</div>
+                      <div style={{ fontSize: 12, opacity: 0.75 }}>
+                        {lucroLiquido >= 0 ? "Resultado positivo no mês ✓" : "Resultado negativo — despesas superam a receita"}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{fmt(lucroLiquido)}</div>
+                      <div style={{ background: "rgba(255,255,255,0.2)", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, marginTop: 6, display: "inline-block" }}>
+                        Margem {margemLiquida.toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── COLUNA LATERAL: CARDS + WATERFALL ── */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+                {/* KPI cards */}
+                {[
+                  { label: "Receita Bruta", valor: receitaVendas, cor: "#15803d", bg: "#f0fdf4", pct: 100, desc: "das vendas" },
+                  { label: "CMV", valor: cmvTotal, cor: "#f59e0b", bg: "#fffbeb", pct: receitaVendas > 0 ? (cmvTotal / receitaVendas) * 100 : 0, desc: "da receita" },
+                  { label: "Lucro Bruto", valor: lucroBruto, cor: lucroBruto >= 0 ? "#15803d" : "#dc2626", bg: lucroBruto >= 0 ? "#f0fdf4" : "#fef2f2", pct: receitaVendas > 0 ? (lucroBruto / receitaVendas) * 100 : 0, desc: "da receita" },
+                  { label: "Custos Fixos", valor: totalCustosFixos, cor: "#dc2626", bg: "#fef2f2", pct: receitaVendas > 0 ? (totalCustosFixos / receitaVendas) * 100 : 0, desc: "da receita" },
+                  { label: "Lucro Líquido", valor: lucroLiquido, cor: lucroLiquido >= 0 ? "#15803d" : "#dc2626", bg: lucroLiquido >= 0 ? "#f0fdf4" : "#fef2f2", pct: receitaVendas > 0 ? (lucroLiquido / receitaVendas) * 100 : 0, desc: "da receita", destaque: true },
+                ].map(k => (
+                  <div key={k.label} className="card" style={{ padding: "14px 18px", background: k.destaque ? undefined : "#fff", border: k.destaque ? "2px solid " + k.cor : undefined }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.07em" }}>{k.label.toUpperCase()}</div>
+                      <div style={{ background: k.bg, color: k.cor, padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                        {k.pct.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: k.cor }}>{fmt(k.valor)}</div>
+                    <div style={{ marginTop: 8, height: 4, background: "#f5f5f4", borderRadius: 2 }}>
+                      <div style={{ width: `${Math.min(Math.abs(k.pct), 100)}%`, height: "100%", background: k.cor, borderRadius: 2, opacity: 0.7, transition: "width 0.8s" }} />
+                    </div>
+                  </div>
+                ))}
+
+                {/* Diagnóstico */}
+                <div className="card" style={{ padding: "14px 18px", background: "#fafaf9" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 10 }}>DIAGNÓSTICO</div>
+                  {receitaVendas === 0 ? (
+                    <div style={{ fontSize: 12, color: "#a8a29e" }}>Sem pedidos entregues neste mês.</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <DiagItem
+                        ok={margemBruta >= 50}
+                        warn={margemBruta >= 30}
+                        label="Margem Bruta"
+                        desc={margemBruta >= 50 ? "Excelente (≥50%)" : margemBruta >= 30 ? "Boa (≥30%)" : "Baixa — revise o CMV"}
+                      />
+                      <DiagItem
+                        ok={margemLiquida >= 20}
+                        warn={margemLiquida >= 5}
+                        label="Margem Líquida"
+                        desc={margemLiquida >= 20 ? "Excelente (≥20%)" : margemLiquida >= 5 ? "Moderada (≥5%)" : margemLiquida < 0 ? "Negativa — prejuízo" : "Baixa — reduza custos fixos"}
+                      />
+                      <DiagItem
+                        ok={totalCustosFixos / receitaVendas <= 0.3}
+                        warn={totalCustosFixos / receitaVendas <= 0.5}
+                        label="Peso dos Fixos"
+                        desc={totalCustosFixos / receitaVendas <= 0.3 ? "Controlado (≤30% da receita)" : totalCustosFixos / receitaVendas <= 0.5 ? "Moderado (≤50%)" : "Alto (>50% da receita)"}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
