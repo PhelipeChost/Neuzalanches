@@ -73,6 +73,12 @@ export const api = {
     criar: (data) => request("/produtos", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/produtos/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     excluir: (id) => request(`/produtos/${id}`, { method: "DELETE" }),
+    imagens: {
+      listar: (id) => request(`/produtos/${id}/imagens`),
+      adicionar: (id, imagem, ordem) => request(`/produtos/${id}/imagens`, { method: "POST", body: JSON.stringify({ imagem, ordem }) }),
+      remover: (produtoId, imagemId) => request(`/produtos/${produtoId}/imagens/${imagemId}`, { method: "DELETE" }),
+      reordenar: (id, ids) => request(`/produtos/${id}/imagens/reordenar`, { method: "PUT", body: JSON.stringify({ ids }) }),
+    },
   },
 
   // Admin emails (convites)
@@ -107,6 +113,12 @@ export const api = {
   pix: {
     obter: () => request("/config/pix"),
     salvar: (data) => request("/config/pix", { method: "PUT", body: JSON.stringify(data) }),
+  },
+
+  // Horário de funcionamento
+  horario: {
+    obter: () => fetch("/api/config/horario").then(r => r.json()),
+    salvar: (data) => request("/config/horario", { method: "PUT", body: JSON.stringify(data) }),
   },
 
   // Custos Fixos Mensais
