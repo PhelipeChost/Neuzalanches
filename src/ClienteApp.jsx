@@ -709,14 +709,52 @@ export default function ClienteApp() {
   };
 
   const [busca, setBusca] = useState("");
+  const [catAtiva, setCatAtiva] = useState(null);
 
-  const categoriasUnicas = [...new Set(produtos.map(p => p.categoria).filter(Boolean))];
+  // Categorias na ordem definida pelo admin, só as que têm produtos disponíveis
+  const categoriasComProdutos = categorias
+    .map(c => c.nome)
+    .filter(nome => produtos.some(p => p.categoria === nome));
+
+  // Produtos sem categoria listados por último
+  const semCategoria = produtos.filter(p => !p.categoria);
+
   const produtosFiltrados = busca.trim()
     ? produtos.filter(p =>
         p.nome.toLowerCase().includes(busca.toLowerCase()) ||
         (p.descricao || "").toLowerCase().includes(busca.toLowerCase())
       )
     : produtos;
+
+  // Rolar até seção de categoria ao clicar na nav
+  const scrollParaCategoria = (cat) => {
+    setCatAtiva(cat);
+    const el = document.getElementById(`cat-sec-${cat.replace(/\s+/g, "-")}`);
+    if (el) {
+      const offset = 120; // header + nav categoria
+      const top = el.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top, behavior: "smooth" });
+    }
+  };
+
+  // Atualizar aba ativa ao rolar
+  useEffect(() => {
+    if (busca.trim() || tab !== "catalogo") return;
+    const handleScroll = () => {
+      const offset = 140;
+      for (let i = categoriasComProdutos.length - 1; i >= 0; i--) {
+        const cat = categoriasComProdutos[i];
+        const el = document.getElementById(`cat-sec-${cat.replace(/\s+/g, "-")}`);
+        if (el && el.getBoundingClientRect().top <= offset) {
+          setCatAtiva(cat);
+          return;
+        }
+      }
+      if (categoriasComProdutos.length > 0) setCatAtiva(categoriasComProdutos[0]);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [categoriasComProdutos, busca, tab]);
 
   if (loading) {
     return (
@@ -772,8 +810,9 @@ export default function ClienteApp() {
         {/* CATALOGO */}
         {tab === "catalogo" && (
           <div className="anim">
+
             {/* Barra de pesquisa */}
-            <div style={{ position: "relative", marginBottom: 20 }}>
+            <div style={{ position: "relative", marginBottom: busca.trim() ? 20 : 0 }}>
               <span style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", fontSize: 16, color: "#a8a29e", pointerEvents: "none" }}>🔍</span>
               <input
                 value={busca}
@@ -799,40 +838,112 @@ export default function ClienteApp() {
               )}
             </div>
 
+            {/* ── Navegação por categoria (sticky, some ao buscar) ── */}
+            {!busca.trim() && categoriasComProdutos.length > 1 && (
+              <div style={{
+                position: "sticky", top: 57, zIndex: 40,
+                background: "rgba(245,245,244,0.95)", backdropFilter: "blur(8px)",
+                margin: "0 -24px", padding: "10px 24px 10px",
+                borderBottom: "1px solid #e7e5e4",
+                overflowX: "auto", whiteSpace: "nowrap",
+                scrollbarWidth: "none",
+              }}>
+                <style>{`.cat-nav::-webkit-scrollbar{display:none}`}</style>
+                <div className="cat-nav" style={{ display: "inline-flex", gap: 6 }}>
+                  {categoriasComProdutos.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => scrollParaCategoria(cat)}
+                      style={{
+                        padding: "6px 16px",
+                        borderRadius: 20,
+                        border: catAtiva === cat ? "none" : "1.5px solid #e7e5e4",
+                        background: catAtiva === cat ? "#F38C24" : "#fff",
+                        color: catAtiva === cat ? "#fff" : "#57534e",
+                        fontFamily: "'DM Sans', sans-serif",
+                        fontSize: 13,
+                        fontWeight: catAtiva === cat ? 600 : 400,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                        transition: "all 0.15s",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {produtosFiltrados.length === 0 ? (
-              <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e" }}>
+              <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e", marginTop: 20 }}>
                 {busca ? `Nenhum produto encontrado para "${busca}".` : "Nenhum produto disponivel no momento."}
               </div>
+
             ) : busca.trim() ? (
-              /* Resultado da busca — sem agrupar por categoria */
+              /* Resultado da busca — lista plana sem seções */
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
                 {produtosFiltrados.map(p => (
                   <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
                     onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
                 ))}
               </div>
+
             ) : (
-              /* Listagem normal por categoria */
-              <>
-                {categoriasUnicas.length > 0 ? categoriasUnicas.map(cat => (
-                  <div key={cat} style={{ marginBottom: 24 }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: cat === "Lanches" ? "#F38C24" : "#57534e", marginBottom: 10, padding: "4px 0", borderBottom: "1px solid #e7e5e4" }}>{cat}</div>
+              /* Seções por categoria */
+              <div style={{ paddingTop: 8 }}>
+                {categoriasComProdutos.map(cat => (
+                  <div
+                    key={cat}
+                    id={`cat-sec-${cat.replace(/\s+/g, "-")}`}
+                    style={{ marginBottom: 36, scrollMarginTop: 120 }}
+                  >
+                    {/* Header da seção */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "24px 0 14px" }}>
+                      <div style={{
+                        width: 4, height: 22, borderRadius: 2,
+                        background: "#F38C24", flexShrink: 0,
+                      }} />
+                      <h2 style={{
+                        fontFamily: "'Fraunces', serif",
+                        fontSize: 20, fontWeight: 600,
+                        color: "#1c1917", margin: 0, lineHeight: 1.2,
+                      }}>{cat}</h2>
+                      <span style={{
+                        marginLeft: 4, fontSize: 12, color: "#a8a29e",
+                        fontFamily: "'DM Sans', sans-serif", fontWeight: 400,
+                      }}>
+                        {produtos.filter(p => p.categoria === cat).length} {produtos.filter(p => p.categoria === cat).length === 1 ? "item" : "itens"}
+                      </span>
+                    </div>
+
+                    {/* Grid de produtos da categoria */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-                      {produtosFiltrados.filter(p => p.categoria === cat).map(p => (
+                      {produtos.filter(p => p.categoria === cat).map(p => (
                         <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
                           onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
                       ))}
                     </div>
                   </div>
-                )) : (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
-                    {produtosFiltrados.map(p => (
-                      <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
-                        onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
-                    ))}
+                ))}
+
+                {/* Produtos sem categoria (se houver) */}
+                {semCategoria.length > 0 && (
+                  <div id="cat-sec-outros" style={{ marginBottom: 36 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "24px 0 14px" }}>
+                      <div style={{ width: 4, height: 22, borderRadius: 2, background: "#a8a29e", flexShrink: 0 }} />
+                      <h2 style={{ fontFamily: "'Fraunces', serif", fontSize: 20, fontWeight: 600, color: "#1c1917", margin: 0 }}>Outros</h2>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
+                      {semCategoria.map(p => (
+                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
+                          onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                      ))}
+                    </div>
                   </div>
                 )}
-              </>
+              </div>
             )}
           </div>
         )}
