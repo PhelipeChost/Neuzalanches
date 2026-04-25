@@ -61,6 +61,7 @@ const METODOS_PAGAMENTO = [
   { id: "pix", label: "Pix", icon: "⚡" },
   { id: "credito", label: "Cartao de Credito", icon: "💳" },
   { id: "debito", label: "Cartao de Debito", icon: "💳" },
+  { id: "dinheiro", label: "Dinheiro", icon: "💵" },
 ];
 
 let uidCounter = 0;
@@ -94,6 +95,9 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
   const [clienteTelefone, setClienteTelefone] = useState("");
   const [clienteEmail, setClienteEmail] = useState("");
 
+  // Tipo de entrega: "entrega" (padrão) | "retirada"
+  const [tipoEntrega, setTipoEntrega] = useState("entrega");
+
   // Endereço
   const [cep, setCep] = useState("");
   const [rua, setRua] = useState("");
@@ -106,6 +110,8 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
   const [metodoPagamento, setMetodoPagamento] = useState("");
   const [pixInfo, setPixInfo] = useState({ pix_key: "", pix_nome: "" });
   const [copiadoPix, setCopiadoPix] = useState(false);
+  const [precisaTroco, setPrecisaTroco] = useState(false);
+  const [trocoPara, setTrocoPara] = useState(""); // string para o input controlado
 
   useEffect(() => {
     api.pix.obter().then(setPixInfo).catch(() => {});
@@ -128,7 +134,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
   }, [cep]);
 
   const clienteValido = () => clienteNome.trim() && clienteTelefone.replace(/\D/g, "").length >= 10;
-  const enderecoValido = () => rua.trim() && bairro.trim();
+  const enderecoValido = () => tipoEntrega === "retirada" || (rua.trim() && bairro.trim());
 
   const copiarPix = () => {
     navigator.clipboard.writeText(pixInfo.pix_key).then(() => {
@@ -137,13 +143,34 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
     }).catch(() => {});
   };
 
+  // Converte "100,00" ou "100.00" para number
+  const parseValor = (s) => {
+    if (!s) return 0;
+    const limpo = String(s).replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+    const n = parseFloat(limpo);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const trocoValido = () => {
+    if (metodoPagamento !== "dinheiro") return true;
+    if (!precisaTroco) return true;
+    const v = parseValor(trocoPara);
+    return v > totalCarrinho;
+  };
+
   const confirmar = () => {
+    const trocoNum = metodoPagamento === "dinheiro" && precisaTroco ? parseValor(trocoPara) : null;
+    const enderecoFinal = tipoEntrega === "retirada"
+      ? { cep: "", rua: "", numero: "", bairro: "", referencia: "" }
+      : { cep: cep.replace(/\D/g, ""), rua, numero, bairro, referencia };
     onConfirm({
       cliente_nome: clienteNome.trim(),
       cliente_telefone: clienteTelefone.replace(/\D/g, ""),
       cliente_email: clienteEmail.trim(),
-      endereco: { cep: cep.replace(/\D/g, ""), rua, numero, bairro, referencia },
+      endereco: enderecoFinal,
       metodo_pagamento: metodoPagamento,
+      troco_para: trocoNum,
+      tipo_entrega: tipoEntrega,
     });
   };
 
@@ -203,36 +230,62 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
           </div>
         )}
 
-        {/* ETAPA 2: ENDEREÇO */}
+        {/* ETAPA 2: ENDEREÇO / RETIRADA */}
         {etapa === "endereco" && (
           <div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div>
-                <label style={labelStyle}>CEP</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input style={{ ...inputStyle, flex: 1 }} value={cep} onChange={e => handleCepChange(e.target.value)} placeholder="00000-000" maxLength={9} />
-                  {buscandoCep && <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "#15803d", fontWeight: 500, whiteSpace: "nowrap" }}>Buscando...</div>}
-                </div>
-              </div>
-              <div>
-                <label style={labelStyle}>RUA / LOGRADOURO *</label>
-                <input style={inputStyle} value={rua} onChange={e => setRua(e.target.value)} placeholder="Ex: Rua das Flores" />
-              </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={labelStyle}>NUMERO</label>
-                  <input style={inputStyle} value={numero} onChange={e => setNumero(e.target.value)} placeholder="123" />
-                </div>
-                <div style={{ flex: 2 }}>
-                  <label style={labelStyle}>BAIRRO *</label>
-                  <input style={inputStyle} value={bairro} onChange={e => setBairro(e.target.value)} placeholder="Ex: Centro" />
-                </div>
-              </div>
-              <div>
-                <label style={labelStyle}>REFERENCIA PARA O ENTREGADOR</label>
-                <input style={inputStyle} value={referencia} onChange={e => setReferencia(e.target.value)} placeholder="Ex: Portao azul, ao lado da padaria" />
-              </div>
+            {/* Toggle Entrega / Retirada */}
+            <div style={{ fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 8 }}>COMO PREFERE RECEBER?</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+              <button type="button" onClick={() => setTipoEntrega("entrega")}
+                style={{ flex: 1, padding: "14px 12px", background: tipoEntrega === "entrega" ? "#f0fdf4" : "#fafaf9", color: tipoEntrega === "entrega" ? "#15803d" : "#57534e", border: `1.5px solid ${tipoEntrega === "entrega" ? "#86efac" : "#e7e5e4"}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}>
+                <span style={{ fontSize: 22 }}>🏠</span>
+                <span>Entrega no endereço</span>
+              </button>
+              <button type="button" onClick={() => setTipoEntrega("retirada")}
+                style={{ flex: 1, padding: "14px 12px", background: tipoEntrega === "retirada" ? "#f0fdf4" : "#fafaf9", color: tipoEntrega === "retirada" ? "#15803d" : "#57534e", border: `1.5px solid ${tipoEntrega === "retirada" ? "#86efac" : "#e7e5e4"}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}>
+                <span style={{ fontSize: 22 }}>🏪</span>
+                <span>Retirar no estabelecimento</span>
+              </button>
             </div>
+
+            {tipoEntrega === "entrega" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div>
+                  <label style={labelStyle}>CEP</label>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input style={{ ...inputStyle, flex: 1 }} value={cep} onChange={e => handleCepChange(e.target.value)} placeholder="00000-000" maxLength={9} />
+                    {buscandoCep && <div style={{ display: "flex", alignItems: "center", fontSize: 12, color: "#15803d", fontWeight: 500, whiteSpace: "nowrap" }}>Buscando...</div>}
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>RUA / LOGRADOURO *</label>
+                  <input style={inputStyle} value={rua} onChange={e => setRua(e.target.value)} placeholder="Ex: Rua das Flores" />
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={labelStyle}>NUMERO</label>
+                    <input style={inputStyle} value={numero} onChange={e => setNumero(e.target.value)} placeholder="123" />
+                  </div>
+                  <div style={{ flex: 2 }}>
+                    <label style={labelStyle}>BAIRRO *</label>
+                    <input style={inputStyle} value={bairro} onChange={e => setBairro(e.target.value)} placeholder="Ex: Centro" />
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>REFERENCIA PARA O ENTREGADOR</label>
+                  <input style={inputStyle} value={referencia} onChange={e => setReferencia(e.target.value)} placeholder="Ex: Portao azul, ao lado da padaria" />
+                </div>
+              </div>
+            )}
+
+            {tipoEntrega === "retirada" && (
+              <div style={{ background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10, padding: "16px 18px" }}>
+                <div style={{ fontSize: 13, color: "#15803d", fontWeight: 600, marginBottom: 6 }}>🏪 Retirada no estabelecimento</div>
+                <div style={{ fontSize: 13, color: "#1c1917", lineHeight: 1.5 }}>
+                  Quando o pedido estiver pronto, você receberá um aviso pelo WhatsApp para vir buscar.
+                </div>
+              </div>
+            )}
 
             <button onClick={() => { if (enderecoValido()) setEtapa("pagamento"); }}
               disabled={!enderecoValido()}
@@ -279,6 +332,47 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
               </div>
             )}
 
+            {/* Info DINHEIRO — precisa de troco? */}
+            {metodoPagamento === "dinheiro" && (
+              <div style={{ background: "#fefce8", border: "1.5px solid #fde68a", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#92400e", marginBottom: 10, letterSpacing: "0.06em" }}>PAGAMENTO EM DINHEIRO</div>
+
+                <div style={{ display: "flex", gap: 8, marginBottom: precisaTroco ? 12 : 0 }}>
+                  <button type="button" onClick={() => { setPrecisaTroco(false); setTrocoPara(""); }}
+                    style={{ flex: 1, padding: "10px 12px", background: !precisaTroco ? "#15803d" : "#fff", color: !precisaTroco ? "#fff" : "#57534e", border: `1.5px solid ${!precisaTroco ? "#15803d" : "#e7e5e4"}`, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                    Não preciso de troco
+                  </button>
+                  <button type="button" onClick={() => setPrecisaTroco(true)}
+                    style={{ flex: 1, padding: "10px 12px", background: precisaTroco ? "#15803d" : "#fff", color: precisaTroco ? "#fff" : "#57534e", border: `1.5px solid ${precisaTroco ? "#15803d" : "#e7e5e4"}`, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                    Preciso de troco
+                  </button>
+                </div>
+
+                {precisaTroco && (
+                  <div>
+                    <label style={{ ...labelStyle, color: "#92400e" }}>TROCO PARA QUANTO? *</label>
+                    <input
+                      style={{ ...inputStyle, borderColor: "#fde68a" }}
+                      value={trocoPara}
+                      onChange={e => setTrocoPara(e.target.value)}
+                      placeholder="Ex: 100,00"
+                      inputMode="decimal"
+                    />
+                    {trocoPara && parseValor(trocoPara) > 0 && parseValor(trocoPara) <= totalCarrinho && (
+                      <div style={{ fontSize: 12, color: "#dc2626", marginTop: 6, fontWeight: 500 }}>
+                        O valor precisa ser maior que o total ({fmt(totalCarrinho)}).
+                      </div>
+                    )}
+                    {trocoPara && parseValor(trocoPara) > totalCarrinho && (
+                      <div style={{ fontSize: 13, color: "#15803d", marginTop: 6, fontWeight: 600 }}>
+                        Levaremos troco de {fmt(parseValor(trocoPara) - totalCarrinho)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Total e confirmar */}
             <div style={{ borderTop: "2px solid #e7e5e4", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
               <div>
@@ -291,8 +385,8 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
                   Voltar
                 </button>
                 <button onClick={confirmar}
-                  disabled={!metodoPagamento}
-                  style={{ padding: "12px 24px", background: metodoPagamento ? "#15803d" : "#d6d3d1", color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: metodoPagamento ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif" }}>
+                  disabled={!metodoPagamento || !trocoValido()}
+                  style={{ padding: "12px 24px", background: (metodoPagamento && trocoValido()) ? "#15803d" : "#d6d3d1", color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: (metodoPagamento && trocoValido()) ? "pointer" : "not-allowed", fontFamily: "'DM Sans', sans-serif" }}>
                   Confirmar Pedido
                 </button>
               </div>
@@ -681,7 +775,7 @@ export default function ClienteApp() {
     setModalCheckout(true);
   };
 
-  const enviarPedido = async ({ cliente_nome, cliente_telefone, cliente_email, endereco, metodo_pagamento }) => {
+  const enviarPedido = async ({ cliente_nome, cliente_telefone, cliente_email, endereco, metodo_pagamento, troco_para, tipo_entrega }) => {
     if (carrinho.length === 0) return;
     setEnviando(true);
     try {
@@ -693,6 +787,8 @@ export default function ClienteApp() {
         cliente_telefone,
         cliente_email,
         metodo_pagamento,
+        troco_para,
+        tipo_entrega,
         endereco,
       });
       setCarrinho([]);

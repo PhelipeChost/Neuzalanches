@@ -13,6 +13,16 @@ const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRad
 const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" };
 const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
 
+const DIAS_SEMANA = [
+  { value: 0, label: "Dom" },
+  { value: 1, label: "Seg" },
+  { value: 2, label: "Ter" },
+  { value: 3, label: "Qua" },
+  { value: 4, label: "Qui" },
+  { value: 5, label: "Sex" },
+  { value: 6, label: "Sáb" },
+];
+
 function AdminConfig() {
   const [emails, setEmails] = useState([]);
   const [novoEmail, setNovoEmail] = useState("");
@@ -24,6 +34,11 @@ function AdminConfig() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
+  // Horário de funcionamento
+  const [horario, setHorario] = useState({ status: "auto", dias: [0,2,3,4,5,6], abertura: "19:00", fechamento: "01:00" });
+  const [horarioAberto, setHorarioAberto] = useState(false);
+  const [salvandoHorario, setSalvandoHorario] = useState(false);
+
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
   useEffect(() => {
@@ -31,12 +46,38 @@ function AdminConfig() {
       api.adminEmails.listar(),
       api.categorias.listar(),
       api.adicionais.listar(),
-    ]).then(([em, cats, ads]) => {
+      api.horario.obter(),
+    ]).then(([em, cats, ads, hor]) => {
       setEmails(em);
       setCategorias(cats);
       setAdicionais(ads);
+      const { aberto, ...cfg } = hor;
+      setHorario(cfg);
+      setHorarioAberto(aberto);
     }).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
   }, []);
+
+  const salvarHorario = async (novoHorario) => {
+    setSalvandoHorario(true);
+    try {
+      const resultado = await api.horario.salvar(novoHorario);
+      const { aberto, ...cfg } = resultado;
+      setHorario(cfg);
+      setHorarioAberto(aberto);
+      showToast("Horário salvo!");
+    } catch (err) {
+      showToast("Erro: " + err.message, "#dc2626");
+    } finally {
+      setSalvandoHorario(false);
+    }
+  };
+
+  const toggleDia = (dia) => {
+    const novosDias = horario.dias.includes(dia)
+      ? horario.dias.filter(d => d !== dia)
+      : [...horario.dias, dia].sort((a, b) => a - b);
+    setHorario(h => ({ ...h, dias: novosDias }));
+  };
 
   // ── Admin Emails ──
   const adicionarEmail = async () => {
@@ -126,6 +167,99 @@ function AdminConfig() {
       <div style={{ fontSize: 12, color: "#a8a29e", marginBottom: 24 }}>Gerencie categorias, adicionais e acessos administrativos</div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
+
+        {/* ── HORÁRIO DE FUNCIONAMENTO ───────────────────────────────── */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>Horário de Funcionamento</div>
+            <span style={{
+              background: horarioAberto ? "#dcfce7" : "#fee2e2",
+              color: horarioAberto ? "#16a34a" : "#dc2626",
+              fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+            }}>
+              {horarioAberto ? "🟢 Aberto agora" : "🔴 Fechado agora"}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 18 }}>
+            Controle quando a plataforma aceita pedidos e o que o bot responde no WhatsApp.
+          </div>
+
+          {/* Status override */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 8 }}>MODO DE OPERAÇÃO</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { value: "auto", label: "⏰ Automático", desc: "Segue os horários abaixo" },
+                { value: "aberto", label: "🟢 Forçar aberto", desc: "Sempre aberto" },
+                { value: "fechado", label: "🔴 Forçar fechado", desc: "Sempre fechado" },
+              ].map(opt => (
+                <button key={opt.value} onClick={() => setHorario(h => ({ ...h, status: opt.value }))}
+                  title={opt.desc}
+                  style={{
+                    flex: 1, padding: "9px 8px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                    fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s",
+                    background: horario.status === opt.value ? "#1c1917" : "#fff",
+                    color: horario.status === opt.value ? "#fff" : "#57534e",
+                    border: horario.status === opt.value ? "2px solid #1c1917" : "2px solid #e7e5e4",
+                  }}>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Dias da semana */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 8 }}>DIAS DE FUNCIONAMENTO</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {DIAS_SEMANA.map(d => {
+                const ativo = horario.dias.includes(d.value);
+                return (
+                  <button key={d.value} onClick={() => toggleDia(d.value)}
+                    style={{
+                      flex: 1, padding: "7px 4px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+                      cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s",
+                      background: ativo ? "#F38C24" : "#f5f5f4",
+                      color: ativo ? "#fff" : "#a8a29e",
+                      border: ativo ? "2px solid #F38C24" : "2px solid #e7e5e4",
+                    }}>
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Horário */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 8 }}>HORÁRIO</div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, color: "#78716c", display: "block", marginBottom: 4 }}>Abre às</label>
+                <input type="time" value={horario.abertura}
+                  onChange={e => setHorario(h => ({ ...h, abertura: e.target.value }))}
+                  style={{ ...cfgInp, width: "100%" }} />
+              </div>
+              <div style={{ fontSize: 18, color: "#a8a29e", paddingTop: 18 }}>→</div>
+              <div style={{ flex: 1 }}>
+                <label style={{ fontSize: 11, color: "#78716c", display: "block", marginBottom: 4 }}>Fecha às</label>
+                <input type="time" value={horario.fechamento}
+                  onChange={e => setHorario(h => ({ ...h, fechamento: e.target.value }))}
+                  style={{ ...cfgInp, width: "100%" }} />
+              </div>
+            </div>
+            {horario.abertura > horario.fechamento || horario.fechamento < horario.abertura ? (
+              <div style={{ fontSize: 11, color: "#78716c", marginTop: 6, fontStyle: "italic" }}>
+                ℹ️ Horário atravessa a meia-noite (ex: 19:00 às 01:00)
+              </div>
+            ) : null}
+          </div>
+
+          <button onClick={() => salvarHorario(horario)} disabled={salvandoHorario}
+            style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvandoHorario ? 0.6 : 1 }}>
+            {salvandoHorario ? "Salvando..." : "💾 Salvar configuração"}
+          </button>
+        </div>
 
         {/* ── CATEGORIAS ─────────────────────────────────────────────── */}
         <div className="card">

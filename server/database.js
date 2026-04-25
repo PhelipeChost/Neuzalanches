@@ -99,6 +99,8 @@ db.exec(`
     obs TEXT DEFAULT '',
     tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
     metodo_pagamento TEXT DEFAULT '',
+    troco_para REAL DEFAULT NULL,
+    tipo_entrega TEXT DEFAULT 'entrega' CHECK(tipo_entrega IN ('entrega','retirada')),
     endereco_cep TEXT DEFAULT '',
     endereco_rua TEXT DEFAULT '',
     endereco_numero TEXT DEFAULT '',
@@ -275,6 +277,12 @@ if (!colsLanc.includes("custo_fixo_id")) {
 const colsPedidos = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
 if (!colsPedidos.includes("metodo_pagamento")) {
   db.exec("ALTER TABLE pedidos ADD COLUMN metodo_pagamento TEXT DEFAULT ''");
+}
+if (!colsPedidos.includes("troco_para")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN troco_para REAL DEFAULT NULL");
+}
+if (!colsPedidos.includes("tipo_entrega")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN tipo_entrega TEXT DEFAULT 'entrega'");
 }
 if (!colsPedidos.includes("endereco_cep")) {
   db.exec("ALTER TABLE pedidos ADD COLUMN endereco_cep TEXT DEFAULT ''");
@@ -595,7 +603,7 @@ export function contarPedidosPendentes() {
   return row.count;
 }
 
-export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, endereco }) {
+export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco }) {
   const id = gerarId();
 
   // Calcular total considerando adicionais
@@ -607,14 +615,15 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
   const end = endereco || {};
 
   const inserirPedido = db.prepare(
-    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, obs, tipo, metodo_pagamento, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   const inserirItem = db.prepare(
     "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
-    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, obs || "", tipo || "online", metodo_pagamento || "", end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
+    const tipoEnt = tipo_entrega === 'retirada' ? 'retirada' : 'entrega';
+    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
     for (const item of itens) {
       // Buscar custo do produto no banco
       const produtoDB = buscarProduto(item.produto_id);

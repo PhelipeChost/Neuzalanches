@@ -449,7 +449,12 @@ export default function Pedidos() {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>#{p.id.slice(0, 6)}</span>
                       <span style={{ fontSize: 11, color: "#a8a29e" }}>.</span>
                       <span style={{ fontSize: 12, color: "#57534e" }}>{p.cliente_nome || "Sem nome"}</span>
-                      {p.cliente_telefone && <span style={{ fontSize: 11, color: "#78716c" }}>({p.cliente_telefone})</span>}
+                      {p.cliente_telefone && (
+                        <>
+                          <span style={{ fontSize: 11, color: "#78716c" }}>({p.cliente_telefone})</span>
+                          <span title="Cliente notificado via WhatsApp" style={{ background: "#dcfce7", color: "#16a34a", borderRadius: 4, padding: "1px 6px", fontSize: 10, fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>📱 WhatsApp</span>
+                        </>
+                      )}
                       <span style={{ background: p.tipo === "online" ? "#eff6ff" : "#f5f5f4", color: p.tipo === "online" ? "#2563eb" : "#78716c", padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 600 }}>
                         {p.tipo === "online" ? "ONLINE" : "PRESENCIAL"}
                       </span>
@@ -467,6 +472,26 @@ export default function Pedidos() {
                     <div style={{ padding: "14px 0" }}>
                       <StatusPipeline status={p.status} />
                     </div>
+
+                    {p.cliente_telefone && (() => {
+                      const notificados = [];
+                      const idx = STATUS_PIPELINE.indexOf(p.status);
+                      if (idx >= 0) notificados.push("✅ Pedido confirmado");
+                      if (idx >= 2) notificados.push("🍳 Em preparação");
+                      if (idx >= 3) notificados.push("🛵 Pronto / saiu para entrega");
+                      if (p.status === "entregue") notificados.push("🎉 Entregue");
+                      if (p.status === "cancelado") notificados.push("❌ Cancelamento");
+                      return notificados.length > 0 ? (
+                        <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 14px", marginBottom: 12 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", letterSpacing: "0.06em", marginBottom: 5 }}>📱 NOTIFICAÇÕES WHATSAPP ENVIADAS</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                            {notificados.map(n => (
+                              <span key={n} style={{ fontSize: 11, color: "#15803d", background: "#dcfce7", borderRadius: 4, padding: "2px 8px", fontWeight: 500 }}>{n}</span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null;
+                    })()}
 
                     <div style={{ background: "#fafaf9", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
                       {p.itens?.map((item, i) => {
@@ -494,10 +519,18 @@ export default function Pedidos() {
 
                     {p.obs && <div style={{ fontSize: 12, color: "#78716c", marginBottom: 12 }}>Obs: {p.obs}</div>}
 
+                    {/* Tipo de entrega: Retirada */}
+                    {p.tipo_entrega === "retirada" && (
+                      <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#15803d", marginBottom: 4, letterSpacing: "0.06em" }}>🏪 RETIRADA NO ESTABELECIMENTO</div>
+                        <div style={{ fontSize: 13, color: "#1c1917" }}>O cliente virá buscar o pedido.</div>
+                      </div>
+                    )}
+
                     {/* Endereço de entrega */}
-                    {p.endereco_rua && (
+                    {p.tipo_entrega !== "retirada" && p.endereco_rua && (
                       <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: "#2563eb", marginBottom: 4, letterSpacing: "0.06em" }}>ENDEREÇO DE ENTREGA</div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#2563eb", marginBottom: 4, letterSpacing: "0.06em" }}>🏠 ENDEREÇO DE ENTREGA</div>
                         <div style={{ fontSize: 13, color: "#1c1917" }}>
                           {p.endereco_rua}{p.endereco_numero ? `, ${p.endereco_numero}` : ""}
                         </div>
@@ -513,11 +546,24 @@ export default function Pedidos() {
                     )}
 
                     {/* Método de pagamento */}
-                    {p.metodo_pagamento && (
-                      <div style={{ display: "inline-block", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 600, color: "#92400e", marginBottom: 12 }}>
-                        {p.metodo_pagamento === "pix" ? "⚡ Pix" : p.metodo_pagamento === "credito" ? "💳 Cartão de Crédito" : p.metodo_pagamento === "debito" ? "💳 Cartão de Débito" : p.metodo_pagamento}
-                      </div>
-                    )}
+                    {p.metodo_pagamento && (() => {
+                      const labels = { pix: "⚡ Pix", credito: "💳 Cartão de Crédito", debito: "💳 Cartão de Débito", dinheiro: "💵 Dinheiro" };
+                      const label = labels[p.metodo_pagamento] || p.metodo_pagamento;
+                      const trocoNum = Number(p.troco_para);
+                      const totalNum = Number(p.total);
+                      const mostraTroco = p.metodo_pagamento === "dinheiro" && trocoNum > 0 && trocoNum > totalNum;
+                      const fmtBR = v => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+                      return (
+                        <div style={{ display: "inline-block", background: "#fefce8", border: "1px solid #fde68a", borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 600, color: "#92400e", marginBottom: 12 }}>
+                          {label}
+                          {p.metodo_pagamento === "dinheiro" && (
+                            mostraTroco
+                              ? <> — Troco para {fmtBR(trocoNum)} <span style={{ color: "#15803d" }}>(devolver {fmtBR(trocoNum - totalNum)})</span></>
+                              : <> — Sem troco</>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {!isTerminal && (
                       <div style={{ display: "flex", gap: 8 }}>
