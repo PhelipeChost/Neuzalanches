@@ -393,7 +393,7 @@ app.get("/api/pedidos/:id", authMiddleware, (req, res) => {
 
 // Pedido público (sem autenticação — cliente envia dados inline)
 app.post("/api/pedidos/publico", (req, res) => {
-  const { itens, obs, cliente_nome, cliente_telefone, cliente_email, metodo_pagamento, endereco } = req.body;
+  const { itens, obs, cliente_nome, cliente_telefone, cliente_email, metodo_pagamento, troco_para, tipo_entrega, endereco } = req.body;
   if (!cliente_nome || !cliente_telefone) {
     return res.status(400).json({ error: "Nome e telefone são obrigatórios" });
   }
@@ -414,7 +414,9 @@ app.post("/api/pedidos/publico", (req, res) => {
     obs,
     tipo: "online",
     metodo_pagamento: metodo_pagamento || "",
-    endereco: endereco || {},
+    troco_para: troco_para || null,
+    tipo_entrega: tipo_entrega === 'retirada' ? 'retirada' : 'entrega',
+    endereco: tipo_entrega === 'retirada' ? {} : (endereco || {}),
   });
 
   // Notificar cliente via WhatsApp (não bloqueia a resposta)
@@ -424,7 +426,7 @@ app.post("/api/pedidos/publico", (req, res) => {
 });
 
 app.post("/api/pedidos", authMiddleware, (req, res) => {
-  const { itens, obs, cliente_nome, tipo, metodo_pagamento, endereco } = req.body;
+  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco } = req.body;
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
   }
@@ -456,6 +458,7 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     obs,
     tipo: isAdmin ? (tipo || "presencial") : "online",
     metodo_pagamento: metodo_pagamento || "",
+    troco_para: troco_para || null,
     endereco: enderecoFinal,
   });
   res.status(201).json(pedido);
@@ -933,44 +936,75 @@ app.get('/whatsapp', async (req, res) => {
 
 // ─── BOT WHATSAPP — webhook direto da Evolution API ──────────────────────────
 
-// Resolve @lid → número de telefone real lendo o store da Evolution API
-async function resolverNumero(remoteJid, instanceName = 'neuzalanches') {
-  // Se não é @lid, extrai direto
-  if (!remoteJid.endsWith('@lid')) {
-    return remoteJid.split('@')[0];
-  }
+// Extrai o número de telefone REAL do remetente.
+// Prioridade:
+//   1. key.senderPn  (quando remoteJid vem como @lid, este campo traz o número real)
+//   2. key.participantPn
+//   3. data.sender
+//   4. remoteJid se já for @s.whatsapp.net / @c.us
+// NUNCA tenta adivinhar via foto de perfil (isso causava respostas no número errado).
+function extrairNumeroReal(data) {
+  const key = data?.key || {};
 
-  try {
-    const storeDir = `/var/evolution-api/store/contacts/${instanceName}`;
-    const lidFile = `${storeDir}/${remoteJid}.json`;
+  const candidatos = [
+    key.senderPn,
+    key.participantPn,
+    key.participant,
+    data?.sender,
+    key.remoteJid,
+  ].filter(Boolean);
 
-    if (!fs.existsSync(lidFile)) return null;
-    const lidContact = JSON.parse(fs.readFileSync(lidFile, 'utf8'));
-    const lidPic = lidContact.profilePictureUrl;
-
-    // Procura contato @s.whatsapp.net com mesma foto de perfil
-    const files = fs.readdirSync(storeDir);
-    for (const f of files) {
-      if (!f.endsWith('@s.whatsapp.net.json')) continue;
-      const c = JSON.parse(fs.readFileSync(`${storeDir}/${f}`, 'utf8'));
-      if (lidPic && c.profilePictureUrl === lidPic) {
-        return c.id.split('@')[0]; // retorna só o número
-      }
-    }
-
-    // Fallback: pushName igual (menos confiável)
-    for (const f of files) {
-      if (!f.endsWith('@s.whatsapp.net.json')) continue;
-      const c = JSON.parse(fs.readFileSync(`${storeDir}/${f}`, 'utf8'));
-      if (c.pushName && c.pushName === lidContact.pushName) {
-        return c.id.split('@')[0];
-      }
-    }
-  } catch (e) {
-    console.error('[bot/webhook] erro ao resolver LID:', e.message);
+  for (const cand of candidatos) {
+    // Só aceita JIDs reais (@s.whatsapp.net ou @c.us). Ignora @lid e @g.us.
+    if (typeof cand !== 'string') continue;
+    if (cand.includes('@g.us')) continue;
+    if (cand.endsWith('@lid')) continue;
+    const numero = cand.split('@')[0];
+    // Tem que ser só dígitos e ter tamanho de telefone
+    if (/^\d{8,15}$/.test(numero)) return numero;
   }
   return null;
 }
+
+// Cache temporário do QR Code para setup inicial da Evolution
+let _lastQrBase64 = null;
+let _lastQrAt = 0;
+
+// ── Cooldown de saudação por número ────────────────────────────────────────────
+// Depois que o bot saúda um cliente, fica em silêncio por X horas pra esse número.
+// Se o DONO responder manualmente (fromMe:true), renova o cooldown — assim o bot
+// não interrompe o atendimento humano.
+const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 horas
+const ultimaSaudacao = new Map(); // numero -> timestamp ms
+
+function emCooldown(numero) {
+  const ts = ultimaSaudacao.get(numero);
+  if (!ts) return false;
+  if (Date.now() - ts > COOLDOWN_MS) {
+    ultimaSaudacao.delete(numero);
+    return false;
+  }
+  return true;
+}
+
+// Limpa entradas antigas a cada hora pra Map não crescer infinitamente
+setInterval(() => {
+  const now = Date.now();
+  for (const [num, ts] of ultimaSaudacao) {
+    if (now - ts > COOLDOWN_MS) ultimaSaudacao.delete(num);
+  }
+}, 60 * 60 * 1000);
+
+app.get('/api/bot/qr', (req, res) => {
+  if (!_lastQrBase64) return res.status(404).send('Sem QR code disponível ainda. Tente gerar novamente.');
+  const ageSec = Math.round((Date.now() - _lastQrAt) / 1000);
+  res.send(`<!doctype html><html><body style="background:#111;color:#eee;text-align:center;font-family:sans-serif">
+<h2>QR Code Evolution — escaneie no WhatsApp</h2>
+<p>Idade: ${ageSec}s (válido por ~60s, recarregue a página se expirar)</p>
+<img src="${_lastQrBase64}" style="background:white;padding:16px;border-radius:8px;max-width:400px"/>
+<p>Após escanear, status vai virar "open"</p>
+</body></html>`);
+});
 
 app.post('/api/bot/webhook', async (req, res) => {
   // Responde imediatamente para não dar timeout
@@ -978,22 +1012,55 @@ app.post('/api/bot/webhook', async (req, res) => {
 
   try {
     const body = req.body;
+    const event = body.event || '';
     const data = body.data || {};
-    const key  = data.key  || {};
 
-    // Ignora mensagens enviadas pelo próprio bot e grupos
-    if (key.fromMe) return;
+    // Captura QR code se vier
+    if (event === 'qrcode.updated' || event === 'QRCODE_UPDATED') {
+      const qr = data.qrcode || data;
+      const b64 = qr?.base64 || qr?.code || data?.base64;
+      if (b64) {
+        _lastQrBase64 = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64.split(',').pop()}`;
+        _lastQrAt = Date.now();
+        console.log('[bot/webhook] QR atualizado, disponível em /api/bot/qr');
+      }
+      return;
+    }
+
+    if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
+      console.log('[bot/webhook] connection.update:', JSON.stringify(data).slice(0, 200));
+      return;
+    }
+
+    const key = data.key  || {};
+
+    // Ignora grupos
     if (key.remoteJid && key.remoteJid.includes('@g.us')) return;
 
     const remoteJid = key.remoteJid || '';
     if (!remoteJid) return;
 
-    const numero = await resolverNumero(remoteJid);
+    const numero = extrairNumeroReal(data);
     if (!numero) {
-      console.error('[bot/webhook] não conseguiu resolver numero para:', remoteJid);
+      console.error('[bot/webhook] não conseguiu extrair numero. payload key=', JSON.stringify(key));
       return;
     }
-    console.log('[bot/webhook] enviando para:', numero, '(de:', remoteJid, ')');
+
+    // Se a mensagem foi enviada PELO DONO (fromMe), renova o cooldown do destinatário
+    // para o bot ficar em silêncio enquanto o atendimento humano está rolando.
+    if (key.fromMe) {
+      ultimaSaudacao.set(numero, Date.now());
+      console.log('[bot/webhook] dono respondeu para', numero, '— cooldown de 6h renovado');
+      return;
+    }
+
+    // Cliente mandou mensagem: se já saudamos nas últimas 6h, não saúda de novo
+    if (emCooldown(numero)) {
+      console.log('[bot/webhook] cliente', numero, 'em cooldown, ignorando mensagem');
+      return;
+    }
+
+    console.log('[bot/webhook] enviando saudação para:', numero, '(remoteJid:', remoteJid, ')');
 
     // ── Verificar horário de funcionamento (Ter–Dom, 19h–01h, Brasília) ────────
     function isAberto() {
@@ -1017,11 +1084,19 @@ app.post('/api/bot/webhook', async (req, res) => {
     const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
     const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
 
-    await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+    // Evolution API v2 usa { number, text } direto (não mais textMessage.text)
+    const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
-      body: JSON.stringify({ number: numero, textMessage: { text: texto } }),
+      body: JSON.stringify({ number: numero, text: texto }),
     });
+    if (!r.ok) {
+      const errBody = await r.text();
+      console.error('[bot/webhook] sendText falhou:', r.status, errBody.slice(0, 300));
+    } else {
+      // Marca o cooldown só quando a saudação foi enviada com sucesso
+      ultimaSaudacao.set(numero, Date.now());
+    }
   } catch (err) {
     console.error('[bot/webhook] erro:', err.message);
   }
@@ -1037,13 +1112,14 @@ app.post('/api/bot/enviar', async (req, res) => {
     const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
     const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
 
+    // Evolution API v2 usa { number, text } direto
     const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
-      body: JSON.stringify({ number, textMessage: { text } }),
+      body: JSON.stringify({ number, text }),
     });
     const data = await r.json();
-    res.json(data);
+    res.status(r.status).json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
