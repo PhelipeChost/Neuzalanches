@@ -1122,6 +1122,7 @@ export default function ClienteApp() {
             {tema === "dark" ? <IconSun /> : <IconMoon />}
           </button>
 
+          {/* Botão WhatsApp header — reativar quando número voltar ao WhatsApp
           <a href={`https://wa.me/${WHATSAPP_NUMERO}`} target="_blank" rel="noopener noreferrer"
             style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -1137,6 +1138,7 @@ export default function ClienteApp() {
             <IconWhatsapp />
             <span className="nl-cta-label">Enviar mensagem</span>
           </a>
+          */}
         </div>
       </nav>
 
@@ -1374,7 +1376,7 @@ export default function ClienteApp() {
         )}
       </main>
 
-      {/* WhatsApp FAB */}
+      {/* WhatsApp FAB — reativar quando número voltar ao WhatsApp
       <a href={`https://wa.me/${WHATSAPP_NUMERO}`} target="_blank" rel="noopener noreferrer"
         style={{
           position: "fixed", bottom: 24, right: 24,
@@ -1392,6 +1394,7 @@ export default function ClienteApp() {
       >
         <IconWhatsapp />
       </a>
+      */}
 
       {/* Modal Detalhe do Produto */}
       {modalProduto && (
