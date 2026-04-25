@@ -548,19 +548,20 @@ function BannerFechado() {
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDetalhes, onAdd }) {
   const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.length > 0;
 
-  // Cor de fundo da imagem por categoria (palette quente)
-  const bgPorCat = {
-    "Hambúrgueres": "#5C2A0A",
-    "Hamburgueres": "#5C2A0A",
-    "Beirutes":     "#6B1A1A",
-    "Lanches":      "#2A4A18",
-    "Salgados":     "#7A5A18",
-    "Porções":      "#4A3214",
-    "Porcoes":      "#4A3214",
-    "Bebidas":      "#12305A",
-    "Sobremesas":   "#5C1A4A",
+  // Cor de fundo + emoji por categoria (palette quente)
+  const cfgPorCat = {
+    "Hambúrgueres": { bg: "#5C2A0A", emoji: "🍔" },
+    "Hamburgueres": { bg: "#5C2A0A", emoji: "🍔" },
+    "Beirutes":     { bg: "#6B1A1A", emoji: "🥙" },
+    "Lanches":      { bg: "#2A4A18", emoji: "🥪" },
+    "Salgados":     { bg: "#7A5A18", emoji: "🥟" },
+    "Porções":      { bg: "#4A3214", emoji: "🍟" },
+    "Porcoes":      { bg: "#4A3214", emoji: "🍟" },
+    "Bebidas":      { bg: "#12305A", emoji: "🥤" },
+    "Sobremesas":   { bg: "#5C1A4A", emoji: "🍰" },
   };
-  const bgImg = bgPorCat[p.categoria] || "#5C2A0A";
+  const cfg = cfgPorCat[p.categoria] || { bg: "#5C2A0A", emoji: "🍽️" };
+  const bgImg = cfg.bg;
 
   return (
     <div onClick={() => onVerDetalhes(p)} style={{
@@ -577,7 +578,7 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
       onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--brand)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
       onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.transform = ""; }}
     >
-      {/* Imagem com fundo quente */}
+      {/* Imagem com fundo quente — emoji da categoria quando não há foto */}
       <div style={{
         width: "100%",
         aspectRatio: "3/2",
@@ -589,8 +590,14 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
         alignItems: "center",
         justifyContent: "center",
       }}>
-        <ImagemProduto src={p.imagem} tamanho="100%" borderRadius={0}
-          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        {p.imagem ? (
+          <img src={p.imagem} alt={p.nome}
+            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        ) : (
+          <span style={{ fontSize: 56, filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.35))", position: "relative", zIndex: 1 }}>
+            {cfg.emoji}
+          </span>
+        )}
         {/* Gradiente sutil */}
         <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at center, rgba(255,255,255,0.04) 0%, rgba(0,0,0,0.18) 100%)", pointerEvents: "none" }} />
       </div>
