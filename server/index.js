@@ -1,9 +1,11 @@
 import "dotenv/config";
+import fs from "fs";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { reportarReceitaNexo } from "./services/nexo.js";
+import { notificarPedidoConfirmado, notificarStatusPedido } from "./services/whatsapp.js";
 import {
   criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
   isEmailAdmin, listarAdminEmails, adicionarAdminEmail, removerAdminEmail,
@@ -24,6 +26,7 @@ import {
   listarEstoqueSaidas, registrarSaida,
   listarEstoqueAjustes, registrarAjuste,
   estoqueDashboard,
+  listarImagensProduto, adicionarImagemProduto, removerImagemProduto, reordenarImagensProduto,
 } from "./database.js";
 
 const app = express();
@@ -283,6 +286,33 @@ app.delete("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── PRODUTO IMAGENS ──────────────────────────────────────────────────────────
+
+// GET público — cliente precisa ver as fotos no cardápio
+app.get("/api/produtos/:id/imagens", (req, res) => {
+  res.json(listarImagensProduto(req.params.id));
+});
+
+app.post("/api/produtos/:id/imagens", authMiddleware, adminOnly, (req, res) => {
+  const { imagem, ordem } = req.body;
+  if (!imagem) return res.status(400).json({ error: "Imagem obrigatória" });
+  const img = adicionarImagemProduto({ produto_id: req.params.id, imagem, ordem: ordem ?? 0 });
+  res.status(201).json(img);
+});
+
+app.delete("/api/produtos/:id/imagens/:imagemId", authMiddleware, adminOnly, (req, res) => {
+  const ok = removerImagemProduto(req.params.imagemId);
+  if (!ok) return res.status(404).json({ error: "Imagem não encontrada" });
+  res.json({ ok: true });
+});
+
+app.put("/api/produtos/:id/imagens/reordenar", authMiddleware, adminOnly, (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: "ids deve ser array" });
+  reordenarImagensProduto(req.params.id, ids);
+  res.json({ ok: true });
+});
+
 // ─── CEP (proxy para ViaCEP) ────────────────────────────────────────────
 
 app.get("/api/cep/:cep", async (req, res) => {
@@ -386,6 +416,10 @@ app.post("/api/pedidos/publico", (req, res) => {
     metodo_pagamento: metodo_pagamento || "",
     endereco: endereco || {},
   });
+
+  // Notificar cliente via WhatsApp (não bloqueia a resposta)
+  notificarPedidoConfirmado(pedido).catch(() => {});
+
   res.status(201).json(pedido);
 });
 
@@ -450,7 +484,10 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       obs: `Pedido ${pedido.tipo} entregue automaticamente`,
     });
 
-    // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
+    // Notificar cliente via WhatsApp sobre mudança de status
+  notificarStatusPedido(pedido, status).catch(() => {});
+
+  // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
     reportarReceitaNexo({
       amount: pedido.total,
       description: `Pedido #${pedido.id.slice(0, 6)}`,
@@ -720,6 +757,296 @@ app.post("/api/estoque/ajustes", authMiddleware, adminOnly, (req, res) => {
 
 app.get("/api/estoque/dashboard", authMiddleware, adminOnly, (req, res) => {
   res.json(estoqueDashboard());
+});
+
+// ─── HORÁRIO DE FUNCIONAMENTO ────────────────────────────────────────────────
+
+const HORARIO_DEFAULT = {
+  status: 'auto',           // 'auto' | 'aberto' | 'fechado'
+  dias: [0, 2, 3, 4, 5, 6], // 0=Dom 1=Seg 2=Ter 3=Qua 4=Qui 5=Sex 6=Sab
+  abertura: '19:00',
+  fechamento: '01:00',
+};
+
+function getHorarioConfig() {
+  try {
+    const raw = obterConfig('horario_funcionamento');
+    return raw ? JSON.parse(raw) : HORARIO_DEFAULT;
+  } catch {
+    return HORARIO_DEFAULT;
+  }
+}
+
+function isAbertoAgora(cfg) {
+  if (cfg.status === 'aberto') return true;
+  if (cfg.status === 'fechado') return false;
+
+  // Modo automático — horário de Brasília
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const sp = new Date(utc + (-3 * 3600000));
+  const day = sp.getDay();
+  const hour = sp.getHours();
+  const min = sp.getMinutes();
+  const totalMin = hour * 60 + min;
+
+  const [hAb, mAb] = cfg.abertura.split(':').map(Number);
+  const [hFe, mFe] = cfg.fechamento.split(':').map(Number);
+  const abMin = hAb * 60 + mAb;
+  const feMin = hFe * 60 + mFe;
+
+  const diasValidos = cfg.dias || HORARIO_DEFAULT.dias;
+
+  // Período cruza meia-noite (ex: 19:00 → 01:00)
+  if (abMin > feMin) {
+    if (totalMin >= abMin) {
+      return diasValidos.includes(day);
+    } else if (totalMin < feMin) {
+      const ontem = day === 0 ? 6 : day - 1;
+      return diasValidos.includes(ontem);
+    }
+    return false;
+  }
+
+  // Período no mesmo dia (ex: 08:00 → 22:00)
+  return diasValidos.includes(day) && totalMin >= abMin && totalMin < feMin;
+}
+
+// GET público — plataforma cliente e bot consultam
+app.get('/api/config/horario', (req, res) => {
+  const cfg = getHorarioConfig();
+  res.json({ ...cfg, aberto: isAbertoAgora(cfg) });
+});
+
+// PUT autenticado — admin salva configuração
+app.put('/api/config/horario', authMiddleware, (req, res) => {
+  const { status, dias, abertura, fechamento } = req.body;
+  const cfg = {
+    status: ['auto', 'aberto', 'fechado'].includes(status) ? status : 'auto',
+    dias: Array.isArray(dias) ? dias : HORARIO_DEFAULT.dias,
+    abertura: abertura || HORARIO_DEFAULT.abertura,
+    fechamento: fechamento || HORARIO_DEFAULT.fechamento,
+  };
+  salvarConfig('horario_funcionamento', JSON.stringify(cfg));
+  res.json({ ...cfg, aberto: isAbertoAgora(cfg) });
+});
+
+// ─── WHATSAPP QR CODE PAGE ──────────────────────────────────────────────────
+
+app.get('/whatsapp', async (req, res) => {
+  const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
+  const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
+  const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+
+  let qrData = null;
+  let status = 'desconhecido';
+  let erro = null;
+
+  try {
+    const r = await fetch(`${EVOLUTION_URL}/instance/connectionState/${EVOLUTION_INSTANCE}`, {
+      headers: { 'apikey': EVOLUTION_KEY },
+    });
+    const json = await r.json();
+    status = json?.instance?.state || json?.state || 'desconhecido';
+  } catch (e) {
+    erro = e.message;
+  }
+
+  if (status !== 'open') {
+    try {
+      const r = await fetch(`${EVOLUTION_URL}/instance/connect/${EVOLUTION_INSTANCE}`, {
+        headers: { 'apikey': EVOLUTION_KEY },
+      });
+      const json = await r.json();
+      qrData = json?.base64 || json?.qrcode?.base64 || null;
+    } catch (e) {
+      erro = e.message;
+    }
+  }
+
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WhatsApp — Neuzalanches</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f0fdf4; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { background: #fff; border-radius: 20px; padding: 40px; max-width: 480px; width: 90%; text-align: center; box-shadow: 0 8px 40px rgba(0,0,0,0.10); }
+    .logo { font-size: 40px; margin-bottom: 12px; }
+    h1 { font-size: 22px; font-weight: 700; color: #1c1917; margin-bottom: 6px; }
+    .sub { font-size: 14px; color: #78716c; margin-bottom: 24px; }
+    .badge { display: inline-block; padding: 5px 16px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 24px; }
+    .badge.connected { background: #dcfce7; color: #16a34a; }
+    .badge.disconnected { background: #fee2e2; color: #dc2626; }
+    .badge.waiting { background: #fef3c7; color: #d97706; }
+    .qr-wrap { background: #f5f5f4; border-radius: 16px; padding: 24px; margin-bottom: 24px; display: inline-block; }
+    .qr-wrap img { display: block; width: 240px; height: 240px; }
+    .instructions { background: #eff6ff; border-radius: 10px; padding: 16px; text-align: left; font-size: 13px; color: #1e40af; line-height: 1.7; margin-bottom: 24px; }
+    .btn { display: inline-block; padding: 12px 28px; background: #16a34a; color: #fff; border-radius: 10px; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; font-family: inherit; }
+    .btn:hover { background: #15803d; }
+    .error { background: #fee2e2; border-radius: 10px; padding: 14px; color: #dc2626; font-size: 13px; margin-bottom: 20px; }
+    .connected-box { background: #dcfce7; border-radius: 14px; padding: 28px; margin-bottom: 24px; }
+    .connected-box .icon { font-size: 48px; margin-bottom: 10px; }
+    .connected-box p { color: #15803d; font-size: 15px; font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">🍔</div>
+  <h1>Neuzalanches — WhatsApp</h1>
+  <p class="sub">Conexão do WhatsApp Business via Evolution API</p>
+
+  ${status === 'open' ? `
+    <span class="badge connected">✅ WhatsApp Conectado</span>
+    <div class="connected-box">
+      <div class="icon">📱</div>
+      <p>WhatsApp conectado com sucesso!<br>O bot está ativo e pronto para atender.</p>
+    </div>
+    <p style="font-size:13px;color:#78716c;margin-bottom:20px;">Os clientes já podem enviar mensagens e receber notificações automáticas de pedido.</p>
+  ` : `
+    <span class="badge ${qrData ? 'waiting' : 'disconnected'}">${qrData ? '⏳ Aguardando escaneamento' : '❌ Desconectado'}</span>
+    ${erro ? `<div class="error">Erro ao conectar na Evolution API: ${erro}</div>` : ''}
+    ${qrData ? `
+    <div class="qr-wrap">
+      <img src="${qrData}" alt="QR Code WhatsApp" />
+    </div>
+    <div class="instructions">
+      <strong>Como conectar:</strong><br>
+      1. Abra o WhatsApp no celular<br>
+      2. Toque em <strong>⋮ Menu → Aparelhos conectados</strong><br>
+      3. Toque em <strong>"Conectar um aparelho"</strong><br>
+      4. Escaneie o QR Code acima
+    </div>
+    <p style="font-size:12px;color:#a8a29e;margin-bottom:20px;">O QR Code expira em alguns minutos. Recarregue a página se necessário.</p>
+    ` : `
+    <div class="error">QR Code não disponível. Verifique se a Evolution API está rodando.</div>
+    `}
+  `}
+
+  <button class="btn" onclick="location.reload()">🔄 Atualizar status</button>
+</div>
+</body>
+</html>`);
+});
+
+// ─── BOT WHATSAPP — webhook direto da Evolution API ──────────────────────────
+
+// Resolve @lid → número de telefone real lendo o store da Evolution API
+async function resolverNumero(remoteJid, instanceName = 'neuzalanches') {
+  // Se não é @lid, extrai direto
+  if (!remoteJid.endsWith('@lid')) {
+    return remoteJid.split('@')[0];
+  }
+
+  try {
+    const storeDir = `/var/evolution-api/store/contacts/${instanceName}`;
+    const lidFile = `${storeDir}/${remoteJid}.json`;
+
+    if (!fs.existsSync(lidFile)) return null;
+    const lidContact = JSON.parse(fs.readFileSync(lidFile, 'utf8'));
+    const lidPic = lidContact.profilePictureUrl;
+
+    // Procura contato @s.whatsapp.net com mesma foto de perfil
+    const files = fs.readdirSync(storeDir);
+    for (const f of files) {
+      if (!f.endsWith('@s.whatsapp.net.json')) continue;
+      const c = JSON.parse(fs.readFileSync(`${storeDir}/${f}`, 'utf8'));
+      if (lidPic && c.profilePictureUrl === lidPic) {
+        return c.id.split('@')[0]; // retorna só o número
+      }
+    }
+
+    // Fallback: pushName igual (menos confiável)
+    for (const f of files) {
+      if (!f.endsWith('@s.whatsapp.net.json')) continue;
+      const c = JSON.parse(fs.readFileSync(`${storeDir}/${f}`, 'utf8'));
+      if (c.pushName && c.pushName === lidContact.pushName) {
+        return c.id.split('@')[0];
+      }
+    }
+  } catch (e) {
+    console.error('[bot/webhook] erro ao resolver LID:', e.message);
+  }
+  return null;
+}
+
+app.post('/api/bot/webhook', async (req, res) => {
+  // Responde imediatamente para não dar timeout
+  res.json({ status: 'ok' });
+
+  try {
+    const body = req.body;
+    const data = body.data || {};
+    const key  = data.key  || {};
+
+    // Ignora mensagens enviadas pelo próprio bot e grupos
+    if (key.fromMe) return;
+    if (key.remoteJid && key.remoteJid.includes('@g.us')) return;
+
+    const remoteJid = key.remoteJid || '';
+    if (!remoteJid) return;
+
+    const numero = await resolverNumero(remoteJid);
+    if (!numero) {
+      console.error('[bot/webhook] não conseguiu resolver numero para:', remoteJid);
+      return;
+    }
+    console.log('[bot/webhook] enviando para:', numero, '(de:', remoteJid, ')');
+
+    // ── Verificar horário de funcionamento (Ter–Dom, 19h–01h, Brasília) ────────
+    function isAberto() {
+      const now  = new Date();
+      const utc  = now.getTime() + now.getTimezoneOffset() * 60000;
+      const sp   = new Date(utc + (-3 * 3600000));
+      const day  = sp.getDay();
+      const hour = sp.getHours();
+      const diasAbertos = [0, 2, 3, 4, 5, 6];
+      if (hour >= 19) return diasAbertos.includes(day);
+      if (hour < 1)  return diasAbertos.includes(day === 0 ? 6 : day - 1);
+      return false;
+    }
+
+    const aberto = isAberto();
+    const texto = aberto
+      ? 'Olá! 👋 Seja bem-vindo(a) à *Neuzalanches*! 🍔\n\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\n\n🌐 *neuzalanches.com.br*\n\n_Após finalizar o pedido no site, você receberá as atualizações aqui pelo WhatsApp!_ 📲'
+      : '🔒 *Olá! No momento estamos fechados.*\n\nNosso horário de funcionamento é:\n📅 *Terça a Domingo*\n🕕 *19h00 às 01h00*\n\nQuando estivermos abertos, acesse nosso cardápio em:\n🌐 *neuzalanches.com.br*\n\n_Te esperamos em breve!_ 😊';
+
+    const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
+    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
+    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+
+    await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
+      body: JSON.stringify({ number: numero, textMessage: { text: texto } }),
+    });
+  } catch (err) {
+    console.error('[bot/webhook] erro:', err.message);
+  }
+});
+
+// ─── PROXY WHATSAPP (N8N → Evolution API) ───────────────────────────────────
+app.post('/api/bot/enviar', async (req, res) => {
+  try {
+    const { number, text } = req.body;
+    if (!number || !text) return res.status(400).json({ error: 'number e text são obrigatórios' });
+
+    const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
+    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
+    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+
+    const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
+      body: JSON.stringify({ number, textMessage: { text } }),
+    });
+    const data = await r.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── START ──────────────────────────────────────────────────────────────────

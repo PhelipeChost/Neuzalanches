@@ -148,6 +148,15 @@ db.exec(`
     UNIQUE(produto_id, insumo_id)
   );
 
+  CREATE TABLE IF NOT EXISTS produto_imagens (
+    id TEXT PRIMARY KEY,
+    produto_id TEXT NOT NULL,
+    imagem TEXT NOT NULL,
+    ordem INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (produto_id) REFERENCES produtos(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS estoque_categorias (
     id TEXT PRIMARY KEY,
     nome TEXT UNIQUE NOT NULL,
@@ -513,6 +522,30 @@ export function atualizarProduto(id, { nome, descricao, preco, custo, categoria,
 
 export function excluirProduto(id) {
   return db.prepare("DELETE FROM produtos WHERE id = ?").run(id).changes > 0;
+}
+
+// ─── PRODUTO IMAGENS ──────────────────────────────────────────────────────────
+
+export function listarImagensProduto(produtoId) {
+  return db.prepare("SELECT id, produto_id, ordem, imagem FROM produto_imagens WHERE produto_id = ? ORDER BY ordem ASC, created_at ASC").all(produtoId);
+}
+
+export function adicionarImagemProduto({ produto_id, imagem, ordem = 0 }) {
+  const id = gerarId();
+  db.prepare(
+    "INSERT INTO produto_imagens (id, produto_id, imagem, ordem) VALUES (?, ?, ?, ?)"
+  ).run(id, produto_id, imagem, ordem);
+  return { id, produto_id, imagem, ordem };
+}
+
+export function removerImagemProduto(id) {
+  return db.prepare("DELETE FROM produto_imagens WHERE id = ?").run(id).changes > 0;
+}
+
+export function reordenarImagensProduto(produtoId, ids) {
+  const update = db.prepare("UPDATE produto_imagens SET ordem = ? WHERE id = ? AND produto_id = ?");
+  const tx = db.transaction(() => { ids.forEach((id, i) => update.run(i, id, produtoId)); });
+  tx();
 }
 
 // ─── ENDERECOS ─────────────────────────────────────────────────────────

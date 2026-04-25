@@ -101,8 +101,11 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
   const [imagens, setImagens] = useState([]);
   const [deletarIds, setDeletarIds] = useState([]); // ids de imagens 'db' a remover ao salvar
   const [fotoIdx, setFotoIdx] = useState(0);
-  const imagensRef = useRef(imagens);
+  // Ref garante que o salvar() sempre lê o estado mais atual (evita closure stale)
+  const imagensRef = useRef([]);
+  const deletarIdsRef = useRef([]);
   useEffect(() => { imagensRef.current = imagens; }, [imagens]);
+  useEffect(() => { deletarIdsRef.current = deletarIds; }, [deletarIds]);
 
   // Carregar imagens ao abrir edição
   useEffect(() => {
@@ -206,10 +209,12 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
     if (!form.nome || !form.preco) return;
     setSalvando(true);
     try {
-      const imgs = imagensRef.current; // sempre o estado mais atual
+      // Lê do ref para garantir o valor mais atual (evita closure stale)
+      const imgs = imagensRef.current;
+      const toDelete = deletarIdsRef.current;
       const primeiraImg = imgs[0]?.imagem || "";
 
-      // 1. Criar ou atualizar o produto com a imagem principal
+      // 1. Criar ou atualizar o produto (campo imagem = foto principal)
       const produto = await onSave({
         ...form,
         imagem: primeiraImg,
@@ -219,20 +224,21 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
       });
 
       if (produto?.id) {
-        // 2. Deletar imagens marcadas para remoção
-        for (const id of deletarIds) {
-          await api.produtos.imagens.remover(produto.id, id).catch(() => {});
+        // 2. Deletar imagens removidas pelo usuário
+        for (const imgId of toDelete) {
+          await api.produtos.imagens.remover(produto.id, imgId).catch(() => {});
         }
 
-        // 3. Salvar imagens novas e legadas (que ainda não estão no banco)
+        // 3. Salvar fotos novas e legadas que ainda não estão em produto_imagens
         const paraSubir = imgs.filter(i => i.source === 'new' || i.source === 'legacy');
         for (let i = 0; i < paraSubir.length; i++) {
           await api.produtos.imagens.adicionar(produto.id, paraSubir[i].imagem, i);
         }
       }
 
-      onClose();
+      onClose(); // só fecha depois de tudo salvo com sucesso
     } catch (err) {
+      console.error("Erro ao salvar produto/imagens:", err);
       setSalvando(false);
     }
   };
