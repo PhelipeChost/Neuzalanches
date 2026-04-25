@@ -378,7 +378,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
             <div style={{ borderTop: "2px solid var(--border)", paddingTop: 18, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
               <div>
                 <div style={{ fontSize: 10, color: "var(--text-soft)", fontWeight: 800, letterSpacing: "0.08em" }}>TOTAL DO PEDIDO</div>
-                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 26, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.5px" }}>{fmt(totalCarrinho)}</div>
+                <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 26, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.5px" }}>{fmt(totalCarrinho)}</div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setEtapa("endereco")}
@@ -432,7 +432,7 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
           <ImagemProduto src={produto.imagem} tamanho={52} borderRadius={10} />
           <div>
             <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text)" }}>{produto.nome}</div>
-            <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, fontFamily: "'Syne', sans-serif", marginTop: 2 }}>{fmt(produto.preco)}</div>
+            <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, fontFamily: "'Plus Jakarta Sans', sans-serif", marginTop: 2 }}>{fmt(produto.preco)}</div>
           </div>
         </div>
 
@@ -453,7 +453,7 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
                   borderRadius: 10, transition: "all 0.15s",
                 }}>
                   <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{ad.nome}</span>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand)", fontFamily: "'Syne', sans-serif" }}>+ {fmt(ad.preco)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand)", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>+ {fmt(ad.preco)}</span>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0}
                       style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: qtd > 0 ? "pointer" : "default", fontSize: 16, lineHeight: 1, color: qtd > 0 ? "var(--text)" : "var(--text-soft)", fontWeight: 700 }}>−</button>
@@ -470,7 +470,7 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
         <div style={{ borderTop: "2px solid var(--border)", paddingTop: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <div style={{ fontSize: 10, color: "var(--text-soft)", fontWeight: 800, letterSpacing: "0.08em" }}>TOTAL DO ITEM</div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>{fmt(totalItem)}</div>
+            <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 22, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>{fmt(totalItem)}</div>
           </div>
           <button onClick={() => onConfirm(selecionados)}
             style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 10, padding: "12px 24px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>
@@ -628,7 +628,7 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
         )}
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
-          <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>
+          <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>
             {fmt(p.preco)}
           </span>
           <button onClick={e => { e.stopPropagation(); onAdd(p); }}
@@ -688,7 +688,7 @@ function ModalProduto({ produto, adicionais, permiteAdicionais, aberto, onAddSim
           )}
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>
+            <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>
               {fmt(produto.preco)}
             </div>
           </div>
@@ -747,6 +747,11 @@ export default function ClienteApp() {
   });
   useEffect(() => {
     try { localStorage.setItem("nl-theme", tema); } catch {}
+    // Sincroniza body/html com o tema do app
+    const bg = tema === "dark" ? "#120A04" : "#FFF9F4";
+    document.documentElement.style.background = bg;
+    document.body.style.background = bg;
+    document.documentElement.style.setProperty("--nl-bg-current", bg);
   }, [tema]);
   const toggleTema = () => setTema(t => t === "light" ? "dark" : "light");
 
@@ -915,7 +920,20 @@ export default function ClienteApp() {
 
   // ─── ESTILOS GLOBAIS DO TEMA ────────────────────────────────────────────────
   const themeStyles = `
-    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Nunito:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Nunito:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');
+
+    /* Override do index.css que constrange #root */
+    html, body { margin: 0 !important; padding: 0 !important; background: var(--nl-bg-current, #FFF9F4); }
+    #root {
+      width: 100% !important;
+      max-width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: none !important;
+      text-align: left !important;
+      display: block !important;
+      min-height: 100vh;
+    }
 
     .nl-app {
       --bg:           #FFF9F4;
@@ -952,6 +970,13 @@ export default function ClienteApp() {
 
     .nl-app, .nl-app * { box-sizing: border-box; }
     .nl-app { font-family: 'Nunito', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Fonte dos preços */
+    .nl-price {
+      font-family: 'Plus Jakarta Sans', sans-serif !important;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: -0.3px;
+    }
 
     @keyframes nlpulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
     @keyframes fi { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -1295,7 +1320,7 @@ export default function ClienteApp() {
                         <button onClick={() => updateQtd(item._uid, item.quantidade - 1)} style={{ width: 30, height: 30, border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>−</button>
                         <span style={{ fontSize: 14, fontWeight: 800, minWidth: 24, textAlign: "center", color: "var(--text)" }}>{item.quantidade}</span>
                         <button onClick={() => updateQtd(item._uid, item.quantidade + 1)} style={{ width: 30, height: 30, border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>+</button>
-                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 800, color: "var(--brand)", minWidth: 90, textAlign: "right", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>{fmt(itemTotal)}</span>
+                        <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 17, fontWeight: 800, color: "var(--brand)", minWidth: 90, textAlign: "right", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>{fmt(itemTotal)}</span>
                       </div>
                     </div>
                   );
@@ -1312,7 +1337,7 @@ export default function ClienteApp() {
                 <div style={{ padding: "20px", borderTop: "2px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 14 }}>
                   <div>
                     <div style={{ fontSize: 11, color: "var(--text-soft)", fontWeight: 800, letterSpacing: "0.08em" }}>TOTAL</div>
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>{fmt(totalCarrinho)}</div>
+                    <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>{fmt(totalCarrinho)}</div>
                   </div>
                   <button onClick={abrirCheckout} disabled={enviando}
                     style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 12, padding: "14px 32px", fontSize: 14.5, fontWeight: 800, cursor: enviando ? "wait" : "pointer", fontFamily: "'Nunito', sans-serif", opacity: enviando ? 0.7 : 1, transition: "background 0.18s" }}
@@ -1339,7 +1364,7 @@ export default function ClienteApp() {
               <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12, fontWeight: 500 }}>
                 {pedidoEnviado.itens?.map(item => `${item.quantidade}x ${item.produto_nome}`).join(", ")}
               </div>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", marginBottom: 26, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>{fmt(pedidoEnviado.total)}</div>
+              <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", marginBottom: 26, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>{fmt(pedidoEnviado.total)}</div>
               <button onClick={() => { setPedidoEnviado(null); setTab("catalogo"); }}
                 style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 10, padding: "13px 28px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>
                 Fazer novo pedido
