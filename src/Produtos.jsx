@@ -43,6 +43,20 @@ function ImagemProduto({ src, tamanho = 80, borderRadius = 8 }) {
   );
 }
 
+// ─── SLIDESHOW ADMIN CARD (carrega do banco) ─────────────────────────────────
+function SlideshowAdminCard({ produtoId, imagemLegada }) {
+  const [imagens, setImagens] = useState(
+    imagemLegada ? [{ id: "0", imagem: imagemLegada }] : []
+  );
+  useEffect(() => {
+    api.produtos.imagens.listar(produtoId).then(imgs => {
+      if (imgs.length > 0) setImagens(imgs);
+      else if (imagemLegada) setImagens([{ id: "0", imagem: imagemLegada }]);
+    }).catch(() => {});
+  }, [produtoId]);
+  return <SlideshowAdmin imagens={imagens} />;
+}
+
 // ─── SLIDESHOW ADMIN (miniaturas + seta) ─────────────────────────────────────
 function SlideshowAdmin({ imagens }) {
   const [idx, setIdx] = useState(0);
@@ -76,84 +90,67 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
   const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true });
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef(null);
-  const [abaModal, setAbaModal] = useState("produto"); // "produto" | "ficha"
+  const [abaModal, setAbaModal] = useState("produto");
   const [composicao, setComposicao] = useState([]);
   const [loadingComposicao, setLoadingComposicao] = useState(false);
   const [insumoSel, setInsumoSel] = useState("");
   const [qtdInsumo, setQtdInsumo] = useState("");
 
   // ── Múltiplas fotos ──────────────────────────────────────────────────────────
-  const [imagens, setImagens] = useState([]); // [{ id, imagem, ordem }]
-  const [loadingImagens, setLoadingImagens] = useState(false);
-  const [slideFotoIdx, setSlideFotoIdx] = useState(0);
+  // source: 'db' = já está no banco  |  'new' = novo upload local  |  'legacy' = campo imagem legado
+  const [imagens, setImagens] = useState([]);
+  const [deletarIds, setDeletarIds] = useState([]); // ids de imagens 'db' a remover ao salvar
+  const [fotoIdx, setFotoIdx] = useState(0);
+  const imagensRef = useRef(imagens);
+  useEffect(() => { imagensRef.current = imagens; }, [imagens]);
 
-  // Carregar imagens ao abrir (editando)
+  // Carregar imagens ao abrir edição
   useEffect(() => {
-    if (editando?.id) {
-      setLoadingImagens(true);
-      api.produtos.imagens.listar(editando.id)
-        .then(imgs => {
-          // Se não há imagens na tabela mas tem imagem legada, mostra ela
-          if (imgs.length === 0 && editando.imagem) {
-            setImagens([{ id: "__legado__", imagem: editando.imagem, ordem: 0 }]);
-          } else {
-            setImagens(imgs);
-          }
-          setSlideFotoIdx(0);
-        })
-        .catch(() => {})
-        .finally(() => setLoadingImagens(false));
-    }
+    if (!editando?.id) return;
+    api.produtos.imagens.listar(editando.id).then(dbImgs => {
+      if (dbImgs.length > 0) {
+        setImagens(dbImgs.map(i => ({ ...i, source: 'db' })));
+      } else if (editando.imagem) {
+        // Imagem legada no campo produtos.imagem
+        setImagens([{ id: '__legado__', imagem: editando.imagem, ordem: 0, source: 'legacy' }]);
+      }
+      setFotoIdx(0);
+    }).catch(() => {});
   }, [editando?.id]);
 
+  // Adicionar fotos (só preview local — tudo salvo no "Salvar")
   const adicionarFotos = async (e) => {
     const files = Array.from(e.target.files);
     if (!files.length) return;
     const novas = await Promise.all(files.map(f => comprimirImagem(f)));
-
-    if (!editando?.id) {
-      // Produto novo: apenas preview local (salvar depois)
-      const locais = novas.map((img, i) => ({ id: `__local__${Date.now()}_${i}`, imagem: img, ordem: imagens.length + i }));
-      const lista = [...imagens, ...locais];
-      setImagens(lista);
-      // Primeira foto vai para form.imagem
-      if (!form.imagem) setForm(f => ({ ...f, imagem: lista[0].imagem }));
-    } else {
-      // Produto existente: salvar direto
-      const ordem = imagens.length;
-      const salvas = await Promise.all(
-        novas.map((img, i) => api.produtos.imagens.adicionar(editando.id, img, ordem + i))
-      );
-      const lista = [...imagens, ...salvas];
-      setImagens(lista);
-      // Atualiza imagem principal se ainda vazia
-      if (!form.imagem || imagens.length === 0) {
-        const updated = { ...form, imagem: novas[0] };
-        setForm(updated);
-        await api.produtos.atualizar(editando.id, { ...updated, preco: parseFloat(updated.preco), custo: parseFloat(updated.custo) || 0 });
-      }
-    }
-    setSlideFotoIdx(imagens.length);
+    setImagens(prev => {
+      const novos = novas.map((img, i) => ({
+        id: `__new__${Date.now()}_${i}`,
+        imagem: img,
+        ordem: prev.length + i,
+        source: 'new',
+      }));
+      return [...prev, ...novos];
+    });
     if (fileRef.current) fileRef.current.value = "";
   };
 
-  const removerFoto = async (img) => {
-    if (img.id.startsWith("__local__") || img.id === "__legado__") {
-      const lista = imagens.filter(i => i.id !== img.id);
-      setImagens(lista);
-      setForm(f => ({ ...f, imagem: lista[0]?.imagem || "" }));
-      setSlideFotoIdx(0);
-      return;
+  // Remover foto (só remove do estado — DB é atualizado no Salvar)
+  const removerFoto = (img) => {
+    setImagens(prev => {
+      const lista = prev.filter(i => i.id !== img.id);
+      setFotoIdx(f => Math.min(f, Math.max(0, lista.length - 1)));
+      return lista;
+    });
+    if (img.source === 'db') {
+      setDeletarIds(prev => [...prev, img.id]);
     }
-    await api.produtos.imagens.remover(editando.id, img.id);
-    const lista = imagens.filter(i => i.id !== img.id);
-    setImagens(lista);
-    const novaImagem = lista[0]?.imagem || "";
-    setForm(f => ({ ...f, imagem: novaImagem }));
-    if (editando?.id) {
-      await api.produtos.atualizar(editando.id, { ...form, imagem: novaImagem, preco: parseFloat(form.preco), custo: parseFloat(form.custo) || 0 });
-    }
-    setSlideFotoIdx(Math.max(0, slideFotoIdx - 1));
+  };
+
+  // Definir foto como principal (move para posição 0)
+  const setPrincipal = (img) => {
+    setImagens(prev => [img, ...prev.filter(i => i.id !== img.id)]);
+    setFotoIdx(0);
   };
 
   // Carregar composição ao abrir ficha técnica
@@ -209,15 +206,33 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
     if (!form.nome || !form.preco) return;
     setSalvando(true);
     try {
-      const primeiraImg = imagens[0]?.imagem || form.imagem || "";
-      const produto = await onSave({ ...form, imagem: primeiraImg, preco: parseFloat(form.preco), custo: parseFloat(form.custo) || 0, disponivel: form.disponivel });
-      // Salvar imagens locais do produto novo
-      if (produto?.id && imagens.some(i => i.id.startsWith("__local__"))) {
-        const locais = imagens.filter(i => i.id.startsWith("__local__"));
-        await Promise.all(locais.map((img, i) => api.produtos.imagens.adicionar(produto.id, img.imagem, i)));
+      const imgs = imagensRef.current; // sempre o estado mais atual
+      const primeiraImg = imgs[0]?.imagem || "";
+
+      // 1. Criar ou atualizar o produto com a imagem principal
+      const produto = await onSave({
+        ...form,
+        imagem: primeiraImg,
+        preco: parseFloat(form.preco),
+        custo: parseFloat(form.custo) || 0,
+        disponivel: form.disponivel,
+      });
+
+      if (produto?.id) {
+        // 2. Deletar imagens marcadas para remoção
+        for (const id of deletarIds) {
+          await api.produtos.imagens.remover(produto.id, id).catch(() => {});
+        }
+
+        // 3. Salvar imagens novas e legadas (que ainda não estão no banco)
+        const paraSubir = imgs.filter(i => i.source === 'new' || i.source === 'legacy');
+        for (let i = 0; i < paraSubir.length; i++) {
+          await api.produtos.imagens.adicionar(produto.id, paraSubir[i].imagem, i);
+        }
       }
+
       onClose();
-    } catch {
+    } catch (err) {
       setSalvando(false);
     }
   };
@@ -254,58 +269,72 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
                 <span style={{ marginLeft: 6, fontWeight: 400, color: "#a8a29e" }}>({imagens.length}/10)</span>
               </label>
 
-              {/* Slideshow de preview */}
-              {imagens.length > 0 && (
-                <div style={{ position: "relative", width: "100%", height: 180, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#f5f5f4" }}>
-                  <img src={imagens[slideFotoIdx]?.imagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {/* Preview grande da foto selecionada */}
+              {imagens.length > 0 ? (
+                <div style={{ position: "relative", width: "100%", height: 190, borderRadius: 10, overflow: "hidden", marginBottom: 10, background: "#f5f5f4" }}>
+                  <img src={imagens[fotoIdx]?.imagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   {imagens.length > 1 && (
                     <>
-                      <button onClick={() => setSlideFotoIdx(i => (i - 1 + imagens.length) % imagens.length)}
-                        style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", borderRadius: "50%", width: 30, height: 30, fontSize: 16, cursor: "pointer" }}>‹</button>
-                      <button onClick={() => setSlideFotoIdx(i => (i + 1) % imagens.length)}
-                        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", borderRadius: "50%", width: 30, height: 30, fontSize: 16, cursor: "pointer" }}>›</button>
+                      <button type="button" onClick={() => setFotoIdx(i => (i - 1 + imagens.length) % imagens.length)}
+                        style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", borderRadius: "50%", width: 30, height: 30, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+                      <button type="button" onClick={() => setFotoIdx(i => (i + 1) % imagens.length)}
+                        style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(0,0,0,0.5)", border: "none", color: "#fff", borderRadius: "50%", width: 30, height: 30, fontSize: 18, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
                       <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 5 }}>
                         {imagens.map((_, i) => (
-                          <div key={i} onClick={() => setSlideFotoIdx(i)}
-                            style={{ width: 7, height: 7, borderRadius: "50%", background: i === slideFotoIdx ? "#fff" : "rgba(255,255,255,0.5)", cursor: "pointer", border: "1px solid rgba(255,255,255,0.6)" }} />
+                          <div key={i} onClick={() => setFotoIdx(i)}
+                            style={{ width: i === fotoIdx ? 16 : 7, height: 7, borderRadius: 4, background: i === fotoIdx ? "#F38C24" : "rgba(255,255,255,0.7)", cursor: "pointer", transition: "width 0.2s" }} />
                         ))}
                       </div>
                     </>
                   )}
-                  {/* Badge da foto atual */}
-                  <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", color: "#fff", fontSize: 11, padding: "2px 8px", borderRadius: 10 }}>
-                    {slideFotoIdx + 1}/{imagens.length}
+                  <div style={{ position: "absolute", top: 8, left: 8, display: "flex", gap: 4 }}>
+                    {fotoIdx === 0
+                      ? <span style={{ background: "#15803d", color: "#fff", fontSize: 10, padding: "2px 7px", borderRadius: 8, fontWeight: 600 }}>✓ Principal</span>
+                      : <button type="button" onClick={() => setPrincipal(imagens[fotoIdx])}
+                          style={{ background: "rgba(0,0,0,0.5)", color: "#fff", border: "none", fontSize: 10, padding: "2px 7px", borderRadius: 8, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                          ☆ Usar como principal
+                        </button>
+                    }
                   </div>
+                  <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4 }}>
+                    <span style={{ background: "rgba(0,0,0,0.45)", color: "#fff", fontSize: 10, padding: "2px 7px", borderRadius: 8 }}>{fotoIdx + 1}/{imagens.length}</span>
+                    <button type="button" onClick={() => removerFoto(imagens[fotoIdx])}
+                      style={{ background: "rgba(220,38,38,0.8)", color: "#fff", border: "none", fontSize: 12, width: 22, height: 22, borderRadius: "50%", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>×</button>
+                  </div>
+                </div>
+              ) : (
+                <div onClick={() => fileRef.current?.click()} style={{ width: "100%", height: 120, background: "#fafaf9", borderRadius: 10, border: "2px dashed #d6d3d1", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, cursor: "pointer", marginBottom: 10 }}>
+                  <span style={{ fontSize: 32, color: "#d6d3d1" }}>📷</span>
+                  <span style={{ fontSize: 12, color: "#a8a29e" }}>Clique para adicionar fotos</span>
                 </div>
               )}
 
               {/* Grade de miniaturas */}
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-                {imagens.map((img, i) => (
-                  <div key={img.id} onClick={() => setSlideFotoIdx(i)}
-                    style={{ position: "relative", width: 56, height: 56, borderRadius: 8, overflow: "hidden", cursor: "pointer", border: i === slideFotoIdx ? "2px solid #15803d" : "2px solid #e7e5e4", flexShrink: 0 }}>
-                    <img src={img.imagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    {i === 0 && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(21,128,61,0.85)", fontSize: 8, color: "#fff", textAlign: "center", padding: "1px 0", fontWeight: 600 }}>PRINCIPAL</div>}
-                    <button type="button" onClick={e => { e.stopPropagation(); removerFoto(img); }}
-                      style={{ position: "absolute", top: 1, right: 1, background: "rgba(220,38,38,0.85)", border: "none", borderRadius: "50%", width: 16, height: 16, color: "#fff", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
-                  </div>
-                ))}
-                {/* Botão adicionar */}
-                {imagens.length < 10 && (
-                  <div onClick={() => fileRef.current?.click()}
-                    style={{ width: 56, height: 56, borderRadius: 8, border: "2px dashed #d6d3d1", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: "#fafaf9", flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontSize: 18, color: "#a8a29e" }}>+</span>
-                    <span style={{ fontSize: 8, color: "#a8a29e" }}>foto</span>
-                  </div>
-                )}
-              </div>
+              {imagens.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {imagens.map((img, i) => (
+                    <div key={img.id} onClick={() => setFotoIdx(i)}
+                      style={{ position: "relative", width: 52, height: 52, borderRadius: 7, overflow: "hidden", cursor: "pointer", border: i === fotoIdx ? "2.5px solid #F38C24" : "2px solid #e7e5e4", flexShrink: 0, opacity: 1 }}>
+                      <img src={img.imagem} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      {i === 0 && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(21,128,61,0.9)", fontSize: 7, color: "#fff", textAlign: "center", padding: "1px 0", fontWeight: 700, letterSpacing: "0.03em" }}>PRINCIPAL</div>}
+                    </div>
+                  ))}
+                  {imagens.length < 10 && (
+                    <div onClick={() => fileRef.current?.click()}
+                      style={{ width: 52, height: 52, borderRadius: 7, border: "2px dashed #d6d3d1", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, background: "#fafaf9", flexDirection: "column", gap: 1 }}>
+                      <span style={{ fontSize: 16, color: "#a8a29e" }}>+</span>
+                      <span style={{ fontSize: 7, color: "#a8a29e" }}>foto</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <button type="button" onClick={() => fileRef.current?.click()}
                   style={{ padding: "7px 14px", background: "#f5f5f4", border: "1px solid #e7e5e4", borderRadius: 6, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e", fontWeight: 500 }}>
                   + Adicionar foto(s)
                 </button>
-                <span style={{ fontSize: 10, color: "#a8a29e" }}>JPG, PNG — múltiplas permitidas</span>
+                <span style={{ fontSize: 10, color: "#a8a29e" }}>JPG, PNG • múltiplas • comprimidas automaticamente</span>
               </div>
               <input ref={fileRef} type="file" accept="image/*" multiple onChange={adicionarFotos} style={{ display: "none" }} />
             </div>
@@ -558,7 +587,7 @@ export default function Produtos() {
           {filtrados.map(p => (
             <div key={p.id} className="card" style={{ padding: "18px 20px" }}>
               <div style={{ display: "flex", gap: 14, marginBottom: 10 }}>
-                <SlideshowAdmin imagens={p._imagens || (p.imagem ? [{ id: "0", imagem: p.imagem }] : [])} />
+                <SlideshowAdminCard produtoId={p.id} imagemLegada={p.imagem} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: p.categoria === "Lanches" ? "#7B4532" : "#1c1917" }}>{p.nome}</div>
