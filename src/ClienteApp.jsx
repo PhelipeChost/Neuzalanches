@@ -885,7 +885,7 @@ function MeusPedidosView({ ativo }) {
         }}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
             <div style={{ fontSize: 44, marginBottom: 8 }}>📋</div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, color: "var(--text)", marginBottom: 6 }}>
+            <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 24, fontWeight: 800, color: "var(--text)", marginBottom: 6, letterSpacing: "-0.3px" }}>
               Meus Pedidos
             </div>
             <div style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.5, fontFamily: "'Nunito', sans-serif" }}>
@@ -946,7 +946,7 @@ function MeusPedidosView({ ativo }) {
         marginBottom: 22, gap: 12, flexWrap: "wrap",
       }}>
         <div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, color: "var(--text)" }}>
+          <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 24, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.3px" }}>
             📋 Meus Pedidos
           </div>
           <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontFamily: "'Nunito', sans-serif", fontWeight: 600 }}>
@@ -985,7 +985,7 @@ function MeusPedidosView({ ativo }) {
           borderRadius: 18, padding: "60px 24px", textAlign: "center",
         }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>🍔</div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 6 }}>
+          <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 6, letterSpacing: "-0.2px" }}>
             Nenhum pedido encontrado
           </div>
           <div style={{ fontSize: 14, color: "var(--text-muted)", fontFamily: "'Nunito', sans-serif", lineHeight: 1.5 }}>
@@ -1018,8 +1018,8 @@ function MeusPedidosView({ ativo }) {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800, color: "var(--text)" }}>
-                        Pedido #{p.id.slice(0, 6).toUpperCase()}
+                      <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 16, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.2px" }}>
+                        Pedido <span style={{ fontFamily: "'Nunito', sans-serif", fontWeight: 800, color: "var(--text-muted)", fontSize: 14 }}>#{p.id.slice(0, 6).toUpperCase()}</span>
                       </span>
                       <span style={{
                         fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
@@ -1036,7 +1036,7 @@ function MeusPedidosView({ ativo }) {
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--text)" }}>
+                    <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 19, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.3px" }}>
                       {fmtBR(p.total)}
                     </div>
                     <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700, marginTop: 2 }}>
