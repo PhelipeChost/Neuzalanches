@@ -2,6 +2,17 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+// SQLite salva datetime('now') em UTC sem marcador de timezone (ex: "2026-04-25 03:19:00")
+// Sem o "Z", o JS interpreta como horário local. Esta função força a leitura como UTC.
+const parseDateUTC = (str) => {
+  if (!str) return new Date(NaN);
+  if (str instanceof Date) return str;
+  // Se já tem timezone (Z ou +/-HH:MM), usa direto
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(str)) return new Date(str);
+  // SQLite: "YYYY-MM-DD HH:MM:SS" → trata como UTC
+  return new Date(str.replace(" ", "T") + "Z");
+};
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
 const inp = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
 
@@ -487,7 +498,7 @@ export default function Pedidos() {
     const set = new Set();
     pedidos.forEach(p => {
       if (!p.created_at) return;
-      const d = new Date(p.created_at);
+      const d = parseDateUTC(p.created_at);
       set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     });
     // Garante que o mês atual e o mês selecionado sempre apareçam
@@ -507,7 +518,7 @@ export default function Pedidos() {
     if (filtroStatus !== "todos" && p.status !== filtroStatus) return false;
     if (filtroMes && filtroMes !== "todos") {
       if (!p.created_at) return false;
-      const d = new Date(p.created_at);
+      const d = parseDateUTC(p.created_at);
       const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       if (ym !== filtroMes) return false;
     }
@@ -519,14 +530,14 @@ export default function Pedidos() {
     const mapa = new Map();
     filtrados.forEach(p => {
       if (!p.created_at) return;
-      const d = new Date(p.created_at);
+      const d = parseDateUTC(p.created_at);
       const chave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       if (!mapa.has(chave)) mapa.set(chave, []);
       mapa.get(chave).push(p);
     });
     // Ordena pedidos dentro de cada dia por hora desc
     for (const arr of mapa.values()) {
-      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      arr.sort((a, b) => parseDateUTC(b.created_at) - parseDateUTC(a.created_at));
     }
     // Ordena chaves desc
     return [...mapa.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
@@ -546,7 +557,7 @@ export default function Pedidos() {
   };
 
   const fmtHora = (iso) => {
-    const d = new Date(iso);
+    const d = parseDateUTC(iso);
     return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   };
 
