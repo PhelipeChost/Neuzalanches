@@ -854,11 +854,11 @@ app.put('/api/config/horario', authMiddleware, (req, res) => {
 
 // ─── WHATSAPP QR CODE PAGE ──────────────────────────────────────────────────
 
-app.get('/whatsapp', async (req, res) => {
-  const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-  const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
-  const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
+const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
 
+app.get('/whatsapp', async (req, res) => {
   let qrData = null;
   let status = 'desconhecido';
   let erro = null;
@@ -1013,14 +1013,54 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
-app.get('/api/bot/qr', (req, res) => {
-  if (!_lastQrBase64) return res.status(404).send('Sem QR code disponível ainda. Tente gerar novamente.');
-  const ageSec = Math.round((Date.now() - _lastQrAt) / 1000);
-  res.send(`<!doctype html><html><body style="background:#111;color:#eee;text-align:center;font-family:sans-serif">
+app.get('/api/bot/qr', async (req, res) => {
+  // Busca QR direto da Evolution (mais confiável que o cache do webhook)
+  let qrFromApi = null;
+  let estado = 'desconhecido';
+  try {
+    const stateResp = await fetch(`${EVOLUTION_URL}/instance/connectionState/${EVOLUTION_INSTANCE}`, {
+      headers: { 'apikey': EVOLUTION_KEY },
+    });
+    const stateJson = await stateResp.json();
+    estado = stateJson?.instance?.state || 'desconhecido';
+
+    if (estado !== 'open') {
+      const r = await fetch(`${EVOLUTION_URL}/instance/connect/${EVOLUTION_INSTANCE}`, {
+        headers: { 'apikey': EVOLUTION_KEY },
+      });
+      const j = await r.json();
+      const b64 = j?.base64 || j?.qrcode?.base64 || null;
+      if (b64) qrFromApi = b64.startsWith('data:') ? b64 : `data:image/png;base64,${b64.split(',').pop()}`;
+    }
+  } catch (err) {
+    console.error('[bot/qr] erro ao consultar Evolution:', err.message);
+  }
+
+  // Fallback: usa cache do webhook se a API direta não retornou
+  const qrFinal = qrFromApi || _lastQrBase64;
+  const fonte = qrFromApi ? 'tempo real' : 'cache (' + Math.round((Date.now() - _lastQrAt) / 1000) + 's)';
+
+  if (estado === 'open') {
+    return res.send(`<!doctype html><html><body style="background:#0d1f0d;color:#a7f3d0;text-align:center;font-family:sans-serif;padding:60px">
+<h1>✅ Bot conectado!</h1>
+<p>O WhatsApp já está pareado. Não precisa escanear nada.</p>
+</body></html>`);
+  }
+
+  if (!qrFinal) {
+    return res.status(503).send(`<!doctype html><html><body style="background:#111;color:#eee;text-align:center;font-family:sans-serif;padding:40px">
+<h2>⏳ Aguardando QR Code…</h2>
+<p>Estado: <b>${estado}</b></p>
+<p>Atualize a página em alguns segundos.</p>
+<script>setTimeout(()=>location.reload(), 4000)</script>
+</body></html>`);
+  }
+
+  res.send(`<!doctype html><html><head><meta http-equiv="refresh" content="20"></head><body style="background:#111;color:#eee;text-align:center;font-family:sans-serif">
 <h2>QR Code Evolution — escaneie no WhatsApp</h2>
-<p>Idade: ${ageSec}s (válido por ~60s, recarregue a página se expirar)</p>
-<img src="${_lastQrBase64}" style="background:white;padding:16px;border-radius:8px;max-width:400px"/>
-<p>Após escanear, status vai virar "open"</p>
+<p>Estado: <b>${estado}</b> · Fonte: ${fonte} · A página recarrega sozinha a cada 20s</p>
+<img src="${qrFinal}" style="background:white;padding:16px;border-radius:8px;max-width:400px"/>
+<p style="font-size:14px;color:#aaa">No celular novo: WhatsApp → ⋮ → Aparelhos conectados → Conectar aparelho</p>
 </body></html>`);
 });
 
