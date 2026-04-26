@@ -293,8 +293,85 @@ export default function Pedidos() {
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [toast, setToast] = useState("");
   const [expandido, setExpandido] = useState(null);
+  const [somAtivo, setSomAtivo] = useState(() => {
+    const v = localStorage.getItem("nl_som_ativo");
+    return v === null ? true : v === "1";
+  });
+  const [repetirSom, setRepetirSom] = useState(() => {
+    const v = localStorage.getItem("nl_som_repetir");
+    return v === null ? true : v === "1";
+  });
+  const [audioDesbloqueado, setAudioDesbloqueado] = useState(false);
   const prevCountRef = useRef(0);
-  const audioRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const somAtivoRef = useRef(somAtivo);
+  const repetirRef = useRef(repetirSom);
+
+  useEffect(() => { somAtivoRef.current = somAtivo; localStorage.setItem("nl_som_ativo", somAtivo ? "1" : "0"); }, [somAtivo]);
+  useEffect(() => { repetirRef.current = repetirSom; localStorage.setItem("nl_som_repetir", repetirSom ? "1" : "0"); }, [repetirSom]);
+
+  // Desbloqueia o AudioContext no primeiro clique do usuário (política de autoplay)
+  useEffect(() => {
+    const desbloquear = () => {
+      try {
+        if (!audioCtxRef.current) {
+          audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtxRef.current.state === "suspended") audioCtxRef.current.resume();
+        setAudioDesbloqueado(true);
+      } catch { /* noop */ }
+      window.removeEventListener("click", desbloquear);
+      window.removeEventListener("keydown", desbloquear);
+    };
+    window.addEventListener("click", desbloquear);
+    window.addEventListener("keydown", desbloquear);
+    return () => {
+      window.removeEventListener("click", desbloquear);
+      window.removeEventListener("keydown", desbloquear);
+    };
+  }, []);
+
+  const tocarSom = useCallback(() => {
+    if (!somAtivoRef.current) return;
+    try {
+      const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      if (ctx.state === "suspended") ctx.resume();
+
+      // Chime de 3 tons (acorde Dó-Mi-Sol agradável mas audível)
+      const tones = [
+        { freq: 880, start: 0,    dur: 0.18 },  // Lá5
+        { freq: 1109, start: 0.10, dur: 0.20 }, // Dó#6
+        { freq: 1319, start: 0.20, dur: 0.30 }, // Mi6
+      ];
+      const now = ctx.currentTime;
+      tones.forEach(t => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = t.freq;
+        gain.gain.setValueAtTime(0, now + t.start);
+        gain.gain.linearRampToValueAtTime(0.25, now + t.start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + t.start + t.dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + t.start);
+        osc.stop(now + t.start + t.dur + 0.05);
+      });
+    } catch { /* noop */ }
+  }, []);
+
+  const notificarNavegador = useCallback((qtd) => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    try {
+      new Notification("🔔 Novo pedido!", {
+        body: qtd === 1 ? "1 pedido pendente aguardando confirmação." : `${qtd} pedidos pendentes aguardando confirmação.`,
+        icon: "/favicon.ico",
+        tag: "neuzalanches-pedido",
+      });
+    } catch { /* noop */ }
+  }, []);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -307,21 +384,13 @@ export default function Pedidos() {
         api.adicionais.listar(),
       ]);
       const pendentes = peds.filter(p => p.status === "pendente").length;
-      if (prevCountRef.current > 0 && pendentes > prevCountRef.current) {
-        try {
-          if (!audioRef.current) {
-            const ctx = new AudioContext();
-            const osc = ctx.createOscillator();
-            const gain = ctx.createGain();
-            osc.connect(gain);
-            gain.connect(ctx.destination);
-            osc.frequency.value = 800;
-            gain.gain.value = 0.15;
-            osc.start();
-            setTimeout(() => { osc.frequency.value = 1000; }, 100);
-            setTimeout(() => { osc.stop(); ctx.close(); }, 250);
-          }
-        } catch { /* ignore audio errors */ }
+      if (prevCountRef.current >= 0 && pendentes > prevCountRef.current && prevCountRef.current !== 0) {
+        tocarSom();
+        notificarNavegador(pendentes);
+      } else if (prevCountRef.current === 0 && pendentes > 0) {
+        // Primeiro carregamento já com pedidos pendentes — toca também
+        tocarSom();
+        notificarNavegador(pendentes);
       }
       prevCountRef.current = pendentes;
       setPedidos(peds);
@@ -333,7 +402,7 @@ export default function Pedidos() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [tocarSom, notificarNavegador]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -341,6 +410,27 @@ export default function Pedidos() {
     const interval = setInterval(carregar, 10000);
     return () => clearInterval(interval);
   }, [carregar]);
+
+  // Loop de repetição: enquanto tiver pendentes e som ativo + repetir, toca a cada 8s
+  const pendentesAtual = pedidos.filter(p => p.status === "pendente").length;
+  useEffect(() => {
+    if (!somAtivo || !repetirSom || pendentesAtual === 0) return;
+    const interval = setInterval(() => { tocarSom(); }, 8000);
+    return () => clearInterval(interval);
+  }, [somAtivo, repetirSom, pendentesAtual, tocarSom]);
+
+  const toggleSom = () => {
+    const novo = !somAtivo;
+    setSomAtivo(novo);
+    if (novo) {
+      // Pede permissão de notificação no navegador ao ativar
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+      // Toca uma vez de teste pra confirmar que está funcionando
+      setTimeout(() => tocarSom(), 100);
+    }
+  };
 
   const criarPedidoManual = async (data) => {
     try {
@@ -387,7 +477,7 @@ export default function Pedidos() {
   };
 
   const filtrados = pedidos.filter(p => filtroStatus === "todos" || p.status === filtroStatus);
-  const pendentesCount = pedidos.filter(p => p.status === "pendente").length;
+  const pendentesCount = pendentesAtual;
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando pedidos...</div>;
 
@@ -408,14 +498,49 @@ export default function Pedidos() {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontFamily: "'Fraunces', serif", fontSize: 22, fontWeight: 500 }}>Pedidos</div>
           <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{pedidos.length} pedidos no total</div>
         </div>
-        <button className="btn-add" onClick={() => setModalManual(true)} style={{ background: "#F38C24" }}>
-          <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Pedido manual
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            onClick={toggleSom}
+            title={somAtivo ? "Desativar som de novo pedido" : "Ativar som de novo pedido"}
+            style={{
+              background: somAtivo ? "#dcfce7" : "#f5f5f4",
+              color: somAtivo ? "#15803d" : "#a8a29e",
+              border: `1.5px solid ${somAtivo ? "#86efac" : "#e7e5e4"}`,
+              borderRadius: 8, padding: "8px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6,
+            }}>
+            <span style={{ fontSize: 16 }}>{somAtivo ? "🔔" : "🔕"}</span>
+            <span>{somAtivo ? "Som ativo" : "Som mudo"}</span>
+          </button>
+          {somAtivo && (
+            <button
+              onClick={() => setRepetirSom(r => !r)}
+              title={repetirSom ? "Tocar uma única vez por pedido" : "Repetir a cada 8s enquanto houver pendentes"}
+              style={{
+                background: repetirSom ? "#fef3c7" : "#fff",
+                color: repetirSom ? "#92400e" : "#78716c",
+                border: `1.5px solid ${repetirSom ? "#fde68a" : "#e7e5e4"}`,
+                borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif", display: "flex", alignItems: "center", gap: 6,
+              }}>
+              <span style={{ fontSize: 14 }}>{repetirSom ? "🔁" : "1️⃣"}</span>
+              <span>{repetirSom ? "Repetir" : "Uma vez"}</span>
+            </button>
+          )}
+          {somAtivo && !audioDesbloqueado && (
+            <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>
+              ⚠️ Clique em qualquer lugar para liberar o áudio
+            </span>
+          )}
+          <button className="btn-add" onClick={() => setModalManual(true)} style={{ background: "#F38C24" }}>
+            <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Pedido manual
+          </button>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
