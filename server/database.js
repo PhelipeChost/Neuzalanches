@@ -587,6 +587,20 @@ export function listarPedidos(clienteId = null) {
   return db.prepare("SELECT * FROM pedidos ORDER BY created_at DESC").all();
 }
 
+// Busca pedidos pelo telefone do cliente (compara só os dígitos, ignora máscara/DDI 55)
+export function listarPedidosPorTelefone(telefone) {
+  const numeros = String(telefone || "").replace(/\D/g, "");
+  if (!numeros) return [];
+  // Variantes possíveis: com/sem DDI 55, últimos 10 ou 11 dígitos
+  const sufixo = numeros.length > 11 ? numeros.slice(-11) : numeros;
+  // Compara dígitos extraídos do telefone armazenado com sufixo do telefone consultado
+  return db.prepare(
+    `SELECT * FROM pedidos
+     WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(cliente_telefone, '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE ?
+     ORDER BY created_at DESC`
+  ).all(`%${sufixo}%`);
+}
+
 export function buscarPedido(id) {
   return db.prepare("SELECT * FROM pedidos WHERE id = ?").get(id);
 }

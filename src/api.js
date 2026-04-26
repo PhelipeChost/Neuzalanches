@@ -97,6 +97,11 @@ export const api = {
     atualizarStatus: (id, status) => request(`/pedidos/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
     excluir: (id) => request(`/pedidos/${id}`, { method: "DELETE" }),
     contarPendentes: () => request("/pedidos/pendentes/count"),
+    // Listagem pública pelo telefone (read-only para "Meus Pedidos" do cliente)
+    meusPedidos: (telefone) => fetch(`/api/pedidos/publico/cliente/${encodeURIComponent(String(telefone).replace(/\D/g, ""))}`).then(r => {
+      if (!r.ok) throw new Error("Erro ao buscar pedidos");
+      return r.json();
+    }),
   },
 
   // Enderecos

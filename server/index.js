@@ -14,7 +14,7 @@ import {
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
-  listarPedidos, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
+  listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
   listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
   listarComposicaoProduto, salvarComposicaoProduto,
@@ -389,6 +389,18 @@ app.get("/api/pedidos/:id", authMiddleware, (req, res) => {
     return res.status(403).json({ error: "Acesso negado" });
   }
   res.json({ ...p, itens: buscarItensPedido(p.id) });
+});
+
+// Listagem pública dos pedidos do cliente, autenticada pelo telefone
+// (read-only — usado na tela "Meus Pedidos")
+app.get("/api/pedidos/publico/cliente/:telefone", (req, res) => {
+  const telefone = String(req.params.telefone || "").replace(/\D/g, "");
+  if (telefone.length < 10) {
+    return res.status(400).json({ error: "Telefone inválido" });
+  }
+  const pedidos = listarPedidosPorTelefone(telefone);
+  const result = pedidos.map(p => ({ ...p, itens: buscarItensPedido(p.id) }));
+  res.json(result);
 });
 
 // Pedido público (sem autenticação — cliente envia dados inline)

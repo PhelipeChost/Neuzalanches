@@ -724,6 +724,447 @@ function IconWhatsapp() {
   return <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.626.712.226 1.36.194 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413"/></svg>;
 }
 
+// ─── MEUS PEDIDOS (Cliente — read-only, autenticado por telefone) ────────────
+const STATUS_PIPELINE_CLI = ["pendente", "confirmado", "preparando", "pronto", "entregue"];
+const STATUS_LABELS_CLI = {
+  pendente: "Pendente",
+  confirmado: "Confirmado",
+  preparando: "Preparando",
+  pronto: "Pronto",
+  entregue: "Entregue",
+  cancelado: "Cancelado",
+};
+const STATUS_EMOJI_CLI = {
+  pendente: "⏳",
+  confirmado: "✅",
+  preparando: "🍳",
+  pronto: "🛵",
+  entregue: "🎉",
+  cancelado: "❌",
+};
+const STATUS_DESC_CLI = {
+  pendente: "Aguardando confirmação do estabelecimento",
+  confirmado: "Pedido confirmado, será preparado em breve",
+  preparando: "Seu pedido está sendo preparado agora",
+  pronto: "Pronto! Saindo para entrega ou disponível para retirada",
+  entregue: "Pedido entregue. Bom apetite!",
+  cancelado: "Pedido cancelado",
+};
+
+const parseDateUTCCli = (str) => {
+  if (!str) return new Date(NaN);
+  if (str instanceof Date) return str;
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(str)) return new Date(str);
+  return new Date(str.replace(" ", "T") + "Z");
+};
+
+function StatusPipelineCli({ status }) {
+  if (status === "cancelado") {
+    return (
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 8,
+        background: "rgba(239,68,68,0.12)", color: "#dc2626",
+        padding: "8px 14px", borderRadius: 999,
+        fontSize: 13, fontWeight: 800, fontFamily: "'Nunito', sans-serif",
+        border: "1.5px solid rgba(239,68,68,0.3)",
+      }}>
+        ❌ CANCELADO
+      </div>
+    );
+  }
+  const idx = STATUS_PIPELINE_CLI.indexOf(status);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 0, flexWrap: "wrap", justifyContent: "space-between" }}>
+      {STATUS_PIPELINE_CLI.map((s, i) => {
+        const ativo = i <= idx;
+        const atual = i === idx;
+        return (
+          <div key={s} style={{ display: "flex", alignItems: "center", flex: i < STATUS_PIPELINE_CLI.length - 1 ? 1 : "0 0 auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 56 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: ativo ? "var(--brand)" : "var(--surface-warm)",
+                color: ativo ? "#fff" : "var(--text-muted)",
+                border: atual ? "3px solid var(--brand)" : `2px solid ${ativo ? "var(--brand)" : "var(--border-dark)"}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 16, fontWeight: 800,
+                boxShadow: atual ? "0 0 0 4px rgba(243,140,36,0.18)" : "none",
+                transition: "all 0.2s",
+              }}>
+                {i < idx ? "✓" : STATUS_EMOJI_CLI[s]}
+              </div>
+              <span style={{
+                fontSize: 10, fontWeight: 800,
+                color: ativo ? "var(--text)" : "var(--text-muted)",
+                fontFamily: "'Nunito', sans-serif",
+                textTransform: "uppercase", letterSpacing: "0.05em",
+                textAlign: "center",
+              }}>
+                {STATUS_LABELS_CLI[s]}
+              </span>
+            </div>
+            {i < STATUS_PIPELINE_CLI.length - 1 && (
+              <div style={{
+                flex: 1, height: 3, minWidth: 14,
+                background: i < idx ? "var(--brand)" : "var(--border-dark)",
+                borderRadius: 2, marginTop: -16,
+              }} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MeusPedidosView({ ativo }) {
+  const [telefone, setTelefone] = useState(() => localStorage.getItem("nl_meus_pedidos_telefone") || "");
+  const [confirmado, setConfirmado] = useState(() => Boolean(localStorage.getItem("nl_meus_pedidos_telefone")));
+  const [pedidos, setPedidos] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState("");
+  const [expandido, setExpandido] = useState(null);
+
+  const fmtBR = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const fmtData = (iso) => {
+    const d = parseDateUTCCli(iso);
+    const data = d.toLocaleDateString("pt-BR");
+    const hora = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    return `${data} às ${hora}`;
+  };
+
+  const buscar = useCallback(async () => {
+    const num = telefone.replace(/\D/g, "");
+    if (num.length < 10) { setErro("Digite um telefone válido com DDD"); return; }
+    setLoading(true);
+    setErro("");
+    try {
+      const lista = await api.pedidos.meusPedidos(num);
+      setPedidos(lista);
+    } catch (e) {
+      setErro(e.message || "Erro ao carregar pedidos");
+    } finally {
+      setLoading(false);
+    }
+  }, [telefone]);
+
+  // Carrega ao confirmar/abrir
+  useEffect(() => {
+    if (confirmado && ativo) buscar();
+  }, [confirmado, ativo, buscar]);
+
+  // Auto-refresh a cada 15s enquanto a tab estiver ativa
+  useEffect(() => {
+    if (!confirmado || !ativo) return;
+    const id = setInterval(buscar, 15000);
+    return () => clearInterval(id);
+  }, [confirmado, ativo, buscar]);
+
+  const confirmar = () => {
+    const num = telefone.replace(/\D/g, "");
+    if (num.length < 10) { setErro("Digite um telefone válido com DDD"); return; }
+    localStorage.setItem("nl_meus_pedidos_telefone", telefone);
+    setConfirmado(true);
+  };
+
+  const trocarTelefone = () => {
+    localStorage.removeItem("nl_meus_pedidos_telefone");
+    setConfirmado(false);
+    setPedidos([]);
+    setExpandido(null);
+  };
+
+  // ─── Tela de digitar telefone ────────────────────────────────────────
+  if (!confirmado) {
+    return (
+      <div className="nl-anim" style={{ maxWidth: 520, margin: "40px auto 0" }}>
+        <div style={{
+          background: "var(--surface)", border: "1.5px solid var(--border)",
+          borderRadius: 18, padding: "32px 28px",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.06)",
+        }}>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <div style={{ fontSize: 44, marginBottom: 8 }}>📋</div>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, color: "var(--text)", marginBottom: 6 }}>
+              Meus Pedidos
+            </div>
+            <div style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.5, fontFamily: "'Nunito', sans-serif" }}>
+              Digite o telefone que você usou no pedido para acompanhar o status em tempo real.
+            </div>
+          </div>
+
+          <label style={{ display: "block", fontSize: 11, fontWeight: 800, color: "var(--text-muted)", letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase", fontFamily: "'Nunito', sans-serif" }}>
+            Seu telefone
+          </label>
+          <input
+            type="tel"
+            value={telefone}
+            onChange={e => { setTelefone(formatPhone(e.target.value)); setErro(""); }}
+            onKeyDown={e => { if (e.key === "Enter") confirmar(); }}
+            placeholder="(11) 99999-9999"
+            autoFocus
+            style={{
+              width: "100%", padding: "13px 16px", fontSize: 16, fontWeight: 700,
+              border: `1.5px solid ${erro ? "#dc2626" : "var(--border-dark)"}`,
+              borderRadius: 12, outline: "none",
+              color: "var(--text)", background: "var(--surface-warm)",
+              fontFamily: "'Nunito', sans-serif", textAlign: "center",
+              letterSpacing: "0.5px",
+            }}
+          />
+          {erro && <div style={{ fontSize: 12, color: "#dc2626", marginTop: 8, fontWeight: 700, fontFamily: "'Nunito', sans-serif" }}>{erro}</div>}
+
+          <button
+            onClick={confirmar}
+            style={{
+              width: "100%", marginTop: 18, padding: 14,
+              background: "var(--brand)", color: "#fff",
+              border: "none", borderRadius: 12,
+              fontSize: 15, fontWeight: 800, cursor: "pointer",
+              fontFamily: "'Nunito', sans-serif",
+              transition: "transform 0.1s",
+            }}
+            onMouseDown={e => e.currentTarget.style.transform = "scale(0.98)"}
+            onMouseUp={e => e.currentTarget.style.transform = "scale(1)"}
+            onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}>
+            Ver meus pedidos
+          </button>
+
+          <div style={{ marginTop: 14, padding: 12, background: "var(--surface-warm)", borderRadius: 10, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5, fontFamily: "'Nunito', sans-serif" }}>
+            🔒 Seu telefone fica salvo apenas no seu navegador. Você pode trocar a qualquer momento.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Lista de pedidos ────────────────────────────────────────────────
+  return (
+    <div className="nl-anim">
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        marginBottom: 22, gap: 12, flexWrap: "wrap",
+      }}>
+        <div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, color: "var(--text)" }}>
+            📋 Meus Pedidos
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2, fontFamily: "'Nunito', sans-serif", fontWeight: 600 }}>
+            Telefone: <span style={{ color: "var(--text)", fontWeight: 800 }}>{telefone}</span>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={buscar} disabled={loading}
+            style={{
+              padding: "9px 14px", background: "var(--surface)", color: "var(--text)",
+              border: "1.5px solid var(--border-dark)", borderRadius: 10,
+              fontSize: 13, fontWeight: 700, cursor: loading ? "wait" : "pointer",
+              fontFamily: "'Nunito', sans-serif", display: "flex", alignItems: "center", gap: 6,
+            }}>
+            {loading ? "Atualizando..." : "🔄 Atualizar"}
+          </button>
+          <button onClick={trocarTelefone}
+            style={{
+              padding: "9px 14px", background: "var(--surface)", color: "var(--text-muted)",
+              border: "1.5px solid var(--border-dark)", borderRadius: 10,
+              fontSize: 13, fontWeight: 700, cursor: "pointer",
+              fontFamily: "'Nunito', sans-serif",
+            }}>
+            Trocar telefone
+          </button>
+        </div>
+      </div>
+
+      {loading && pedidos.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60, color: "var(--text-muted)", fontFamily: "'Nunito', sans-serif", fontSize: 14, fontWeight: 700 }}>
+          Carregando pedidos...
+        </div>
+      ) : pedidos.length === 0 ? (
+        <div style={{
+          background: "var(--surface)", border: "1.5px solid var(--border)",
+          borderRadius: 18, padding: "60px 24px", textAlign: "center",
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🍔</div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 6 }}>
+            Nenhum pedido encontrado
+          </div>
+          <div style={{ fontSize: 14, color: "var(--text-muted)", fontFamily: "'Nunito', sans-serif", lineHeight: 1.5 }}>
+            Ainda não temos pedidos com este telefone.<br/>
+            Que tal fazer o seu primeiro?
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {pedidos.map(p => {
+            const aberto = expandido === p.id;
+            const corStatus = p.status === "cancelado" ? "#dc2626" : p.status === "entregue" ? "#16a34a" : "var(--brand)";
+            const isRetirada = p.tipo_entrega === "retirada" || (!p.endereco_rua && p.tipo_entrega !== "entrega");
+            return (
+              <div key={p.id} style={{
+                background: "var(--surface)", border: "1.5px solid var(--border)",
+                borderRadius: 16, overflow: "hidden",
+                boxShadow: "0 4px 14px rgba(0,0,0,0.04)",
+              }}>
+                {/* Cabeçalho */}
+                <div onClick={() => setExpandido(aberto ? null : p.id)}
+                  style={{ padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
+                  <div style={{
+                    width: 48, height: 48, borderRadius: 12,
+                    background: p.status === "cancelado" ? "rgba(239,68,68,0.12)" : "var(--brand-light)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 22, flexShrink: 0,
+                  }}>
+                    {STATUS_EMOJI_CLI[p.status] || "📦"}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800, color: "var(--text)" }}>
+                        Pedido #{p.id.slice(0, 6).toUpperCase()}
+                      </span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
+                        background: p.status === "cancelado" ? "rgba(239,68,68,0.12)" : p.status === "entregue" ? "rgba(22,163,74,0.12)" : "var(--brand-light)",
+                        color: corStatus,
+                        textTransform: "uppercase", letterSpacing: "0.05em",
+                        fontFamily: "'Nunito', sans-serif",
+                      }}>
+                        {STATUS_LABELS_CLI[p.status]}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "'Nunito', sans-serif", fontWeight: 600 }}>
+                      {fmtData(p.created_at)} • {p.itens?.length || 0} {p.itens?.length === 1 ? "item" : "itens"}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--text)" }}>
+                      {fmtBR(p.total)}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 700, marginTop: 2 }}>
+                      {aberto ? "▲ Recolher" : "▼ Ver detalhes"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detalhes */}
+                {aberto && (
+                  <div style={{ padding: "0 20px 20px", borderTop: "1px solid var(--border)" }}>
+                    {/* Pipeline */}
+                    <div style={{ padding: "20px 0 16px" }}>
+                      <StatusPipelineCli status={p.status} />
+                    </div>
+
+                    {/* Mensagem do status */}
+                    <div style={{
+                      background: p.status === "cancelado" ? "rgba(239,68,68,0.08)" : "var(--brand-light)",
+                      border: `1.5px solid ${p.status === "cancelado" ? "rgba(239,68,68,0.25)" : "var(--brand)"}`,
+                      borderRadius: 10, padding: "10px 14px",
+                      marginBottom: 14,
+                    }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: p.status === "cancelado" ? "#dc2626" : "var(--brand)", fontFamily: "'Nunito', sans-serif" }}>
+                        {STATUS_EMOJI_CLI[p.status]} {STATUS_DESC_CLI[p.status]}
+                      </div>
+                    </div>
+
+                    {/* Itens */}
+                    <div style={{
+                      background: "var(--surface-warm)", borderRadius: 10,
+                      padding: "12px 16px", marginBottom: 12,
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "var(--text-muted)", letterSpacing: "0.08em", marginBottom: 8, textTransform: "uppercase", fontFamily: "'Nunito', sans-serif" }}>
+                        Itens do pedido
+                      </div>
+                      {p.itens?.map((item, i) => {
+                        const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
+                        const itemTotal = (item.preco_unitario + adTotal) * item.quantidade;
+                        return (
+                          <div key={i} style={{ padding: "8px 0", borderBottom: i < p.itens.length - 1 ? "1px solid var(--border)" : "none" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontFamily: "'Nunito', sans-serif", color: "var(--text)" }}>
+                              <span style={{ fontWeight: 700 }}>{item.quantidade}× {item.produto_nome}</span>
+                              <span style={{ fontWeight: 800 }}>{fmtBR(itemTotal)}</span>
+                            </div>
+                            {item.adicionais && item.adicionais.length > 0 && (
+                              <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
+                                {item.adicionais.map(a => (
+                                  <span key={a.id || a.nome} style={{
+                                    fontSize: 11, fontWeight: 700,
+                                    background: "var(--brand-light)", color: "var(--brand)",
+                                    padding: "2px 8px", borderRadius: 4, fontFamily: "'Nunito', sans-serif",
+                                  }}>
+                                    {(a.quantidade || 1) > 1 ? `${a.quantidade}× ` : "+ "}{a.nome}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Observação */}
+                    {p.obs && (
+                      <div style={{
+                        background: "rgba(245,158,11,0.1)", border: "1.5px solid rgba(245,158,11,0.4)",
+                        borderRadius: 10, padding: "10px 14px", marginBottom: 12,
+                      }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: "0.08em", marginBottom: 3, fontFamily: "'Nunito', sans-serif" }}>
+                          📝 OBSERVAÇÃO
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "'Nunito', sans-serif" }}>
+                          {p.obs}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tipo de entrega */}
+                    <div style={{
+                      background: "var(--surface-warm)", borderRadius: 10,
+                      padding: "10px 14px", marginBottom: 8, fontSize: 13, fontFamily: "'Nunito', sans-serif", color: "var(--text)",
+                    }}>
+                      {isRetirada ? (
+                        <><span style={{ fontWeight: 800 }}>🏪 Retirada no estabelecimento</span></>
+                      ) : (
+                        <>
+                          <div style={{ fontWeight: 800, marginBottom: 2 }}>🏠 Entrega no endereço</div>
+                          <div style={{ color: "var(--text-muted)", fontWeight: 600 }}>
+                            {p.endereco_rua}, {p.endereco_numero} — {p.endereco_bairro}
+                            {p.endereco_referencia && <> ({p.endereco_referencia})</>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Pagamento */}
+                    {p.metodo_pagamento && (() => {
+                      const labels = { pix: "⚡ Pix", credito: "💳 Cartão de Crédito", debito: "💳 Cartão de Débito", cartao: "💳 Cartão", dinheiro: "💵 Dinheiro" };
+                      const label = labels[p.metodo_pagamento] || p.metodo_pagamento;
+                      const trocoNum = Number(p.troco_para || 0);
+                      const totalNum = Number(p.total || 0);
+                      const mostraTroco = p.metodo_pagamento === "dinheiro" && trocoNum > 0 && trocoNum > totalNum;
+                      return (
+                        <div style={{
+                          background: "var(--surface-warm)", borderRadius: 10,
+                          padding: "10px 14px", fontSize: 13, fontFamily: "'Nunito', sans-serif", color: "var(--text)",
+                        }}>
+                          <span style={{ fontWeight: 800 }}>Pagamento:</span> {label}
+                          {p.metodo_pagamento === "dinheiro" && (
+                            mostraTroco
+                              ? <> — Troco para {fmtBR(trocoNum)} <span style={{ color: "#15803d", fontWeight: 700 }}>(devolver {fmtBR(trocoNum - totalNum)})</span></>
+                              : <> — Sem troco</>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── CLIENTE APP ──────────────────────────────────────────────────────────────
 export default function ClienteApp() {
   const [tab, setTab] = useState("catalogo");
@@ -1072,7 +1513,7 @@ export default function ClienteApp() {
           background: "rgba(255,255,255,0.07)",
           padding: 4, borderRadius: 10,
         }}>
-          {[["catalogo", "Cardápio"], ["carrinho", `Carrinho (${carrinho.length})`]].map(([k, v]) => (
+          {[["catalogo", "Cardápio"], ["meuspedidos", "Meus Pedidos"], ["carrinho", `Carrinho (${carrinho.length})`]].map(([k, v]) => (
             <button key={k} onClick={() => setTab(k)} style={{
               padding: "7px 18px", borderRadius: 7,
               fontSize: 14, fontWeight: 700,
@@ -1091,7 +1532,7 @@ export default function ClienteApp() {
           gap: 4, background: "rgba(255,255,255,0.07)",
           padding: 4, borderRadius: 10,
         }}>
-          {[["catalogo", "Cardápio"], ["carrinho", `🛒 ${carrinho.length}`]].map(([k, v]) => (
+          {[["catalogo", "Cardápio"], ["meuspedidos", "📋"], ["carrinho", `🛒 ${carrinho.length}`]].map(([k, v]) => (
             <button key={k} onClick={() => setTab(k)} style={{
               padding: "7px 14px", borderRadius: 7,
               fontSize: 13, fontWeight: 700,
@@ -1280,6 +1721,11 @@ export default function ClienteApp() {
               </div>
             )}
           </div>
+        )}
+
+        {/* MEUS PEDIDOS */}
+        {tab === "meuspedidos" && (
+          <MeusPedidosView ativo={tab === "meuspedidos"} />
         )}
 
         {/* CARRINHO */}
