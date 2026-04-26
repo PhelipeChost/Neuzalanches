@@ -291,6 +291,10 @@ export default function Pedidos() {
   const [loading, setLoading] = useState(true);
   const [modalManual, setModalManual] = useState(false);
   const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroMes, setFiltroMes] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [toast, setToast] = useState("");
   const [expandido, setExpandido] = useState(null);
   const [somAtivo, setSomAtivo] = useState(() => {
@@ -476,8 +480,77 @@ export default function Pedidos() {
     return idx >= 0 && idx < STATUS_PIPELINE.length - 1 ? STATUS_PIPELINE[idx + 1] : null;
   };
 
-  const filtrados = pedidos.filter(p => filtroStatus === "todos" || p.status === filtroStatus);
   const pendentesCount = pendentesAtual;
+
+  // Lista de meses disponíveis (a partir das datas dos pedidos)
+  const mesesDisponiveis = (() => {
+    const set = new Set();
+    pedidos.forEach(p => {
+      if (!p.created_at) return;
+      const d = new Date(p.created_at);
+      set.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+    });
+    // Garante que o mês atual e o mês selecionado sempre apareçam
+    const hoje = new Date();
+    set.add(`${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, "0")}`);
+    set.add(filtroMes);
+    return [...set].sort().reverse();
+  })();
+
+  const labelMes = (ym) => {
+    const [a, m] = ym.split("-").map(Number);
+    const nomes = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+    return `${nomes[m - 1]} de ${a}`;
+  };
+
+  const filtrados = pedidos.filter(p => {
+    if (filtroStatus !== "todos" && p.status !== filtroStatus) return false;
+    if (filtroMes && filtroMes !== "todos") {
+      if (!p.created_at) return false;
+      const d = new Date(p.created_at);
+      const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      if (ym !== filtroMes) return false;
+    }
+    return true;
+  });
+
+  // Agrupar por dia (YYYY-MM-DD), ordem decrescente (mais recente primeiro)
+  const grupos = (() => {
+    const mapa = new Map();
+    filtrados.forEach(p => {
+      if (!p.created_at) return;
+      const d = new Date(p.created_at);
+      const chave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave).push(p);
+    });
+    // Ordena pedidos dentro de cada dia por hora desc
+    for (const arr of mapa.values()) {
+      arr.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    }
+    // Ordena chaves desc
+    return [...mapa.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  })();
+
+  const labelDia = (chave) => {
+    const [a, m, d] = chave.split("-").map(Number);
+    const data = new Date(a, m - 1, d);
+    const diasSemana = ["Domingo","Segunda","Terça","Quarta","Quinta","Sexta","Sábado"];
+    const hoje = new Date();
+    const ontem = new Date(); ontem.setDate(hoje.getDate() - 1);
+    const sameDay = (x, y) => x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+    let prefixo = `Dia ${String(d).padStart(2, "0")}`;
+    if (sameDay(data, hoje)) prefixo = `Hoje (Dia ${String(d).padStart(2, "0")})`;
+    else if (sameDay(data, ontem)) prefixo = `Ontem (Dia ${String(d).padStart(2, "0")})`;
+    return `${prefixo} — ${diasSemana[data.getDay()]}`;
+  };
+
+  const fmtHora = (iso) => {
+    const d = new Date(iso);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+
+  const totalDoDia = (lista) => lista.reduce((s, p) => s + Number(p.total || 0), 0);
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando pedidos...</div>;
 
@@ -543,7 +616,7 @@ export default function Pedidos() {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         {[["todos", "Todos"], ...Object.entries(STATUS_LABELS)].map(([k, v]) => (
           <button key={k} className={`fil ${filtroStatus === k ? "ativo" : ""}`} onClick={() => setFiltroStatus(k)}
             style={filtroStatus === k && k !== "todos" ? { borderColor: STATUS_CORES[k]?.color, color: STATUS_CORES[k]?.color, background: STATUS_CORES[k]?.bg } : undefined}>
@@ -555,13 +628,49 @@ export default function Pedidos() {
         ))}
       </div>
 
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em" }}>MÊS</label>
+        <select
+          value={filtroMes}
+          onChange={e => setFiltroMes(e.target.value)}
+          style={{ ...inp, width: "auto", minWidth: 200, padding: "8px 12px", cursor: "pointer", fontWeight: 600 }}>
+          <option value="todos">Todos os meses</option>
+          {mesesDisponiveis.map(ym => (
+            <option key={ym} value={ym}>{labelMes(ym)}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 12, color: "#a8a29e" }}>
+          {filtrados.length} {filtrados.length === 1 ? "pedido" : "pedidos"} •{" "}
+          <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(filtrados.reduce((s, p) => s + Number(p.total || 0), 0))}</span>
+        </span>
+      </div>
+
       {filtrados.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e" }}>
-          Nenhum pedido {filtroStatus !== "todos" ? `com status "${STATUS_LABELS[filtroStatus]}"` : "encontrado"}.
+          Nenhum pedido {filtroStatus !== "todos" ? `com status "${STATUS_LABELS[filtroStatus]}"` : "encontrado"} {filtroMes !== "todos" ? `em ${labelMes(filtroMes)}` : ""}.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtrados.map(p => {
+        <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+          {grupos.map(([chaveDia, lista]) => (
+            <div key={chaveDia}>
+              <div style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "8px 4px", marginBottom: 8, borderBottom: "2px solid #e7e5e4",
+              }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                  <span style={{ fontFamily: "'Fraunces', serif", fontSize: 18, fontWeight: 600, color: "#1c1917" }}>
+                    {labelDia(chaveDia)}
+                  </span>
+                  <span style={{ fontSize: 12, color: "#a8a29e", fontWeight: 600 }}>
+                    {lista.length} {lista.length === 1 ? "pedido" : "pedidos"}
+                  </span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#15803d" }}>
+                  {fmt(totalDoDia(lista))}
+                </span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {lista.map(p => {
             const aberto = expandido === p.id;
             const proximo = proximoStatus(p.status);
             const isTerminal = p.status === "entregue" || p.status === "cancelado";
@@ -569,6 +678,13 @@ export default function Pedidos() {
               <div key={p.id} className="card" style={{ padding: 0, overflow: "hidden" }}>
                 <div style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }} onClick={() => setExpandido(aberto ? null : p.id)}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: STATUS_CORES[p.status].color, flexShrink: 0 }} />
+                  <div style={{
+                    background: "#fafaf9", border: "1px solid #e7e5e4", borderRadius: 6,
+                    padding: "3px 8px", fontSize: 12, fontWeight: 700, color: "#57534e",
+                    fontFamily: "'Inter', sans-serif", flexShrink: 0, minWidth: 48, textAlign: "center",
+                  }}>
+                    {p.created_at ? fmtHora(p.created_at) : "--:--"}
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>#{p.id.slice(0, 6)}</span>
@@ -585,7 +701,7 @@ export default function Pedidos() {
                       </span>
                     </div>
                     <div style={{ fontSize: 11, color: "#a8a29e" }}>
-                      {new Date(p.created_at).toLocaleString("pt-BR")} . {p.itens?.length || 0} {p.itens?.length === 1 ? "item" : "itens"}
+                      {p.itens?.length || 0} {p.itens?.length === 1 ? "item" : "itens"}
                     </div>
                   </div>
                   <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#1c1917", marginRight: 12 }}>{fmt(p.total)}</div>
@@ -719,7 +835,10 @@ export default function Pedidos() {
                 )}
               </div>
             );
-          })}
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
