@@ -769,7 +769,28 @@ export default function Pedidos() {
                       })}
                     </div>
 
-                    {p.obs && <div style={{ fontSize: 12, color: "#78716c", marginBottom: 12 }}>Obs: {p.obs}</div>}
+                    {p.obs && (
+                      <div style={{
+                        background: "#fef3c7",
+                        border: "2px solid #f59e0b",
+                        borderRadius: 8,
+                        padding: "10px 14px",
+                        marginBottom: 12,
+                        display: "flex",
+                        gap: 10,
+                        alignItems: "flex-start",
+                      }}>
+                        <span style={{ fontSize: 18, lineHeight: 1 }}>📝</span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: "0.08em", marginBottom: 3 }}>
+                            OBSERVAÇÃO DO CLIENTE
+                          </div>
+                          <div style={{ fontSize: 15, fontWeight: 700, color: "#000", lineHeight: 1.4 }}>
+                            {p.obs}
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Tipo de entrega: Retirada */}
                     {p.tipo_entrega === "retirada" && (
