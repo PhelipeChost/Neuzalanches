@@ -128,6 +128,24 @@ function AdminConfig() {
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
+  const moverCategoria = async (id, direcao) => {
+    const idx = categorias.findIndex(c => c.id === id);
+    if (idx < 0) return;
+    const novoIdx = idx + direcao;
+    if (novoIdx < 0 || novoIdx >= categorias.length) return;
+    // Otimismo: atualiza local primeiro
+    const novaLista = [...categorias];
+    [novaLista[idx], novaLista[novoIdx]] = [novaLista[novoIdx], novaLista[idx]];
+    setCategorias(novaLista);
+    try {
+      await api.categorias.reordenar(novaLista.map(c => c.id));
+    } catch (err) {
+      showToast("Erro ao reordenar: " + err.message, "#dc2626");
+      // Reverte recarregando do servidor
+      try { setCategorias(await api.categorias.listar()); } catch { /* noop */ }
+    }
+  };
+
   // ── Adicionais ──
   const adicionarAdicional = async () => {
     const nome = novoAd.nome.trim();
@@ -281,25 +299,39 @@ function AdminConfig() {
           {categorias.length === 0 ? (
             <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhuma categoria.</div>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {categorias.map(c => (
-                <div key={c.id} style={cfgRow}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 14, fontWeight: 600 }}>{c.nome}</span>
-                    {c.permite_adicionais ? (
-                      <span style={{ background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>Adicionais</span>
-                    ) : null}
+            <>
+              <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 8, fontStyle: "italic" }}>
+                A ordem abaixo é a mesma em que aparecem no cardápio do cliente. Use ↑ ↓ para reorganizar.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {categorias.map((c, idx) => (
+                  <div key={c.id} style={cfgRow}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        <button onClick={() => moverCategoria(c.id, -1)} disabled={idx === 0}
+                          title="Mover para cima"
+                          style={{ background: idx === 0 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === 0 ? "not-allowed" : "pointer", color: idx === 0 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>▲</button>
+                        <button onClick={() => moverCategoria(c.id, 1)} disabled={idx === categorias.length - 1}
+                          title="Mover para baixo"
+                          style={{ background: idx === categorias.length - 1 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === categorias.length - 1 ? "not-allowed" : "pointer", color: idx === categorias.length - 1 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>▼</button>
+                      </div>
+                      <span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 700, minWidth: 18 }}>{idx + 1}.</span>
+                      <span style={{ fontSize: 14, fontWeight: 600 }}>{c.nome}</span>
+                      {c.permite_adicionais ? (
+                        <span style={{ background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>Adicionais</span>
+                      ) : null}
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <button onClick={() => toggleAdicionais(c)}
+                        style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+                        {c.permite_adicionais ? "Desativar adicionais" : "Ativar adicionais"}
+                      </button>
+                      <button onClick={() => removerCategoria(c.id)} style={cfgDel}>Remover</button>
+                    </div>
                   </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <button onClick={() => toggleAdicionais(c)}
-                      style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-                      {c.permite_adicionais ? "Desativar adicionais" : "Ativar adicionais"}
-                    </button>
-                    <button onClick={() => removerCategoria(c.id)} style={cfgDel}>Remover</button>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </>
           )}
         </div>
 

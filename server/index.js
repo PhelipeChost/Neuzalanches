@@ -11,7 +11,7 @@ import {
   isEmailAdmin, listarAdminEmails, adicionarAdminEmail, removerAdminEmail,
   listarLancamentos, buscarLancamento, criarLancamento, atualizarLancamento, excluirLancamento,
   obterConfig, salvarConfig,
-  listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, excluirCategoria,
+  listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, reordenarCategorias, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
   listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
@@ -199,10 +199,16 @@ app.post("/api/categorias", authMiddleware, adminOnly, (req, res) => {
   }
 });
 
+app.put("/api/categorias/reordenar", authMiddleware, adminOnly, (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids)) return res.status(400).json({ error: "ids deve ser um array" });
+  res.json(reordenarCategorias(ids));
+});
+
 app.put("/api/categorias/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, permite_adicionais } = req.body;
-  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
-  const c = atualizarCategoria(req.params.id, { nome, permite_adicionais });
+  const { nome, permite_adicionais, ordem } = req.body;
+  if (nome !== undefined && !nome) return res.status(400).json({ error: "Nome inválido" });
+  const c = atualizarCategoria(req.params.id, { nome, permite_adicionais, ordem });
   if (!c) return res.status(404).json({ error: "Não encontrado" });
   res.json(c);
 });

@@ -52,6 +52,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     nome TEXT UNIQUE NOT NULL,
     permite_adicionais INTEGER DEFAULT 0,
+    ordem INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -298,6 +299,16 @@ if (!colsPedidos.includes("cliente_email")) {
   db.exec("ALTER TABLE pedidos ADD COLUMN cliente_email TEXT DEFAULT ''");
 }
 
+// Migration: coluna 'ordem' em categorias
+const colsCategorias = db.prepare("PRAGMA table_info(categorias)").all().map(c => c.name);
+if (!colsCategorias.includes("ordem")) {
+  db.exec("ALTER TABLE categorias ADD COLUMN ordem INTEGER DEFAULT 0");
+  // Inicializa ordem com base alfabética para preservar comportamento atual
+  const existentes = db.prepare("SELECT id FROM categorias ORDER BY nome").all();
+  const upd = db.prepare("UPDATE categorias SET ordem = ? WHERE id = ?");
+  existentes.forEach((c, i) => upd.run(i, c.id));
+}
+
 // ─── SEED CATEGORIAS PRÉ-DEFINIDAS ─────────────────────────────────────────
 const CATEGORIAS_SEED = [
   { nome: "Lanches", permite_adicionais: 1 },
@@ -435,7 +446,7 @@ export function salvarConfig(key, value) {
 // ─── CATEGORIAS ─────────────────────────────────────────────────────────────
 
 export function listarCategorias() {
-  return db.prepare("SELECT * FROM categorias ORDER BY nome").all();
+  return db.prepare("SELECT * FROM categorias ORDER BY ordem ASC, nome ASC").all();
 }
 
 export function buscarCategoria(id) {
@@ -448,18 +459,34 @@ export function buscarCategoriaPorNome(nome) {
 
 export function criarCategoria({ nome, permite_adicionais }) {
   const id = gerarId();
+  // Nova categoria entra no fim
+  const max = db.prepare("SELECT COALESCE(MAX(ordem), -1) AS m FROM categorias").get().m;
   db.prepare(
-    "INSERT INTO categorias (id, nome, permite_adicionais) VALUES (?, ?, ?)"
-  ).run(id, nome, permite_adicionais ? 1 : 0);
+    "INSERT INTO categorias (id, nome, permite_adicionais, ordem) VALUES (?, ?, ?, ?)"
+  ).run(id, nome, permite_adicionais ? 1 : 0, max + 1);
   return buscarCategoria(id);
 }
 
-export function atualizarCategoria(id, { nome, permite_adicionais }) {
-  const result = db.prepare(
-    "UPDATE categorias SET nome = ?, permite_adicionais = ? WHERE id = ?"
-  ).run(nome, permite_adicionais ? 1 : 0, id);
-  if (result.changes === 0) return null;
+export function atualizarCategoria(id, { nome, permite_adicionais, ordem }) {
+  const atual = buscarCategoria(id);
+  if (!atual) return null;
+  const novoNome = nome !== undefined ? nome : atual.nome;
+  const novoPerm = permite_adicionais !== undefined ? (permite_adicionais ? 1 : 0) : atual.permite_adicionais;
+  const novaOrdem = ordem !== undefined && ordem !== null ? Number(ordem) : atual.ordem;
+  db.prepare(
+    "UPDATE categorias SET nome = ?, permite_adicionais = ?, ordem = ? WHERE id = ?"
+  ).run(novoNome, novoPerm, novaOrdem, id);
   return buscarCategoria(id);
+}
+
+export function reordenarCategorias(ids) {
+  // ids: array de IDs na ordem desejada
+  const upd = db.prepare("UPDATE categorias SET ordem = ? WHERE id = ?");
+  const tx = db.transaction((arr) => {
+    arr.forEach((id, i) => upd.run(i, id));
+  });
+  tx(ids);
+  return listarCategorias();
 }
 
 export function excluirCategoria(id) {

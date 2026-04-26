@@ -56,6 +56,7 @@ export const api = {
     listar: () => request("/categorias"),
     criar: (data) => request("/categorias", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/categorias/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    reordenar: (ids) => request("/categorias/reordenar", { method: "PUT", body: JSON.stringify({ ids }) }),
     excluir: (id) => request(`/categorias/${id}`, { method: "DELETE" }),
   },
 
