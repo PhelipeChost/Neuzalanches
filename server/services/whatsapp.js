@@ -91,8 +91,8 @@ export async function notificarStatusPedido(pedido, status) {
   if (!pedido.cliente_telefone) return;
 
   const mensagens = {
-    confirmado: `🍳 *${pedido.cliente_nome}*, seu pedido *#${pedido.id.slice(0, 6).toUpperCase()}* foi *confirmado* e está sendo preparado agora! 🔥\n\nEm breve estará pronto!`,
-    preparando: `🍳 *${pedido.cliente_nome}*, seu pedido *#${pedido.id.slice(0, 6).toUpperCase()}* está sendo *preparado agora*! 🔥\n\nEm breve estará pronto!`,
+    confirmado: `✅ *${pedido.cliente_nome}*, seu pedido *#${pedido.id.slice(0, 6).toUpperCase()}* foi *confirmado*!\n\nVamos começar a preparar em instantes. 👨‍🍳`,
+    preparando: `🍳 *${pedido.cliente_nome}*, seu pedido *#${pedido.id.slice(0, 6).toUpperCase()}* já está *na chapa*! 🔥\n\nEstamos preparando tudo com carinho — em breve fica pronto.`,
     pronto: `✅ *${pedido.cliente_nome}*, seu pedido *#${pedido.id.slice(0, 6).toUpperCase()}* está *pronto*! 🎉\n\n${(pedido.tipo_entrega === 'retirada' || (!pedido.endereco_rua && pedido.tipo_entrega !== 'entrega')) ? 'Pode vir retirar! 🏪' : 'Saindo para entrega em instantes! 🛵'}`,
     entregue: `🎉 *Pedido entregue!*\n\nObrigado pela preferência, *${pedido.cliente_nome}*! ❤️\n\n_Volte sempre à Neuzalanches!_ 🍔\n🌐 neuzalanches.com.br`,
     cancelado: `❌ *${pedido.cliente_nome}*, infelizmente seu pedido *#${pedido.id.slice(0, 6).toUpperCase()}* foi *cancelado*.\n\nEntre em contato conosco para mais informações.\n🌐 neuzalanches.com.br`,

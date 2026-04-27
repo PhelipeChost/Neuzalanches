@@ -492,6 +492,11 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
   const pedido = atualizarStatusPedido(req.params.id, status);
   if (!pedido) return res.status(404).json({ error: "Pedido não encontrado" });
 
+  // Notificar cliente via WhatsApp em TODA mudança de status (exceto pendente, que é o estado inicial)
+  if (status !== "pendente") {
+    notificarStatusPedido(pedido, status).catch(() => {});
+  }
+
   if (status === "entregue") {
     const hoje = new Date().toISOString().split("T")[0];
     // Lançamento de RECEITA (entrada)
@@ -505,10 +510,7 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       obs: `Pedido ${pedido.tipo} entregue automaticamente`,
     });
 
-    // Notificar cliente via WhatsApp sobre mudança de status
-  notificarStatusPedido(pedido, status).catch(() => {});
-
-  // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
+    // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
     reportarReceitaNexo({
       amount: pedido.total,
       description: `Pedido #${pedido.id.slice(0, 6)}`,
