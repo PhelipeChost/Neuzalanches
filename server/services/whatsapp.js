@@ -74,8 +74,7 @@ export async function notificarPedidoConfirmado(pedido) {
 
   const texto =
     `✅ *Pedido recebido, ${pedido.cliente_nome}!*\n\n` +
-    `📋 *Pedido #${pedido.id.slice(0, 6).toUpperCase()}*\n` +
-    `🔄 *Status:* Pendente — aguardando confirmação\n\n` +
+    `📋 *Pedido #${pedido.id.slice(0, 6).toUpperCase()}*\n\n` +
     (linhasItens ? `*Itens:*\n${linhasItens}\n\n` : '') +
     `💰 *Total: R$ ${Number(pedido.total).toFixed(2)}*\n` +
     `💳 *Pagamento:* ${metodoPag}\n` +

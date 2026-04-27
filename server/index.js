@@ -1125,6 +1125,10 @@ app.post('/api/bot/webhook', async (req, res) => {
       return;
     }
 
+    // Marca cooldown ANTES do envio para prevenir race condition
+    // (cliente envia 2 mensagens rápidas → ambas passam pelo cooldown antes do await terminar)
+    ultimaSaudacao.set(numero, Date.now());
+
     console.log('[bot/webhook] enviando saudação para:', numero, '(remoteJid:', remoteJid, ')');
 
     // ── Verificar horário de funcionamento (Ter–Dom, 19h–01h, Brasília) ────────
@@ -1158,9 +1162,8 @@ app.post('/api/bot/webhook', async (req, res) => {
     if (!r.ok) {
       const errBody = await r.text();
       console.error('[bot/webhook] sendText falhou:', r.status, errBody.slice(0, 300));
-    } else {
-      // Marca o cooldown só quando a saudação foi enviada com sucesso
-      ultimaSaudacao.set(numero, Date.now());
+      // Falhou: remove do cooldown pra próxima mensagem do cliente possa tentar de novo
+      ultimaSaudacao.delete(numero);
     }
   } catch (err) {
     console.error('[bot/webhook] erro:', err.message);
