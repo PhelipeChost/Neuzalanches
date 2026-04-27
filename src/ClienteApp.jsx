@@ -3,7 +3,7 @@ import { api } from "./api";
 import { ImagemProduto } from "./Produtos";
 
 // ─── CONFIGURAÇÕES DA MARCA ───────────────────────────────────────────────────
-const WHATSAPP_NUMERO = "5518991446376"; // ajustar se mudar de número
+const WHATSAPP_NUMERO = "5518991589923"; // número do bot conectado
 
 // ─── SLIDESHOW CLIENTE (modal de detalhe) ─────────────────────────────────────
 function SlideshowModal({ produto }) {
