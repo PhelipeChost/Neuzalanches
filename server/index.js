@@ -1001,6 +1001,7 @@ let _lastQrAt = 0;
 // não interrompe o atendimento humano.
 const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 horas
 const ultimaSaudacao = new Map(); // numero -> timestamp ms
+const saudandoAgora = new Set();  // numeros sendo saudados nesse instante (anti race)
 
 function emCooldown(numero) {
   const ts = ultimaSaudacao.get(numero);
@@ -1125,9 +1126,12 @@ app.post('/api/bot/webhook', async (req, res) => {
       return;
     }
 
-    // Marca cooldown ANTES do envio para prevenir race condition
-    // (cliente envia 2 mensagens rápidas → ambas passam pelo cooldown antes do await terminar)
-    ultimaSaudacao.set(numero, Date.now());
+    // Anti race condition: se já estamos saudando esse cliente nesse instante, ignora
+    if (saudandoAgora.has(numero)) {
+      console.log('[bot/webhook] cliente', numero, 'já está sendo saudado, ignorando duplicata');
+      return;
+    }
+    saudandoAgora.add(numero);
 
     console.log('[bot/webhook] enviando saudação para:', numero, '(remoteJid:', remoteJid, ')');
 
@@ -1146,24 +1150,31 @@ app.post('/api/bot/webhook', async (req, res) => {
 
     const aberto = isAberto();
     const texto = aberto
-      ? 'Olá! 👋 Seja bem-vindo(a) à *Neuzalanches*! 🍔\n\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\n\n🌐 *neuzalanches.com.br*\n\n_Após finalizar o pedido no site, você receberá as atualizações aqui pelo WhatsApp!_ 📲'
+      ? 'Olá! 👋 Seja bem-vindo(a) à *Neuza Lanches*! 🍔\n\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\n\n🌐 *neuzalanches.com.br*\n\n_Após finalizar o pedido no site, você receberá as atualizações aqui pelo WhatsApp!_ 📲'
       : '🔒 *Olá! No momento estamos fechados.*\n\nNosso horário de funcionamento é:\n📅 *Terça a Domingo*\n🕕 *19h00 às 01h00*\n\nQuando estivermos abertos, acesse nosso cardápio em:\n🌐 *neuzalanches.com.br*\n\n_Te esperamos em breve!_ 😊';
 
     const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
     const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
     const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
 
-    // Evolution API v2 usa { number, text } direto (não mais textMessage.text)
-    const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
-      body: JSON.stringify({ number: numero, text: texto }),
-    });
-    if (!r.ok) {
-      const errBody = await r.text();
-      console.error('[bot/webhook] sendText falhou:', r.status, errBody.slice(0, 300));
-      // Falhou: remove do cooldown pra próxima mensagem do cliente possa tentar de novo
-      ultimaSaudacao.delete(numero);
+    try {
+      // Evolution API v2 usa { number, text } direto (não mais textMessage.text)
+      const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
+        body: JSON.stringify({ number: numero, text: texto }),
+      });
+      if (r.ok) {
+        // SÓ marca cooldown se a saudação foi enviada com sucesso
+        ultimaSaudacao.set(numero, Date.now());
+        console.log('[bot/webhook] saudação enviada para', numero, '— cooldown ativo por 6h');
+      } else {
+        const errBody = await r.text();
+        console.error('[bot/webhook] sendText falhou:', r.status, errBody.slice(0, 300));
+        // NÃO marca cooldown — próxima mensagem do cliente vai tentar de novo
+      }
+    } finally {
+      saudandoAgora.delete(numero);
     }
   } catch (err) {
     console.error('[bot/webhook] erro:', err.message);
