@@ -1081,6 +1081,9 @@ app.post('/api/bot/webhook', async (req, res) => {
     const event = body.event || '';
     const data = body.data || {};
 
+    // LOG DEBUG: tudo que chega
+    console.log('[bot/webhook] EVENT:', event, 'fromMe:', data?.key?.fromMe, 'remoteJid:', data?.key?.remoteJid?.slice(0, 30));
+
     // Captura QR code se vier
     if (event === 'qrcode.updated' || event === 'QRCODE_UPDATED') {
       const qr = data.qrcode || data;
