@@ -966,11 +966,16 @@ app.get('/whatsapp', async (req, res) => {
 function extrairNumeroReal(data) {
   const key = data?.key || {};
 
+  // Evolution v2.3.7+ com Baileys novo: quando addressingMode === "lid",
+  // o número real do remetente vem em key.remoteJidAlt
   const candidatos = [
     key.senderPn,
     key.participantPn,
+    key.remoteJidAlt,        // ← número real quando remoteJid é @lid
     key.participant,
     data?.sender,
+    data?.senderPn,
+    data?.remoteJidAlt,
     key.remoteJid,
   ].filter(Boolean);
 
@@ -1102,7 +1107,7 @@ app.post('/api/bot/webhook', async (req, res) => {
 
     const numero = extrairNumeroReal(data);
     if (!numero) {
-      console.error('[bot/webhook] não conseguiu extrair numero. payload key=', JSON.stringify(key));
+      console.error('[bot/webhook] não conseguiu extrair numero. data=', JSON.stringify(data).slice(0, 500));
       return;
     }
 
