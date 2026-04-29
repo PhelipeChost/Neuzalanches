@@ -306,6 +306,9 @@ export default function Pedidos() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
+  // Agrupar por: "dia" (calendário) ou "ciclo" (atendimento 18h–02h)
+  const [agruparPor, setAgruparPor] = useState(() => localStorage.getItem("nl_agrupar_pedidos") || "ciclo");
+  useEffect(() => { localStorage.setItem("nl_agrupar_pedidos", agruparPor); }, [agruparPor]);
   const [toast, setToast] = useState("");
   const [expandido, setExpandido] = useState(null);
   const [somAtivo, setSomAtivo] = useState(() => {
@@ -525,17 +528,30 @@ export default function Pedidos() {
     return true;
   });
 
-  // Agrupar por dia (YYYY-MM-DD), ordem decrescente (mais recente primeiro)
+  // Calcula a data do CICLO de atendimento (18h–02h):
+  // pedidos antes das 18h (ex: 00h–02h da madrugada) pertencem ao ciclo do DIA ANTERIOR.
+  // pedidos a partir das 18h pertencem ao ciclo do DIA ATUAL.
+  const HORA_INICIO_CICLO = 18;
+  const dataCiclo = (date) => {
+    const d = new Date(date);
+    if (d.getHours() < HORA_INICIO_CICLO) {
+      d.setDate(d.getDate() - 1);
+    }
+    return d;
+  };
+
+  // Agrupar por dia OU por ciclo de atendimento, ordem decrescente
   const grupos = (() => {
     const mapa = new Map();
     filtrados.forEach(p => {
       if (!p.created_at) return;
       const d = parseDateUTC(p.created_at);
-      const chave = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const ref = agruparPor === "ciclo" ? dataCiclo(d) : d;
+      const chave = `${ref.getFullYear()}-${String(ref.getMonth() + 1).padStart(2, "0")}-${String(ref.getDate()).padStart(2, "0")}`;
       if (!mapa.has(chave)) mapa.set(chave, []);
       mapa.get(chave).push(p);
     });
-    // Ordena pedidos dentro de cada dia por hora desc
+    // Ordena pedidos dentro de cada grupo por hora desc
     for (const arr of mapa.values()) {
       arr.sort((a, b) => parseDateUTC(b.created_at) - parseDateUTC(a.created_at));
     }
@@ -550,6 +566,19 @@ export default function Pedidos() {
     const hoje = new Date();
     const ontem = new Date(); ontem.setDate(hoje.getDate() - 1);
     const sameDay = (x, y) => x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+
+    // Modo CICLO: rótulo mostra a virada de dia (ex: "Ciclo 26/04 → 27/04 — Sex/Sáb")
+    if (agruparPor === "ciclo") {
+      const proxDia = new Date(data); proxDia.setDate(proxDia.getDate() + 1);
+      // "Ciclo de hoje" = ciclo cuja data inicial é hoje (ainda em andamento até 02h amanhã)
+      // "Ciclo de ontem" = ciclo cuja data inicial é ontem (ex: das 18h de ontem até 02h de hoje)
+      let prefixo = `Ciclo ${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")} → ${String(proxDia.getDate()).padStart(2, "0")}/${String(proxDia.getMonth() + 1).padStart(2, "0")}`;
+      if (sameDay(data, hoje)) prefixo = `Ciclo de Hoje (${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")} → ${String(proxDia.getDate()).padStart(2, "0")}/${String(proxDia.getMonth() + 1).padStart(2, "0")})`;
+      else if (sameDay(data, ontem)) prefixo = `Ciclo de Ontem (${String(d).padStart(2, "0")}/${String(m).padStart(2, "0")} → ${String(proxDia.getDate()).padStart(2, "0")}/${String(proxDia.getMonth() + 1).padStart(2, "0")})`;
+      return `${prefixo} — ${diasSemana[data.getDay()].slice(0, 3)}/${diasSemana[proxDia.getDay()].slice(0, 3)}`;
+    }
+
+    // Modo DIA (calendário tradicional)
     let prefixo = `Dia ${String(d).padStart(2, "0")}`;
     if (sameDay(data, hoje)) prefixo = `Hoje (Dia ${String(d).padStart(2, "0")})`;
     else if (sameDay(data, ontem)) prefixo = `Ontem (Dia ${String(d).padStart(2, "0")})`;
@@ -650,6 +679,38 @@ export default function Pedidos() {
             <option key={ym} value={ym}>{labelMes(ym)}</option>
           ))}
         </select>
+
+        {/* Toggle: agrupar por Dia (calendário) ou por Ciclo (atendimento 18h–02h) */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 4 }}>
+          <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em" }}>AGRUPAR POR</label>
+          <div style={{ display: "flex", gap: 0, background: "#f5f5f4", borderRadius: 8, padding: 3, border: "1px solid #e7e5e4" }}>
+            <button
+              onClick={() => setAgruparPor("ciclo")}
+              title="Ciclo de atendimento: 18h até 02h do dia seguinte (ideal para fechamento)"
+              style={{
+                padding: "6px 14px", border: "none", borderRadius: 6,
+                background: agruparPor === "ciclo" ? "#F38C24" : "transparent",
+                color: agruparPor === "ciclo" ? "#fff" : "#78716c",
+                fontSize: 12, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif",
+              }}>
+              🌙 Ciclo
+            </button>
+            <button
+              onClick={() => setAgruparPor("dia")}
+              title="Dia do calendário (00h às 23h59)"
+              style={{
+                padding: "6px 14px", border: "none", borderRadius: 6,
+                background: agruparPor === "dia" ? "#F38C24" : "transparent",
+                color: agruparPor === "dia" ? "#fff" : "#78716c",
+                fontSize: 12, fontWeight: 600, cursor: "pointer",
+                fontFamily: "'DM Sans', sans-serif",
+              }}>
+              📅 Dia
+            </button>
+          </div>
+        </div>
+
         <span style={{ fontSize: 12, color: "#a8a29e" }}>
           {filtrados.length} {filtrados.length === 1 ? "pedido" : "pedidos"} •{" "}
           <span style={{ color: "#15803d", fontWeight: 600 }}>{fmt(filtrados.reduce((s, p) => s + Number(p.total || 0), 0))}</span>
