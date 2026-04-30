@@ -119,8 +119,6 @@ export async function notificarPedidoConfirmado(pedido) {
     `💳 *Pagamento:* ${pagamento}\n` +
     `${linhaEntrega}\n` +
     `\n` +
-    `⏱️ Previsão: *30 a 45 minutos*\n` +
-    `\n` +
     `_Acompanhe seu pedido em:_\n` +
     `🌐 neuzalanches.com.br`;
 
