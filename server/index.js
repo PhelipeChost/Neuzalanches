@@ -499,13 +499,23 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
   }
 
   if (status === "entregue") {
-    const hoje = new Date().toISOString().split("T")[0];
+    // Data do lançamento = data do PEDIDO em BRT (UTC-3), não "agora UTC".
+    // Isso garante que o financeiro bate com o que aparece na aba de pedidos
+    // (que agrupa por created_at em BRT). Antes usava UTC e pedidos de
+    // 19h–01h BRT caíam no dia seguinte no financeiro.
+    const dataPedidoBRT = (() => {
+      const utc = pedido.created_at || new Date().toISOString();
+      const d = new Date(utc.includes("T") ? utc : utc.replace(" ", "T") + "Z");
+      d.setUTCHours(d.getUTCHours() - 3);
+      return d.toISOString().slice(0, 10);
+    })();
+
     // Lançamento de RECEITA (entrada)
     criarLancamento({
       tipo: "entrada",
       descricao: `Pedido #${pedido.id.slice(0, 6)} — ${pedido.cliente_nome || "Cliente"}`,
       valor: pedido.total,
-      data: hoje,
+      data: dataPedidoBRT,
       cat: "Vendas",
       status: "realizado",
       obs: `Pedido ${pedido.tipo} entregue automaticamente`,
@@ -530,7 +540,7 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
         tipo: "saida",
         descricao: `CMV — Pedido #${pedido.id.slice(0, 6)} — ${pedido.cliente_nome || "Cliente"}`,
         valor: cmvTotal,
-        data: hoje,
+        data: dataPedidoBRT,
         cat: "CMV",
         status: "realizado",
         obs: `Custo de produção do pedido ${pedido.tipo}`,
