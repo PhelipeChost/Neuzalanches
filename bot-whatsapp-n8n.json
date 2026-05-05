@@ -1,0 +1,203 @@
+{
+  "name": "Neuzalanches - Bot WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "neuzalanches-bot",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "11111111-1111-1111-1111-111111111111",
+      "name": "Webhook Recebe Mensagem",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 300],
+      "webhookId": "neuzalanches-bot"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PARSE MENSAGEM - Evolution API\n// ============================================================\nconst body = $input.first().json.body || $input.first().json;\n\n// Suporte a Evolution API v1 e v2\nconst data = body.data || body;\nconst key = data.key || {};\nconst fromMe = key.fromMe || false;\n\n// Ignorar mensagens enviadas pelo bot\nif (fromMe) return [];\n\n// Extrair telefone e mensagem\nconst remoteJid = key.remoteJid || data.from || '';\nconst phone = remoteJid.replace('@s.whatsapp.net', '').replace(/\\D/g, '');\nconst pushName = data.pushName || data.notifyName || 'Cliente';\n\nconst message = (\n  data.message?.conversation ||\n  data.message?.extendedTextMessage?.text ||\n  data.message?.buttonsResponseMessage?.selectedDisplayText ||\n  data.message?.listResponseMessage?.title ||\n  body.text ||\n  ''\n).trim().toLowerCase();\n\nif (!phone || !message) return [];\n\nreturn [{ json: { phone, pushName, message, rawBody: body } }];"
+      },
+      "id": "22222222-2222-2222-2222-222222222222",
+      "name": "Parse Mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// GERENCIADOR DE SESSÃO + LÓGICA DO BOT\n// ============================================================\n// Sessões ficam salvas entre execuções via staticData\nconst sessions = $workflow.staticData.sessions || {};\n\nconst { phone, pushName, message } = $input.first().json;\n\n// Obter ou criar sessão\nlet session = sessions[phone] || { state: 'INICIO', cart: [], nome: '', telefone: phone };\n\n// Comandos globais (funcionam em qualquer estado)\nif (['cancelar', 'sair', 'menu', 'inicio', '0'].includes(message)) {\n  session = { state: 'INICIO', cart: [], nome: '', telefone: phone };\n}\n\nlet responseText = '';\nlet action = 'send_text'; // send_text | fetch_menu | create_order\n\n// ============================================================\n// MÁQUINA DE ESTADOS\n// ============================================================\nswitch (session.state) {\n\n  case 'INICIO': {\n    responseText = `Olá, ${pushName}! 👋\\n\\n🍔 *Bem-vindo à Neuzalanches!*\\n\\nO que você deseja?\\n\\n1️⃣ Ver cardápio e fazer pedido\\n2️⃣ Falar com atendente\\n\\n_Digite o número da opção_`;\n    session.state = 'AGUARDANDO_OPCAO';\n    break;\n  }\n\n  case 'AGUARDANDO_OPCAO': {\n    if (message === '1' || message.includes('cardápio') || message.includes('cardapio') || message.includes('pedido')) {\n      action = 'fetch_menu';\n      session.state = 'MENU';\n    } else if (message === '2' || message.includes('atendente') || message.includes('humano')) {\n      responseText = '👤 Transferindo para um atendente...\\n\\nAguarde um momento que já te atendemos! 😊';\n      session.state = 'INICIO';\n    } else {\n      responseText = 'Por favor, digite *1* para ver o cardápio ou *2* para falar com atendente.';\n    }\n    break;\n  }\n\n  case 'MENU': {\n    // Esta parte será preenchida após buscar o cardápio\n    // Redirecionar para buscar cardápio de novo se necessário\n    action = 'fetch_menu';\n    break;\n  }\n\n  case 'SELECIONANDO': {\n    const num = parseInt(message);\n    const produtos = session.produtos || [];\n\n    if (message === 'ver carrinho' || message === 'carrinho') {\n      if (session.cart.length === 0) {\n        responseText = '🛒 Seu carrinho está vazio.\\n\\nDigite o número de um item para adicionar.';\n      } else {\n        const total = session.cart.reduce((s, i) => s + i.preco * i.qty, 0);\n        const itens = session.cart.map(i => `  • ${i.qty}x ${i.nome} — R$ ${(i.preco * i.qty).toFixed(2)}`).join('\\n');\n        responseText = `🛒 *Seu carrinho:*\\n\\n${itens}\\n\\n*Total: R$ ${total.toFixed(2)}*\\n\\n✅ Digite *confirmar* para fechar o pedido\\n➕ Ou continue adicionando itens\\n🔄 Digite *cancelar* para recomeçar`;\n      }\n    } else if (message === 'confirmar' || message === 'fechar pedido') {\n      if (session.cart.length === 0) {\n        responseText = '⚠️ Adicione pelo menos um item antes de confirmar.';\n      } else {\n        responseText = `✏️ Para finalizar, preciso de alguns dados.\\n\\nQual é o seu *nome completo*?`;\n        session.state = 'COLETANDO_NOME';\n      }\n    } else if (!isNaN(num) && num >= 1 && num <= produtos.length) {\n      const produto = produtos[num - 1];\n      const existing = session.cart.find(i => i.produto_id === produto.id);\n      if (existing) {\n        existing.qty++;\n      } else {\n        session.cart.push({ produto_id: produto.id, nome: produto.nome, preco: produto.preco, qty: 1 });\n      }\n      const total = session.cart.reduce((s, i) => s + i.preco * i.qty, 0);\n      responseText = `✅ *${produto.nome}* adicionado!\\n\\n🛒 ${session.cart.reduce((s,i)=>s+i.qty,0)} item(ns) — R$ ${total.toFixed(2)}\\n\\nDigite outro número para adicionar mais,\\n*ver carrinho* para ver os itens ou\\n*confirmar* para fechar o pedido.`;\n    } else {\n      responseText = `Opção inválida. Digite o *número* do item, *ver carrinho* ou *confirmar*.`;\n    }\n    break;\n  }\n\n  case 'COLETANDO_NOME': {\n    if (message.length < 3) {\n      responseText = 'Por favor, informe seu *nome completo*.';\n    } else {\n      session.nome = pushName !== 'Cliente' && message.length < 4 ? pushName : message.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');\n      responseText = `Obrigado, *${session.nome}*! 😊\\n\\nQual o seu número de *WhatsApp* para contato?\\n_(com DDD, ex: 11999998888)_`;\n      session.state = 'COLETANDO_TELEFONE';\n    }\n    break;\n  }\n\n  case 'COLETANDO_TELEFONE': {\n    const tel = message.replace(/\\D/g, '');\n    if (tel.length < 10 || tel.length > 11) {\n      responseText = 'Por favor, informe um número válido com DDD.\\nEx: *11999998888*';\n    } else {\n      session.telefoneContato = tel;\n      responseText = `📍 Qual o *tipo de entrega*?\\n\\n1️⃣ Entrega no endereço\\n2️⃣ Retirada no local`;\n      session.state = 'COLETANDO_TIPO';\n    }\n    break;\n  }\n\n  case 'COLETANDO_TIPO': {\n    if (message === '1' || message.includes('entrega') || message.includes('endereço') || message.includes('endereco')) {\n      session.tipo = 'entrega';\n      responseText = `🏠 Qual o *CEP* para entrega?\\n_(apenas números, ex: 01310100)_`;\n      session.state = 'COLETANDO_CEP';\n    } else if (message === '2' || message.includes('retira') || message.includes('local') || message.includes('buscar')) {\n      session.tipo = 'retirada';\n      responseText = `💳 *Forma de pagamento:*\\n\\n1️⃣ PIX\\n2️⃣ Dinheiro\\n3️⃣ Cartão na entrega`;\n      session.state = 'COLETANDO_PAGAMENTO';\n    } else {\n      responseText = 'Digite *1* para entrega ou *2* para retirada no local.';\n    }\n    break;\n  }\n\n  case 'COLETANDO_CEP': {\n    const cep = message.replace(/\\D/g, '');\n    if (cep.length !== 8) {\n      responseText = 'CEP inválido. Por favor, informe o CEP com 8 dígitos.\\nEx: *01310100*';\n    } else {\n      session.endereco = session.endereco || {};\n      session.endereco.cep = cep;\n      responseText = `📍 Qual o *nome da rua/avenida*?`;\n      session.state = 'COLETANDO_RUA';\n    }\n    break;\n  }\n\n  case 'COLETANDO_RUA': {\n    if (message.length < 3) {\n      responseText = 'Por favor, informe o nome da rua.';\n    } else {\n      session.endereco.rua = message;\n      responseText = `Qual o *número* do endereço?`;\n      session.state = 'COLETANDO_NUMERO';\n    }\n    break;\n  }\n\n  case 'COLETANDO_NUMERO': {\n    session.endereco.numero = message;\n    responseText = `Qual o *bairro*?`;\n    session.state = 'COLETANDO_BAIRRO';\n    break;\n  }\n\n  case 'COLETANDO_BAIRRO': {\n    if (message.length < 2) {\n      responseText = 'Por favor, informe o bairro.';\n    } else {\n      session.endereco.bairro = message;\n      responseText = `Algum *ponto de referência*? (ou digite *não* para pular)`;\n      session.state = 'COLETANDO_REFERENCIA';\n    }\n    break;\n  }\n\n  case 'COLETANDO_REFERENCIA': {\n    session.endereco.referencia = (message === 'não' || message === 'nao') ? '' : message;\n    responseText = `💳 *Forma de pagamento:*\\n\\n1️⃣ PIX\\n2️⃣ Dinheiro\\n3️⃣ Cartão na entrega`;\n    session.state = 'COLETANDO_PAGAMENTO';\n    break;\n  }\n\n  case 'COLETANDO_PAGAMENTO': {\n    let metodoPagamento = '';\n    if (message === '1' || message.includes('pix')) {\n      metodoPagamento = 'pix';\n    } else if (message === '2' || message.includes('dinheiro')) {\n      metodoPagamento = 'dinheiro';\n    } else if (message === '3' || message.includes('cartão') || message.includes('cartao') || message.includes('card')) {\n      metodoPagamento = 'cartao';\n    } else {\n      responseText = 'Digite *1* para PIX, *2* para Dinheiro ou *3* para Cartão.';\n      break;\n    }\n    session.metodoPagamento = metodoPagamento;\n\n    // Montar resumo do pedido\n    const total = session.cart.reduce((s, i) => s + i.preco * i.qty, 0);\n    const itens = session.cart.map(i => `  • ${i.qty}x ${i.nome} — R$ ${(i.preco * i.qty).toFixed(2)}`).join('\\n');\n    const enderecoStr = session.tipo === 'entrega' && session.endereco\n      ? `\\n📍 *Endereço:* ${session.endereco.rua}, ${session.endereco.numero} — ${session.endereco.bairro} (CEP: ${session.endereco.cep})`\n      : '\\n🏪 *Retirada no local*';\n    const pagStr = metodoPagamento === 'pix' ? 'PIX' : metodoPagamento === 'dinheiro' ? 'Dinheiro' : 'Cartão';\n\n    responseText = `📋 *Resumo do pedido:*\\n\\n${itens}\\n\\n💰 *Total: R$ ${total.toFixed(2)}*\\n💳 *Pagamento:* ${pagStr}${enderecoStr}\\n\\n✅ Digite *confirmar* para enviar o pedido\\n❌ Digite *cancelar* para recomeçar`;\n    session.state = 'CONFIRMANDO';\n    break;\n  }\n\n  case 'CONFIRMANDO': {\n    if (message === 'confirmar') {\n      action = 'create_order';\n    } else if (message === 'cancelar') {\n      session = { state: 'INICIO', cart: [], nome: '', telefone: phone };\n      responseText = '❌ Pedido cancelado.\\n\\nDigite *oi* para começar novamente!';\n    } else {\n      responseText = 'Digite *confirmar* para enviar ou *cancelar* para recomeçar.';\n    }\n    break;\n  }\n\n  default: {\n    session.state = 'INICIO';\n    responseText = 'Olá! 👋 Digite *oi* para ver nosso cardápio.';\n  }\n}\n\n// Salvar sessão\nsessions[phone] = session;\n$workflow.staticData.sessions = sessions;\n\nreturn [{\n  json: {\n    phone,\n    responseText,\n    action,\n    session\n  }\n}];"
+      },
+      "id": "33333333-3333-3333-3333-333333333333",
+      "name": "Lógica do Bot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [620, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "fetch_menu", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Buscar Cardápio"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "create_order", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Criar Pedido"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "send_text", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Enviar Texto"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "44444444-4444-4444-4444-444444444444",
+      "name": "Rotear Ação",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [840, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://neuzalanches.com.br/api/produtos",
+        "options": {}
+      },
+      "id": "55555555-5555-5555-5555-555555555555",
+      "name": "GET Produtos API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formatar cardápio para WhatsApp\nconst produtos = $input.first().json;\nconst botData = $('Lógica do Bot').first().json;\nconst sessions = $workflow.staticData.sessions || {};\nconst session = sessions[botData.phone] || {};\n\n// Agrupar por categoria\nconst categorias = {};\nprodutos.forEach((p, i) => {\n  const cat = p.categoria || 'Outros';\n  if (!categorias[cat]) categorias[cat] = [];\n  categorias[cat].push({ ...p, index: i + 1 });\n});\n\n// Salvar produtos na sessão para referência\nsession.produtos = produtos;\nsession.state = 'SELECIONANDO';\nsessions[botData.phone] = session;\n$workflow.staticData.sessions = sessions;\n\n// Montar mensagem\nlet msg = `🍔 *CARDÁPIO NEUZALANCHES* 🍔\\n\\n`;\nlet counter = 1;\nconst allProducts = [];\n\nObject.entries(categorias).forEach(([cat, items]) => {\n  msg += `*${cat.toUpperCase()}*\\n`;\n  items.forEach(p => {\n    msg += `${counter}️⃣ ${p.nome} — R$ ${parseFloat(p.preco).toFixed(2)}\\n`;\n    allProducts.push(p);\n    counter++;\n  });\n  msg += '\\n';\n});\n\nmsg += `_Digite o *número* do item para adicionar ao carrinho_\\n`;\nmsg += `_Digite *ver carrinho* para ver o pedido_\\n`;\nmsg += `_Digite *confirmar* para fechar o pedido_`;\n\nreturn [{ json: { phone: botData.phone, responseText: msg } }];"
+      },
+      "id": "66666666-6666-6666-6666-666666666666",
+      "name": "Formatar Cardápio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://neuzalanches.com.br/api/pedidos/publico",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Content-Type", "value": "application/json" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"cliente_nome\": \"{{ $json.session.nome }}\",\n  \"cliente_telefone\": \"{{ $json.session.telefoneContato }}\",\n  \"metodo_pagamento\": \"{{ $json.session.metodoPagamento }}\",\n  \"tipo\": \"{{ $json.session.tipo }}\",\n  \"itens\": {{ JSON.stringify($json.session.cart.map(i => ({ produto_id: i.produto_id, qty: i.qty, preco: i.preco }))) }},\n  \"endereco\": {{ $json.session.tipo === 'entrega' ? JSON.stringify({ cep: $json.session.endereco.cep, rua: $json.session.endereco.rua, numero: $json.session.endereco.numero, bairro: $json.session.endereco.bairro, referencia: $json.session.endereco.referencia || '' }) : 'null' }}\n}",
+        "options": {}
+      },
+      "id": "77777777-7777-7777-7777-777777777777",
+      "name": "POST Criar Pedido",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Formatar confirmação do pedido\nconst pedido = $input.first().json;\nconst botData = $('Lógica do Bot').first().json;\nconst sessions = $workflow.staticData.sessions || {};\n\n// Limpar sessão após pedido confirmado\nconst session = sessions[botData.phone] || {};\nconst nome = session.nome || 'Cliente';\nconst total = (session.cart || []).reduce((s, i) => s + i.preco * i.qty, 0);\nconst metodoPag = session.metodoPagamento || '';\n\n// Reset da sessão\nsessions[botData.phone] = { state: 'INICIO', cart: [], nome: '', telefone: botData.phone };\n$workflow.staticData.sessions = sessions;\n\nlet pixInfo = '';\nif (metodoPag === 'pix') {\n  pixInfo = `\\n\\n💳 *Chave PIX:* (configure na plataforma)\\nFavor enviar o comprovante após o pagamento.`;\n}\n\nconst msg = `🎉 *Pedido confirmado, ${nome}!*\\n\\n📋 *Pedido #${pedido.id || 'N/A'}*\\n💰 *Total: R$ ${total.toFixed(2)}*${pixInfo}\\n\\n⏱️ Tempo estimado: 30-45 minutos\\n\\nObrigado por escolher a Neuzalanches! 🍔❤️\\n\\n_Digite *oi* para fazer outro pedido_`;\n\nreturn [{ json: { phone: botData.phone, responseText: msg } }];"
+      },
+      "id": "88888888-8888-8888-8888-888888888888",
+      "name": "Formatar Confirmação",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://145.223.31.205:8080/message/sendText/neuzalanches",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "apikey", "value": "SUA_API_KEY_AQUI" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $json.phone }}\",\n  \"text\": {{ JSON.stringify($json.responseText) }}\n}",
+        "options": {}
+      },
+      "id": "99999999-9999-9999-9999-999999999999",
+      "name": "Enviar Resposta WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1500, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\": \"ok\"}",
+        "options": {}
+      },
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "name": "Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Recebe Mensagem": {
+      "main": [[{ "node": "Parse Mensagem", "type": "main", "index": 0 }]]
+    },
+    "Parse Mensagem": {
+      "main": [[{ "node": "Lógica do Bot", "type": "main", "index": 0 }]]
+    },
+    "Lógica do Bot": {
+      "main": [[{ "node": "Rotear Ação", "type": "main", "index": 0 }]]
+    },
+    "Rotear Ação": {
+      "main": [
+        [{ "node": "GET Produtos API", "type": "main", "index": 0 }],
+        [{ "node": "POST Criar Pedido", "type": "main", "index": 0 }],
+        [{ "node": "Enviar Resposta WhatsApp", "type": "main", "index": 0 }]
+      ]
+    },
+    "GET Produtos API": {
+      "main": [[{ "node": "Formatar Cardápio", "type": "main", "index": 0 }]]
+    },
+    "Formatar Cardápio": {
+      "main": [[{ "node": "Enviar Resposta WhatsApp", "type": "main", "index": 0 }]]
+    },
+    "POST Criar Pedido": {
+      "main": [[{ "node": "Formatar Confirmação", "type": "main", "index": 0 }]]
+    },
+    "Formatar Confirmação": {
+      "main": [[{ "node": "Enviar Resposta WhatsApp", "type": "main", "index": 0 }]]
+    },
+    "Enviar Resposta WhatsApp": {
+      "main": [[{ "node": "Responder Webhook", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

@@ -185,4 +185,11 @@ export const api = {
       registrar: (data) => request("/estoque/ajustes", { method: "POST", body: JSON.stringify(data) }),
     },
   },
+
+  // Lixeira
+  lixeira: {
+    listar: () => request("/lixeira"),
+    restaurar: (tipo, id) => request(`/lixeira/${tipo}/${id}/restaurar`, { method: "POST" }),
+    excluirDefinitivo: (tipo, id) => request(`/lixeira/${tipo}/${id}`, { method: "DELETE" }),
+  },
 };

@@ -10,6 +10,7 @@ import {
   criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
   isEmailAdmin, listarAdminEmails, adicionarAdminEmail, removerAdminEmail,
   listarLancamentos, buscarLancamento, criarLancamento, atualizarLancamento, excluirLancamento,
+  listarLixeira, restaurarItemLixeira, excluirDefinitivoLixeira,
   obterConfig, salvarConfig,
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, reordenarCategorias, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
@@ -544,6 +545,32 @@ app.delete("/api/pedidos/:id", authMiddleware, adminOnly, (req, res) => {
   const ok = excluirPedido(req.params.id);
   if (!ok) return res.status(404).json({ error: "Pedido não encontrado" });
   res.json({ success: true });
+});
+
+// ─── LIXEIRA (admin only) ────────────────────────────────────────────────────
+
+app.get("/api/lixeira", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarLixeira());
+});
+
+app.post("/api/lixeira/:tipo/:id/restaurar", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const ok = restaurarItemLixeira(req.params.tipo, req.params.id);
+    if (!ok) return res.status(404).json({ error: "Item não encontrado na lixeira" });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/lixeira/:tipo/:id", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const ok = excluirDefinitivoLixeira(req.params.tipo, req.params.id);
+    if (!ok) return res.status(404).json({ error: "Item não encontrado na lixeira" });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ─── CUSTOS FIXOS (admin only) ───────────────────────────────────────────────
@@ -1154,7 +1181,7 @@ app.post('/api/bot/webhook', async (req, res) => {
     const aberto = isAberto();
     const texto = aberto
       ? 'Olá! 👋 Seja bem-vindo(a) à *Neuza Lanches*! 🍔\n\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\n\n🌐 *neuzalanches.com.br*\n\n_Após finalizar o pedido no site, você receberá as atualizações aqui pelo WhatsApp!_ 📲'
-      : '🔒 *Olá! No momento estamos fechados.*\n\nNosso horário de funcionamento é:\n📅 *Terça a Domingo*\n🕕 *19h00 às 01h00*\n\nQuando estivermos abertos, acesse nosso cardápio em:\n🌐 *neuzalanches.com.br*\n\n_Te esperamos em breve!_ 😊';
+      : '🔒 *Olá! No momento estamos fechados.*\n\nNosso horário de funcionamento é:\n📅 *Terça a Domingo*\n🕕 *18h30 às 01h30*\n\nQuando estivermos abertos, acesse nosso cardápio em:\n🌐 *neuzalanches.com.br*\n\n_Te esperamos em breve!_ 😊';
 
     const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
     const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';

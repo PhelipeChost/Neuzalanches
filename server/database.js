@@ -309,6 +309,22 @@ if (!colsCategorias.includes("ordem")) {
   existentes.forEach((c, i) => upd.run(i, c.id));
 }
 
+// ─── MIGRAÇÃO LIXEIRA — adiciona deleted_at em todas as tabelas relevantes ──
+const TABELAS_LIXEIRA = [
+  "lancamentos", "pedidos", "produtos", "categorias",
+  "adicionais", "custos_fixos", "estoque_itens", "fornecedores",
+];
+for (const tabela of TABELAS_LIXEIRA) {
+  const cols = db.prepare(`PRAGMA table_info(${tabela})`).all().map(c => c.name);
+  if (!cols.includes("deleted_at")) {
+    db.exec(`ALTER TABLE ${tabela} ADD COLUMN deleted_at TEXT DEFAULT NULL`);
+  }
+}
+// Índice opcional para acelerar queries de lixeira
+for (const tabela of TABELAS_LIXEIRA) {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_${tabela}_deleted_at ON ${tabela}(deleted_at)`);
+}
+
 // ─── SEED CATEGORIAS PRÉ-DEFINIDAS ─────────────────────────────────────────
 const CATEGORIAS_SEED = [
   { nome: "Lanches", permite_adicionais: 1 },
@@ -403,11 +419,11 @@ export function buscarUsuarioPorId(id) {
 // ─── LANCAMENTOS ────────────────────────────────────────────────────────────
 
 export function listarLancamentos() {
-  return db.prepare("SELECT * FROM lancamentos ORDER BY data DESC, created_at DESC").all();
+  return db.prepare("SELECT * FROM lancamentos WHERE deleted_at IS NULL ORDER BY data DESC, created_at DESC").all();
 }
 
 export function buscarLancamento(id) {
-  return db.prepare("SELECT * FROM lancamentos WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM lancamentos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function criarLancamento({ tipo, descricao, valor, data, cat, status, obs }) {
@@ -420,14 +436,15 @@ export function criarLancamento({ tipo, descricao, valor, data, cat, status, obs
 
 export function atualizarLancamento(id, { tipo, descricao, valor, data, cat, status, obs }) {
   const result = db.prepare(
-    "UPDATE lancamentos SET tipo = ?, descricao = ?, valor = ?, data = ?, cat = ?, status = ?, obs = ? WHERE id = ?"
+    "UPDATE lancamentos SET tipo = ?, descricao = ?, valor = ?, data = ?, cat = ?, status = ?, obs = ? WHERE id = ? AND deleted_at IS NULL"
   ).run(tipo, descricao, valor, data, cat, status, obs || "", id);
   if (result.changes === 0) return null;
   return buscarLancamento(id);
 }
 
 export function excluirLancamento(id) {
-  return db.prepare("DELETE FROM lancamentos WHERE id = ?").run(id).changes > 0;
+  // Soft delete — vai para a lixeira
+  return db.prepare("UPDATE lancamentos SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
 }
 
 // ─── CONFIG ─────────────────────────────────────────────────────────────────
@@ -446,21 +463,21 @@ export function salvarConfig(key, value) {
 // ─── CATEGORIAS ─────────────────────────────────────────────────────────────
 
 export function listarCategorias() {
-  return db.prepare("SELECT * FROM categorias ORDER BY ordem ASC, nome ASC").all();
+  return db.prepare("SELECT * FROM categorias WHERE deleted_at IS NULL ORDER BY ordem ASC, nome ASC").all();
 }
 
 export function buscarCategoria(id) {
-  return db.prepare("SELECT * FROM categorias WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM categorias WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function buscarCategoriaPorNome(nome) {
-  return db.prepare("SELECT * FROM categorias WHERE nome = ?").get(nome);
+  return db.prepare("SELECT * FROM categorias WHERE nome = ? AND deleted_at IS NULL").get(nome);
 }
 
 export function criarCategoria({ nome, permite_adicionais }) {
   const id = gerarId();
   // Nova categoria entra no fim
-  const max = db.prepare("SELECT COALESCE(MAX(ordem), -1) AS m FROM categorias").get().m;
+  const max = db.prepare("SELECT COALESCE(MAX(ordem), -1) AS m FROM categorias WHERE deleted_at IS NULL").get().m;
   db.prepare(
     "INSERT INTO categorias (id, nome, permite_adicionais, ordem) VALUES (?, ?, ?, ?)"
   ).run(id, nome, permite_adicionais ? 1 : 0, max + 1);
@@ -490,20 +507,25 @@ export function reordenarCategorias(ids) {
 }
 
 export function excluirCategoria(id) {
-  return db.prepare("DELETE FROM categorias WHERE id = ?").run(id).changes > 0;
+  // Soft delete: como nome é UNIQUE, anexa __del__{epoch} pra liberar o nome
+  // (na restauração, o sufixo é removido)
+  const atual = db.prepare("SELECT nome FROM categorias WHERE id = ? AND deleted_at IS NULL").get(id);
+  if (!atual) return false;
+  const novoNome = `${atual.nome}__del__${Date.now()}`;
+  return db.prepare("UPDATE categorias SET nome = ?, deleted_at = datetime('now') WHERE id = ?").run(novoNome, id).changes > 0;
 }
 
 // ─── ADICIONAIS ─────────────────────────────────────────────────────────────
 
 export function listarAdicionais(apenasDisponiveis = false) {
   if (apenasDisponiveis) {
-    return db.prepare("SELECT * FROM adicionais WHERE disponivel = 1 ORDER BY nome").all();
+    return db.prepare("SELECT * FROM adicionais WHERE disponivel = 1 AND deleted_at IS NULL ORDER BY nome").all();
   }
-  return db.prepare("SELECT * FROM adicionais ORDER BY nome").all();
+  return db.prepare("SELECT * FROM adicionais WHERE deleted_at IS NULL ORDER BY nome").all();
 }
 
 export function buscarAdicional(id) {
-  return db.prepare("SELECT * FROM adicionais WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM adicionais WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function criarAdicional({ nome, preco, custo, disponivel }) {
@@ -516,27 +538,27 @@ export function criarAdicional({ nome, preco, custo, disponivel }) {
 
 export function atualizarAdicional(id, { nome, preco, custo, disponivel }) {
   const result = db.prepare(
-    "UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ? WHERE id = ?"
+    "UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ? WHERE id = ? AND deleted_at IS NULL"
   ).run(nome, preco, custo || 0, disponivel ? 1 : 0, id);
   if (result.changes === 0) return null;
   return buscarAdicional(id);
 }
 
 export function excluirAdicional(id) {
-  return db.prepare("DELETE FROM adicionais WHERE id = ?").run(id).changes > 0;
+  return db.prepare("UPDATE adicionais SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
 }
 
 // ─── PRODUTOS ───────────────────────────────────────────────────────────────
 
 export function listarProdutos(apenasDisponiveis = false) {
   if (apenasDisponiveis) {
-    return db.prepare("SELECT * FROM produtos WHERE disponivel = 1 ORDER BY categoria, nome").all();
+    return db.prepare("SELECT * FROM produtos WHERE disponivel = 1 AND deleted_at IS NULL ORDER BY categoria, nome").all();
   }
-  return db.prepare("SELECT * FROM produtos ORDER BY categoria, nome").all();
+  return db.prepare("SELECT * FROM produtos WHERE deleted_at IS NULL ORDER BY categoria, nome").all();
 }
 
 export function buscarProduto(id) {
-  return db.prepare("SELECT * FROM produtos WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM produtos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel }) {
@@ -549,14 +571,14 @@ export function criarProduto({ nome, descricao, preco, custo, categoria, imagem,
 
 export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel }) {
   const result = db.prepare(
-    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ? WHERE id = ?"
+    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ? WHERE id = ? AND deleted_at IS NULL"
   ).run(nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0, id);
   if (result.changes === 0) return null;
   return buscarProduto(id);
 }
 
 export function excluirProduto(id) {
-  return db.prepare("DELETE FROM produtos WHERE id = ?").run(id).changes > 0;
+  return db.prepare("UPDATE produtos SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
 }
 
 // ─── PRODUTO IMAGENS ──────────────────────────────────────────────────────────
@@ -609,9 +631,9 @@ export function excluirEndereco(id) {
 
 export function listarPedidos(clienteId = null) {
   if (clienteId) {
-    return db.prepare("SELECT * FROM pedidos WHERE cliente_id = ? ORDER BY created_at DESC").all(clienteId);
+    return db.prepare("SELECT * FROM pedidos WHERE cliente_id = ? AND deleted_at IS NULL ORDER BY created_at DESC").all(clienteId);
   }
-  return db.prepare("SELECT * FROM pedidos ORDER BY created_at DESC").all();
+  return db.prepare("SELECT * FROM pedidos WHERE deleted_at IS NULL ORDER BY created_at DESC").all();
 }
 
 // Busca pedidos pelo telefone do cliente (compara só os dígitos, ignora máscara/DDI 55)
@@ -624,12 +646,13 @@ export function listarPedidosPorTelefone(telefone) {
   return db.prepare(
     `SELECT * FROM pedidos
      WHERE REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(cliente_telefone, '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE ?
+       AND deleted_at IS NULL
      ORDER BY created_at DESC`
   ).all(`%${sufixo}%`);
 }
 
 export function buscarPedido(id) {
-  return db.prepare("SELECT * FROM pedidos WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM pedidos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function buscarItensPedido(pedidoId) {
@@ -640,7 +663,7 @@ export function buscarItensPedido(pedidoId) {
 }
 
 export function contarPedidosPendentes() {
-  const row = db.prepare("SELECT COUNT(*) as count FROM pedidos WHERE status = 'pendente'").get();
+  const row = db.prepare("SELECT COUNT(*) as count FROM pedidos WHERE status = 'pendente' AND deleted_at IS NULL").get();
   return row.count;
 }
 
@@ -689,28 +712,24 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
 }
 
 export function atualizarStatusPedido(id, status) {
-  const result = db.prepare("UPDATE pedidos SET status = ? WHERE id = ?").run(status, id);
+  const result = db.prepare("UPDATE pedidos SET status = ? WHERE id = ? AND deleted_at IS NULL").run(status, id);
   if (result.changes === 0) return null;
   return buscarPedido(id);
 }
 
 export function excluirPedido(id) {
-  const del = db.transaction(() => {
-    db.prepare("DELETE FROM pedido_itens WHERE pedido_id = ?").run(id);
-    const result = db.prepare("DELETE FROM pedidos WHERE id = ?").run(id);
-    return result.changes > 0;
-  });
-  return del();
+  // Soft delete — pedido_itens permanece junto e volta junto na restauração
+  return db.prepare("UPDATE pedidos SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
 }
 
 // ─── CUSTOS FIXOS ────────────────────────────────────────────────────────────
 
 export function listarCustosFixos() {
-  return db.prepare("SELECT * FROM custos_fixos ORDER BY categoria, nome").all();
+  return db.prepare("SELECT * FROM custos_fixos WHERE deleted_at IS NULL ORDER BY categoria, nome").all();
 }
 
 export function buscarCustoFixo(id) {
-  return db.prepare("SELECT * FROM custos_fixos WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM custos_fixos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function criarCustoFixo({ nome, valor, categoria, ativo }) {
@@ -723,22 +742,22 @@ export function criarCustoFixo({ nome, valor, categoria, ativo }) {
 
 export function atualizarCustoFixo(id, { nome, valor, categoria, ativo }) {
   const result = db.prepare(
-    "UPDATE custos_fixos SET nome = ?, valor = ?, categoria = ?, ativo = ? WHERE id = ?"
+    "UPDATE custos_fixos SET nome = ?, valor = ?, categoria = ?, ativo = ? WHERE id = ? AND deleted_at IS NULL"
   ).run(nome, valor || 0, categoria || "Outros", ativo ? 1 : 0, id);
   if (result.changes === 0) return null;
   return buscarCustoFixo(id);
 }
 
 export function excluirCustoFixo(id) {
-  // Remove lançamentos gerados por este custo fixo que ainda estão como previsto
-  db.prepare("DELETE FROM lancamentos WHERE custo_fixo_id = ? AND status = 'previsto'").run(id);
-  return db.prepare("DELETE FROM custos_fixos WHERE id = ?").run(id).changes > 0;
+  // Soft delete: também marca lançamentos previstos deste custo como deletados
+  db.prepare("UPDATE lancamentos SET deleted_at = datetime('now') WHERE custo_fixo_id = ? AND status = 'previsto' AND deleted_at IS NULL").run(id);
+  return db.prepare("UPDATE custos_fixos SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
 }
 
 // Gera lançamentos previsto para custos fixos ativos no mês informado (YYYY-MM)
 // Evita duplicatas: verifica se já existe lançamento do mesmo custo_fixo_id no mês
 export function gerarLancamentosCustosFixos(mes) {
-  const ativos = db.prepare("SELECT * FROM custos_fixos WHERE ativo = 1").all();
+  const ativos = db.prepare("SELECT * FROM custos_fixos WHERE ativo = 1 AND deleted_at IS NULL").all();
   const gerados = [];
   for (const cf of ativos) {
     // Verifica se já existe lançamento para este custo fixo neste mês
@@ -859,11 +878,11 @@ export function excluirEstoqueCategoria(id) {
 // ─── FORNECEDORES ─────────────────────────────────────────────────────────────
 
 export function listarFornecedores() {
-  return db.prepare("SELECT * FROM fornecedores ORDER BY nome").all();
+  return db.prepare("SELECT * FROM fornecedores WHERE deleted_at IS NULL ORDER BY nome").all();
 }
 
 export function buscarFornecedor(id) {
-  return db.prepare("SELECT * FROM fornecedores WHERE id = ?").get(id);
+  return db.prepare("SELECT * FROM fornecedores WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
 export function criarFornecedor({ nome, telefone, email, obs }) {
@@ -874,14 +893,14 @@ export function criarFornecedor({ nome, telefone, email, obs }) {
 }
 
 export function atualizarFornecedor(id, { nome, telefone, email, obs }) {
-  const r = db.prepare("UPDATE fornecedores SET nome=?, telefone=?, email=?, obs=? WHERE id=?")
+  const r = db.prepare("UPDATE fornecedores SET nome=?, telefone=?, email=?, obs=? WHERE id=? AND deleted_at IS NULL")
     .run(nome, telefone || "", email || "", obs || "", id);
   if (r.changes === 0) return null;
   return buscarFornecedor(id);
 }
 
 export function excluirFornecedor(id) {
-  return db.prepare("DELETE FROM fornecedores WHERE id = ?").run(id).changes > 0;
+  return db.prepare("UPDATE fornecedores SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
 }
 
 // ─── ESTOQUE ITENS ────────────────────────────────────────────────────────────
@@ -892,6 +911,7 @@ export function listarEstoqueItens() {
     FROM estoque_itens ei
     LEFT JOIN estoque_categorias ec ON ec.id = ei.categoria_id
     LEFT JOIN fornecedores f ON f.id = ei.fornecedor_id
+    WHERE ei.deleted_at IS NULL
     ORDER BY ei.nome
   `).all();
 }
@@ -902,12 +922,12 @@ export function buscarEstoqueItem(id) {
     FROM estoque_itens ei
     LEFT JOIN estoque_categorias ec ON ec.id = ei.categoria_id
     LEFT JOIN fornecedores f ON f.id = ei.fornecedor_id
-    WHERE ei.id = ?
+    WHERE ei.id = ? AND ei.deleted_at IS NULL
   `).get(id);
 }
 
 export function buscarEstoqueItemPorCodigo(codigo) {
-  return db.prepare("SELECT * FROM estoque_itens WHERE codigo = ?").get(codigo);
+  return db.prepare("SELECT * FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(codigo);
 }
 
 export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo }) {
@@ -923,7 +943,7 @@ export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, forneced
 export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo }) {
   const r = db.prepare(`
     UPDATE estoque_itens SET codigo=?, nome=?, unidade=?, categoria_id=?, fornecedor_id=?,
-    estoque_minimo=?, estoque_maximo=?, ativo=? WHERE id=?
+    estoque_minimo=?, estoque_maximo=?, ativo=? WHERE id=? AND deleted_at IS NULL
   `).run(codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
     estoque_minimo || 0, estoque_maximo || 0, ativo !== false ? 1 : 0, id);
   if (r.changes === 0) return null;
@@ -931,13 +951,11 @@ export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, 
 }
 
 export function excluirEstoqueItem(id) {
-  const del = db.transaction(() => {
-    db.prepare("DELETE FROM estoque_entradas WHERE item_id = ?").run(id);
-    db.prepare("DELETE FROM estoque_saidas WHERE item_id = ?").run(id);
-    db.prepare("DELETE FROM estoque_ajustes WHERE item_id = ?").run(id);
-    return db.prepare("DELETE FROM estoque_itens WHERE id = ?").run(id).changes > 0;
-  });
-  return del();
+  // Soft delete: codigo é UNIQUE, então renomeia o codigo p/ liberar p/ um novo item
+  const atual = db.prepare("SELECT codigo FROM estoque_itens WHERE id = ? AND deleted_at IS NULL").get(id);
+  if (!atual) return false;
+  const novoCodigo = `${atual.codigo}__del__${Date.now()}`;
+  return db.prepare("UPDATE estoque_itens SET codigo = ?, deleted_at = datetime('now') WHERE id = ?").run(novoCodigo, id).changes > 0;
 }
 
 // ─── ESTOQUE ENTRADAS ─────────────────────────────────────────────────────────
@@ -1093,7 +1111,7 @@ export function registrarAjuste({ item_id, saldo_novo, motivo, data, obs }) {
 // ─── ESTOQUE DASHBOARD ────────────────────────────────────────────────────────
 
 export function estoqueDashboard() {
-  const itens = db.prepare("SELECT * FROM estoque_itens WHERE ativo = 1").all();
+  const itens = db.prepare("SELECT * FROM estoque_itens WHERE ativo = 1 AND deleted_at IS NULL").all();
   const totalItens = itens.length;
   const estoqueValor = itens.reduce((s, i) => s + i.saldo_atual * i.custo_medio, 0);
   const itensBaixos = itens.filter(i => i.estoque_minimo > 0 && i.saldo_atual <= i.estoque_minimo);
@@ -1109,6 +1127,133 @@ export function estoqueDashboard() {
     ORDER BY es.created_at DESC LIMIT 10
   `).all();
   return { totalItens, estoqueValor, itensBaixos, itensSemEstoque, ultimasEntradas, ultimasSaidas };
+}
+
+// ─── LIXEIRA ─────────────────────────────────────────────────────────────────
+
+// Mapeia tipo → metadata da tabela. Cada entrada define como listar, restaurar
+// e excluir definitivamente, além de gerar um resumo legível pra UI.
+const LIXEIRA_TIPOS = {
+  lancamentos: {
+    label: "Lançamento financeiro",
+    listSql: "SELECT * FROM lancamentos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => `${r.tipo === "entrada" ? "+" : "−"} R$ ${Number(r.valor || 0).toFixed(2)} · ${r.descricao}`,
+    detalhe: (r) => `${r.cat} · ${r.data} · ${r.status}${r.obs ? ` · ${r.obs}` : ""}`,
+    restaurar: (id) => db.prepare("UPDATE lancamentos SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
+    hardDelete: (id) => db.prepare("DELETE FROM lancamentos WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  pedidos: {
+    label: "Pedido",
+    listSql: "SELECT * FROM pedidos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => `#${(r.id || "").slice(0, 6).toUpperCase()} · R$ ${Number(r.total || 0).toFixed(2)} · ${r.cliente_nome || "Cliente"}`,
+    detalhe: (r) => `${r.status} · ${r.tipo_entrega || r.tipo} · ${r.metodo_pagamento || "-"} · criado em ${(r.created_at || "").slice(0, 16)}`,
+    restaurar: (id) => db.prepare("UPDATE pedidos SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
+    hardDelete: (id) => {
+      const tx = db.transaction(() => {
+        db.prepare("DELETE FROM pedido_itens WHERE pedido_id = ?").run(id);
+        return db.prepare("DELETE FROM pedidos WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0;
+      });
+      return tx();
+    },
+  },
+  produtos: {
+    label: "Produto",
+    listSql: "SELECT * FROM produtos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => `${r.nome} · R$ ${Number(r.preco || 0).toFixed(2)}`,
+    detalhe: (r) => `${r.categoria || "(sem categoria)"} · custo R$ ${Number(r.custo || 0).toFixed(2)}`,
+    restaurar: (id) => db.prepare("UPDATE produtos SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
+    hardDelete: (id) => db.prepare("DELETE FROM produtos WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  categorias: {
+    label: "Categoria",
+    listSql: "SELECT * FROM categorias WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => limparSufixoDel(r.nome),
+    detalhe: (r) => r.permite_adicionais ? "permite adicionais" : "sem adicionais",
+    restaurar: (id) => {
+      const r = db.prepare("SELECT nome FROM categorias WHERE id = ? AND deleted_at IS NOT NULL").get(id);
+      if (!r) return false;
+      const nomeOriginal = limparSufixoDel(r.nome);
+      // Conflito: já existe categoria ativa com mesmo nome?
+      const conflito = db.prepare("SELECT 1 FROM categorias WHERE nome = ? AND deleted_at IS NULL").get(nomeOriginal);
+      if (conflito) throw new Error(`Já existe uma categoria ativa chamada "${nomeOriginal}". Renomeie a existente antes de restaurar.`);
+      return db.prepare("UPDATE categorias SET nome = ?, deleted_at = NULL WHERE id = ?").run(nomeOriginal, id).changes > 0;
+    },
+    hardDelete: (id) => db.prepare("DELETE FROM categorias WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  adicionais: {
+    label: "Adicional",
+    listSql: "SELECT * FROM adicionais WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => `${r.nome} · R$ ${Number(r.preco || 0).toFixed(2)}`,
+    detalhe: (r) => `custo R$ ${Number(r.custo || 0).toFixed(2)}`,
+    restaurar: (id) => db.prepare("UPDATE adicionais SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
+    hardDelete: (id) => db.prepare("DELETE FROM adicionais WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  custos_fixos: {
+    label: "Custo fixo",
+    listSql: "SELECT * FROM custos_fixos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => `${r.nome} · R$ ${Number(r.valor || 0).toFixed(2)}/mês`,
+    detalhe: (r) => `${r.categoria}${r.ativo ? "" : " · inativo"}`,
+    restaurar: (id) => db.prepare("UPDATE custos_fixos SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
+    hardDelete: (id) => db.prepare("DELETE FROM custos_fixos WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  estoque_itens: {
+    label: "Item de estoque",
+    listSql: "SELECT * FROM estoque_itens WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => `${limparSufixoDel(r.codigo)} · ${r.nome}`,
+    detalhe: (r) => `saldo ${r.saldo_atual} ${r.unidade}`,
+    restaurar: (id) => {
+      const r = db.prepare("SELECT codigo FROM estoque_itens WHERE id = ? AND deleted_at IS NOT NULL").get(id);
+      if (!r) return false;
+      const codigoOriginal = limparSufixoDel(r.codigo);
+      const conflito = db.prepare("SELECT 1 FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(codigoOriginal);
+      if (conflito) throw new Error(`Já existe um item de estoque com código "${codigoOriginal}". Renomeie o existente antes de restaurar.`);
+      return db.prepare("UPDATE estoque_itens SET codigo = ?, deleted_at = NULL WHERE id = ?").run(codigoOriginal, id).changes > 0;
+    },
+    hardDelete: (id) => db.prepare("DELETE FROM estoque_itens WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  fornecedores: {
+    label: "Fornecedor",
+    listSql: "SELECT * FROM fornecedores WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    resumo: (r) => r.nome,
+    detalhe: (r) => [r.telefone, r.email].filter(Boolean).join(" · ") || "-",
+    restaurar: (id) => db.prepare("UPDATE fornecedores SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
+    hardDelete: (id) => db.prepare("DELETE FROM fornecedores WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+};
+
+// Remove o sufixo "__del__{epoch}" gerado no soft-delete de campos UNIQUE
+function limparSufixoDel(valor) {
+  if (typeof valor !== "string") return valor;
+  return valor.replace(/__del__\d+$/, "");
+}
+
+export function listarLixeira() {
+  const result = {};
+  for (const [tipo, meta] of Object.entries(LIXEIRA_TIPOS)) {
+    const rows = db.prepare(meta.listSql).all();
+    result[tipo] = {
+      label: meta.label,
+      itens: rows.map(r => ({
+        id: r.id,
+        resumo: meta.resumo(r),
+        detalhe: meta.detalhe(r),
+        deleted_at: r.deleted_at,
+      })),
+    };
+  }
+  return result;
+}
+
+export function restaurarItemLixeira(tipo, id) {
+  const meta = LIXEIRA_TIPOS[tipo];
+  if (!meta) throw new Error(`Tipo desconhecido: ${tipo}`);
+  return meta.restaurar(id);
+}
+
+export function excluirDefinitivoLixeira(tipo, id) {
+  const meta = LIXEIRA_TIPOS[tipo];
+  if (!meta) throw new Error(`Tipo desconhecido: ${tipo}`);
+  return meta.hardDelete(id);
 }
 
 export default db;
