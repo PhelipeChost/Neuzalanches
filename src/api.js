@@ -186,6 +186,15 @@ export const api = {
     },
   },
 
+  // Promoções
+  promocoes: {
+    listar:   () => request("/promocoes"),                       // admin: todas
+    ativas:   () => request("/promocoes/ativas"),                // público: vigentes agora
+    criar:    (data) => request("/promocoes", { method: "POST", body: JSON.stringify(data) }),
+    atualizar:(id, data) => request(`/promocoes/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    excluir:  (id) => request(`/produtos/${id}`, { method: "DELETE" }),  // reaproveita
+  },
+
   // Lixeira
   lixeira: {
     listar: () => request("/lixeira"),

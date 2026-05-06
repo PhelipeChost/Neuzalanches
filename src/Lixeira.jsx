@@ -5,6 +5,7 @@ const ICONES = {
   lancamentos: "💰",
   pedidos: "🧾",
   produtos: "🍔",
+  promocoes: "🔥",
   categorias: "🏷️",
   adicionais: "➕",
   custos_fixos: "📅",

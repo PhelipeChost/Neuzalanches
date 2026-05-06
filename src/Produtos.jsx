@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
+import Promocoes from "./Promocoes";
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
@@ -496,6 +497,7 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
 export default function Produtos() {
+  const [subAba, setSubAba] = useState("produtos"); // "produtos" | "promocoes"
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -563,7 +565,10 @@ export default function Produtos() {
     }
   };
 
-  const filtrados = produtos.filter(p =>
+  // Não mostra promoções na aba de produtos — promoções vivem em sua própria sub-aba
+  const produtosSemPromo = produtos.filter(p => !p.eh_promocao);
+
+  const filtrados = produtosSemPromo.filter(p =>
     !busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.categoria.toLowerCase().includes(busca.toLowerCase())
   );
 
@@ -571,10 +576,47 @@ export default function Produtos() {
 
   return (
     <div className="anim">
+      {/* Sub-tabs internas: Produtos | Promoções */}
+      <div style={{ display: "flex", gap: 4, background: "#f5f5f4", padding: 4, borderRadius: 10, marginBottom: 18, width: "fit-content" }}>
+        <button
+          onClick={() => setSubAba("produtos")}
+          style={{
+            padding: "8px 18px", borderRadius: 8, border: "none",
+            background: subAba === "produtos" ? "#fff" : "transparent",
+            color: subAba === "produtos" ? "#1c1917" : "#78716c",
+            fontWeight: subAba === "produtos" ? 700 : 500,
+            fontSize: 13, fontFamily: "'DM Sans', sans-serif",
+            cursor: "pointer", boxShadow: subAba === "produtos" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            transition: "all 0.15s",
+          }}
+        >
+          🍔 Produtos
+        </button>
+        <button
+          onClick={() => setSubAba("promocoes")}
+          style={{
+            padding: "8px 18px", borderRadius: 8, border: "none",
+            background: subAba === "promocoes" ? "#fff" : "transparent",
+            color: subAba === "promocoes" ? "#D97706" : "#78716c",
+            fontWeight: subAba === "promocoes" ? 700 : 500,
+            fontSize: 13, fontFamily: "'DM Sans', sans-serif",
+            cursor: "pointer", boxShadow: subAba === "promocoes" ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            transition: "all 0.15s",
+          }}
+        >
+          🔥 Promoções
+        </button>
+      </div>
+
+      {/* Renderiza Promoções em sub-componente próprio */}
+      {subAba === "promocoes" && <Promocoes />}
+
+      {subAba === "produtos" && (
+      <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Produtos</div>
-          <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{produtos.length} produtos cadastrados</div>
+          <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{produtosSemPromo.length} produtos cadastrados</div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
           <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} style={{ flex: 1, minWidth: 0, width: "100%" }} />
@@ -636,6 +678,8 @@ export default function Produtos() {
       )}
 
       {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
+      </>
+      )}
     </div>
   );
 }

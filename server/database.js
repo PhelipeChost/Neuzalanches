@@ -325,6 +325,38 @@ for (const tabela of TABELAS_LIXEIRA) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${tabela}_deleted_at ON ${tabela}(deleted_at)`);
 }
 
+// ─── MIGRAÇÃO PROMOÇÕES — colunas extras em produtos ───────────────────────
+const PROMO_COLS = [
+  ["eh_promocao",       "INTEGER DEFAULT 0"],            // 1 = é promoção, 0 = produto normal
+  ["preco_de",          "REAL DEFAULT NULL"],            // preço original (riscado)
+  ["promo_data_inicio", "TEXT DEFAULT NULL"],            // YYYY-MM-DD
+  ["promo_data_fim",    "TEXT DEFAULT NULL"],            // YYYY-MM-DD
+  ["promo_dias_semana", "TEXT DEFAULT NULL"],            // JSON [0..6] (0=Dom)
+  ["promo_hora_inicio", "TEXT DEFAULT NULL"],            // HH:MM
+  ["promo_hora_fim",    "TEXT DEFAULT NULL"],            // HH:MM
+  ["promo_destaque",    "INTEGER DEFAULT 1"],            // aparece em "Destaques do dia"
+  ["promo_descricao",   "TEXT DEFAULT NULL"],            // descrição própria da promo (opcional, sobrescreve descricao base)
+];
+const colsProdutosAtuais = db.prepare("PRAGMA table_info(produtos)").all().map(c => c.name);
+for (const [col, def] of PROMO_COLS) {
+  if (!colsProdutosAtuais.includes(col)) {
+    db.exec(`ALTER TABLE produtos ADD COLUMN ${col} ${def}`);
+  }
+}
+db.exec(`CREATE INDEX IF NOT EXISTS idx_produtos_promocao ON produtos(eh_promocao)`);
+
+// Categoria reservada "Promoções" — todo produto com eh_promocao=1 fica nela
+const SEED_CAT_PROMO = "Promoções";
+{
+  const existe = db.prepare("SELECT 1 FROM categorias WHERE nome = ? AND deleted_at IS NULL").get(SEED_CAT_PROMO);
+  if (!existe) {
+    const id = randomBytes(6).toString("hex");
+    db.prepare(
+      "INSERT INTO categorias (id, nome, permite_adicionais, ordem) VALUES (?, ?, 0, -1)"
+    ).run(id, SEED_CAT_PROMO);
+  }
+}
+
 // ─── SEED CATEGORIAS PRÉ-DEFINIDAS ─────────────────────────────────────────
 const CATEGORIAS_SEED = [
   { nome: "Lanches", permite_adicionais: 1 },
@@ -579,6 +611,115 @@ export function atualizarProduto(id, { nome, descricao, preco, custo, categoria,
 
 export function excluirProduto(id) {
   return db.prepare("UPDATE produtos SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
+}
+
+// ─── PROMOÇÕES (produtos com eh_promocao = 1) ───────────────────────────────
+
+// Lista todas as promoções cadastradas (independente de vigência) — admin
+export function listarPromocoes() {
+  return db.prepare(
+    "SELECT * FROM produtos WHERE eh_promocao = 1 AND deleted_at IS NULL ORDER BY promo_data_fim DESC, nome ASC"
+  ).all();
+}
+
+// Lista somente promoções "ativas agora" — usadas no cardápio público
+// Vigência: data atual entre data_inicio e data_fim (inclusive),
+//           dia da semana atual em promo_dias_semana,
+//           hora atual entre hora_inicio e hora_fim (se definidos)
+export function listarPromocoesAtivas() {
+  const promos = db.prepare(
+    "SELECT * FROM produtos WHERE eh_promocao = 1 AND disponivel = 1 AND deleted_at IS NULL"
+  ).all();
+
+  // Hora atual em BRT (UTC-3)
+  const agora = new Date();
+  agora.setUTCHours(agora.getUTCHours() - 3);
+  const hojeIso = agora.toISOString().slice(0, 10);
+  const diaSemana = agora.getUTCDay(); // 0=Dom .. 6=Sáb (em BRT)
+  const horaAtual = agora.toISOString().slice(11, 16); // HH:MM
+
+  return promos.filter(p => {
+    if (p.promo_data_inicio && p.promo_data_inicio > hojeIso) return false;
+    if (p.promo_data_fim    && p.promo_data_fim    < hojeIso) return false;
+    if (p.promo_dias_semana) {
+      try {
+        const dias = JSON.parse(p.promo_dias_semana);
+        if (Array.isArray(dias) && dias.length > 0 && !dias.includes(diaSemana)) return false;
+      } catch {}
+    }
+    if (p.promo_hora_inicio && horaAtual < p.promo_hora_inicio) return false;
+    if (p.promo_hora_fim    && horaAtual > p.promo_hora_fim)    return false;
+    return true;
+  });
+}
+
+// Cria uma promoção. Recebe os campos de produto + os de promoção.
+// A categoria é fixada em "Promoções".
+export function criarPromocao(dados) {
+  const id = gerarId();
+  // Garante categoria "Promoções"
+  const cat = db.prepare("SELECT nome FROM categorias WHERE nome = 'Promoções' AND deleted_at IS NULL").get();
+  const categoriaPromo = cat ? cat.nome : "Promoções";
+
+  db.prepare(`
+    INSERT INTO produtos (
+      id, nome, descricao, preco, custo, categoria, imagem, disponivel,
+      eh_promocao, preco_de, promo_data_inicio, promo_data_fim,
+      promo_dias_semana, promo_hora_inicio, promo_hora_fim, promo_destaque, promo_descricao
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    dados.nome,
+    dados.descricao || "",
+    Number(dados.preco) || 0,
+    Number(dados.custo) || 0,
+    categoriaPromo,
+    dados.imagem || "",
+    dados.disponivel === false ? 0 : 1,
+    dados.preco_de != null ? Number(dados.preco_de) : null,
+    dados.promo_data_inicio || null,
+    dados.promo_data_fim || null,
+    dados.promo_dias_semana ? JSON.stringify(dados.promo_dias_semana) : null,
+    dados.promo_hora_inicio || null,
+    dados.promo_hora_fim || null,
+    dados.promo_destaque === false ? 0 : 1,
+    dados.promo_descricao || null,
+  );
+  return buscarProduto(id);
+}
+
+export function atualizarPromocao(id, dados) {
+  const atual = buscarProduto(id);
+  if (!atual || !atual.eh_promocao) return null;
+  const novo = (k, fallback) => dados[k] !== undefined ? dados[k] : fallback;
+
+  db.prepare(`
+    UPDATE produtos SET
+      nome = ?, descricao = ?, preco = ?, custo = ?, imagem = ?, disponivel = ?,
+      preco_de = ?, promo_data_inicio = ?, promo_data_fim = ?,
+      promo_dias_semana = ?, promo_hora_inicio = ?, promo_hora_fim = ?,
+      promo_destaque = ?, promo_descricao = ?
+    WHERE id = ? AND deleted_at IS NULL
+  `).run(
+    novo("nome", atual.nome),
+    novo("descricao", atual.descricao || ""),
+    Number(novo("preco", atual.preco)),
+    Number(novo("custo", atual.custo)),
+    novo("imagem", atual.imagem || ""),
+    novo("disponivel", atual.disponivel) ? 1 : 0,
+    dados.preco_de !== undefined ? (dados.preco_de != null ? Number(dados.preco_de) : null) : atual.preco_de,
+    dados.promo_data_inicio !== undefined ? (dados.promo_data_inicio || null) : atual.promo_data_inicio,
+    dados.promo_data_fim    !== undefined ? (dados.promo_data_fim    || null) : atual.promo_data_fim,
+    dados.promo_dias_semana !== undefined
+      ? (dados.promo_dias_semana ? JSON.stringify(dados.promo_dias_semana) : null)
+      : atual.promo_dias_semana,
+    dados.promo_hora_inicio !== undefined ? (dados.promo_hora_inicio || null) : atual.promo_hora_inicio,
+    dados.promo_hora_fim    !== undefined ? (dados.promo_hora_fim    || null) : atual.promo_hora_fim,
+    dados.promo_destaque !== undefined ? (dados.promo_destaque ? 1 : 0) : atual.promo_destaque,
+    dados.promo_descricao !== undefined ? (dados.promo_descricao || null) : atual.promo_descricao,
+    id,
+  );
+  return buscarProduto(id);
 }
 
 // ─── PRODUTO IMAGENS ──────────────────────────────────────────────────────────
@@ -1158,11 +1299,24 @@ const LIXEIRA_TIPOS = {
   },
   produtos: {
     label: "Produto",
-    listSql: "SELECT * FROM produtos WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
+    listSql: "SELECT * FROM produtos WHERE deleted_at IS NOT NULL AND eh_promocao = 0 ORDER BY deleted_at DESC",
     resumo: (r) => `${r.nome} · R$ ${Number(r.preco || 0).toFixed(2)}`,
     detalhe: (r) => `${r.categoria || "(sem categoria)"} · custo R$ ${Number(r.custo || 0).toFixed(2)}`,
     restaurar: (id) => db.prepare("UPDATE produtos SET deleted_at = NULL WHERE id = ?").run(id).changes > 0,
     hardDelete: (id) => db.prepare("DELETE FROM produtos WHERE id = ? AND deleted_at IS NOT NULL").run(id).changes > 0,
+  },
+  promocoes: {
+    label: "Promoção",
+    listSql: "SELECT * FROM produtos WHERE deleted_at IS NOT NULL AND eh_promocao = 1 ORDER BY deleted_at DESC",
+    resumo: (r) => `🔥 ${r.nome} · R$ ${Number(r.preco || 0).toFixed(2)}${r.preco_de ? ` (de R$ ${Number(r.preco_de).toFixed(2)})` : ""}`,
+    detalhe: (r) => {
+      const validade = (r.promo_data_inicio || r.promo_data_fim)
+        ? `${r.promo_data_inicio || "sempre"} → ${r.promo_data_fim || "sempre"}`
+        : "sem prazo";
+      return `Vigência: ${validade}`;
+    },
+    restaurar: (id) => db.prepare("UPDATE produtos SET deleted_at = NULL WHERE id = ? AND eh_promocao = 1").run(id).changes > 0,
+    hardDelete: (id) => db.prepare("DELETE FROM produtos WHERE id = ? AND deleted_at IS NOT NULL AND eh_promocao = 1").run(id).changes > 0,
   },
   categorias: {
     label: "Categoria",

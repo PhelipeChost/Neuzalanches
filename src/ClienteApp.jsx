@@ -544,6 +544,201 @@ function BannerFechado() {
   );
 }
 
+// ─── SEÇÃO DESTAQUES DO DIA (promoções) ─────────────────────────────────────
+function DestaquesSecao({ promos, onAdd, onVerDetalhes }) {
+  return (
+    <div style={{ marginBottom: 56, position: "relative" }}>
+      {/* Header com banner em gradiente quente */}
+      <div style={{
+        background: "linear-gradient(135deg, #FBBF24 0%, #F59E0B 50%, #DC2626 100%)",
+        borderRadius: 16, padding: "18px 22px",
+        boxShadow: "0 8px 24px rgba(220,38,38,0.25)",
+        marginBottom: 18,
+        position: "relative", overflow: "hidden",
+      }}>
+        {/* Brilho diagonal */}
+        <div style={{
+          position: "absolute", top: -50, right: -50, width: 220, height: 220,
+          background: "radial-gradient(circle, rgba(255,255,255,0.25) 0%, transparent 70%)",
+          pointerEvents: "none",
+        }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 14, position: "relative", zIndex: 1 }}>
+          <div style={{ fontSize: 38, animation: "wiggle 1.6s ease-in-out infinite" }}>🔥</div>
+          <div>
+            <div style={{
+              fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800,
+              color: "#fff", letterSpacing: "0.5px", lineHeight: 1.1,
+              textShadow: "0 2px 4px rgba(0,0,0,0.15)",
+            }}>
+              DESTAQUES DO DIA
+            </div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.92)", marginTop: 4, fontWeight: 600 }}>
+              Promoções e combos só hoje · Não perca!
+            </div>
+          </div>
+          <div style={{ marginLeft: "auto", background: "rgba(255,255,255,0.22)", color: "#fff",
+            padding: "5px 12px", borderRadius: 999, fontSize: 11, fontWeight: 800, letterSpacing: 0.5,
+            backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.3)" }}>
+            {promos.length} {promos.length === 1 ? "OFERTA" : "OFERTAS"}
+          </div>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes wiggle {
+          0%, 100% { transform: rotate(-6deg) scale(1); }
+          50%      { transform: rotate(6deg) scale(1.1); }
+        }
+        @keyframes shine {
+          0%   { transform: translateX(-100%) rotate(20deg); }
+          100% { transform: translateX(200%) rotate(20deg); }
+        }
+      `}</style>
+
+      <div className="nl-product-grid">
+        {promos.map(p => (
+          <CardPromocao key={p.id} p={p} onAdd={onAdd} onVerDetalhes={onVerDetalhes} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── CARD DE PROMOÇÃO ────────────────────────────────────────────────────────
+function CardPromocao({ p, onAdd, onVerDetalhes }) {
+  const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const desconto = p.preco_de && p.preco_de > p.preco
+    ? Math.round(((p.preco_de - p.preco) / p.preco_de) * 100)
+    : 0;
+
+  // Calcula badge de validade
+  const badgeValidade = (() => {
+    if (!p.promo_data_fim) return null;
+    const agora = new Date();
+    agora.setUTCHours(agora.getUTCHours() - 3);
+    const hoje = agora.toISOString().slice(0, 10);
+    if (p.promo_data_fim === hoje) return "⏰ SÓ HOJE";
+    const fim = new Date(p.promo_data_fim + "T23:59:59-03:00");
+    const diffDias = Math.ceil((fim - agora) / (1000 * 60 * 60 * 24));
+    if (diffDias <= 3 && diffDias > 0) return `⏰ ${diffDias} ${diffDias === 1 ? "DIA" : "DIAS"}`;
+    return null;
+  })();
+
+  return (
+    <div style={{
+      background: "#fff",
+      border: "2px solid #F59E0B",
+      borderRadius: 16,
+      overflow: "hidden",
+      cursor: "pointer",
+      position: "relative",
+      transition: "transform 0.2s, box-shadow 0.2s",
+      boxShadow: "0 4px 16px rgba(245,158,11,0.18), 0 1px 3px rgba(0,0,0,0.04)",
+      display: "flex", flexDirection: "column",
+    }}
+      onClick={() => onVerDetalhes(p)}
+      onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 12px 28px rgba(220,38,38,0.25), 0 4px 8px rgba(0,0,0,0.08)"; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(245,158,11,0.18), 0 1px 3px rgba(0,0,0,0.04)"; }}
+    >
+      {/* Faixa "PROMOÇÃO" no topo */}
+      <div style={{
+        background: "linear-gradient(90deg, #DC2626 0%, #F59E0B 100%)",
+        color: "#fff",
+        padding: "5px 12px",
+        fontSize: 10,
+        fontWeight: 800,
+        letterSpacing: "1.5px",
+        textAlign: "center",
+        textTransform: "uppercase",
+        position: "relative", overflow: "hidden",
+      }}>
+        <span style={{ position: "relative", zIndex: 1 }}>⭐ Promoção · Destaque do dia ⭐</span>
+        <div style={{
+          position: "absolute", inset: 0,
+          background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)",
+          width: "30%",
+          animation: "shine 3s infinite",
+        }} />
+      </div>
+
+      {/* Imagem com badges */}
+      <div style={{ position: "relative", aspectRatio: "16/10", background: "#fff5e0", overflow: "hidden" }}>
+        {p.imagem ? (
+          <img src={p.imagem} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64 }}>🍔</div>
+        )}
+        {desconto > 0 && (
+          <div style={{
+            position: "absolute", top: 12, right: 12,
+            background: "#DC2626", color: "#fff",
+            padding: "8px 14px", borderRadius: 999,
+            fontSize: 16, fontWeight: 800,
+            boxShadow: "0 4px 12px rgba(220,38,38,0.5)",
+            border: "2px solid #fff",
+            transform: "rotate(8deg)",
+          }}>
+            −{desconto}%
+          </div>
+        )}
+        {badgeValidade && (
+          <div style={{
+            position: "absolute", bottom: 12, left: 12,
+            background: "rgba(0,0,0,0.85)", color: "#FBBF24",
+            padding: "5px 11px", borderRadius: 6,
+            fontSize: 11, fontWeight: 800, letterSpacing: 0.5,
+            backdropFilter: "blur(8px)",
+          }}>
+            {badgeValidade}
+          </div>
+        )}
+      </div>
+
+      {/* Conteúdo */}
+      <div style={{ padding: "14px 16px", flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{
+          fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 800,
+          color: "#1c1917", lineHeight: 1.2, marginBottom: 6,
+        }}>{p.nome}</div>
+        {(p.promo_descricao || p.descricao) && (
+          <div style={{ fontSize: 12, color: "#6b5544", lineHeight: 1.4, marginBottom: 12 }}>
+            {p.promo_descricao || p.descricao}
+          </div>
+        )}
+
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: "auto", marginBottom: 12 }}>
+          {p.preco_de && (
+            <span style={{ fontSize: 13, color: "#a8a29e", textDecoration: "line-through", fontWeight: 600 }}>
+              {fmtBRL(p.preco_de)}
+            </span>
+          )}
+          <span style={{
+            fontFamily: "'Syne', sans-serif",
+            fontSize: 24, fontWeight: 800, color: "#DC2626", letterSpacing: "-0.5px",
+          }}>
+            {fmtBRL(p.preco)}
+          </span>
+        </div>
+
+        <button
+          onClick={(e) => { e.stopPropagation(); onAdd(p); }}
+          style={{
+            background: "linear-gradient(135deg, #F59E0B 0%, #DC2626 100%)",
+            color: "#fff", border: "none", borderRadius: 10,
+            padding: "11px 16px", fontSize: 14, fontWeight: 800,
+            cursor: "pointer", fontFamily: "'Nunito', sans-serif",
+            boxShadow: "0 4px 14px rgba(220,38,38,0.35)",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            letterSpacing: 0.3,
+          }}
+        >
+          🔥 Aproveitar oferta
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── CARD DE PRODUTO ──────────────────────────────────────────────────────────
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDetalhes, onAdd }) {
   const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.length > 0;
@@ -1169,6 +1364,7 @@ function MeusPedidosView({ ativo }) {
 export default function ClienteApp() {
   const [tab, setTab] = useState("catalogo");
   const [produtos, setProdutos] = useState([]);
+  const [promocoes, setPromocoes] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [adicionaisDisponiveis, setAdicionaisDisponiveis] = useState([]);
   const [carrinho, setCarrinho] = useState([]);
@@ -1211,14 +1407,17 @@ export default function ClienteApp() {
 
   const carregar = useCallback(async () => {
     try {
-      const [prods, cats, adds] = await Promise.all([
+      const [prods, cats, adds, promos] = await Promise.all([
         api.produtos.listar(),
         api.categorias.listar(),
         api.adicionais.listar(),
+        api.promocoes.ativas().catch(() => []),  // tolerante: se falhar, segue sem promos
       ]);
-      setProdutos(prods.filter(p => p.disponivel));
+      // Não mostra promoções na lista de produtos normal — elas têm seção própria
+      setProdutos(prods.filter(p => p.disponivel && !p.eh_promocao));
       setCategorias(cats);
       setAdicionaisDisponiveis(adds.filter(a => a.disponivel));
+      setPromocoes(promos);
     } catch (err) {
       showToast("Erro: " + err.message, "var(--hot)");
     } finally {
@@ -1671,6 +1870,15 @@ export default function ClienteApp() {
             ) : (
               /* Seções por categoria */
               <div>
+                {/* 🔥 DESTAQUES DO DIA — só promoções com promo_destaque = 1 */}
+                {promocoes.filter(p => p.promo_destaque !== 0).length > 0 && (
+                  <DestaquesSecao
+                    promos={promocoes.filter(p => p.promo_destaque !== 0)}
+                    onAdd={handleAddProduto}
+                    onVerDetalhes={abrirModalProduto}
+                  />
+                )}
+
                 {categoriasComProdutos.map(cat => (
                   <div
                     key={cat}

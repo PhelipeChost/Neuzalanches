@@ -15,6 +15,7 @@ import {
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, reordenarCategorias, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
+  listarPromocoes, listarPromocoesAtivas, criarPromocao, atualizarPromocao,
   listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
   listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
@@ -292,6 +293,51 @@ app.delete("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
   if (!excluirProduto(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
   res.json({ success: true });
 });
+
+// ─── PROMOÇÕES ─────────────────────────────────────────────────────────────
+
+// Pública — só promoções vigentes agora (cardápio cliente)
+app.get("/api/promocoes/ativas", (req, res) => {
+  res.json(listarPromocoesAtivas());
+});
+
+// Admin — todas as promoções (incluindo agendadas e expiradas)
+app.get("/api/promocoes", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarPromocoes());
+});
+
+app.post("/api/promocoes", authMiddleware, adminOnly, (req, res) => {
+  const b = req.body || {};
+  if (!b.nome || b.preco === undefined) {
+    return res.status(400).json({ error: "Nome e preço são obrigatórios" });
+  }
+  if (typeof b.preco !== "number" || b.preco < 0) {
+    return res.status(400).json({ error: "Preço inválido" });
+  }
+  if (b.preco_de !== undefined && b.preco_de !== null && (typeof b.preco_de !== "number" || b.preco_de < 0)) {
+    return res.status(400).json({ error: "Preço original inválido" });
+  }
+  if (b.promo_data_inicio && b.promo_data_fim && b.promo_data_inicio > b.promo_data_fim) {
+    return res.status(400).json({ error: "Data de início não pode ser após data de fim" });
+  }
+  res.status(201).json(criarPromocao(b));
+});
+
+app.put("/api/promocoes/:id", authMiddleware, adminOnly, (req, res) => {
+  const b = req.body || {};
+  if (b.preco !== undefined && (typeof b.preco !== "number" || b.preco < 0)) {
+    return res.status(400).json({ error: "Preço inválido" });
+  }
+  if (b.promo_data_inicio && b.promo_data_fim && b.promo_data_inicio > b.promo_data_fim) {
+    return res.status(400).json({ error: "Data de início não pode ser após data de fim" });
+  }
+  const p = atualizarPromocao(req.params.id, b);
+  if (!p) return res.status(404).json({ error: "Promoção não encontrada" });
+  res.json(p);
+});
+
+// Exclusão usa a mesma rota de produto (vai pra lixeira igual)
+// DELETE /api/produtos/:id já cobre
 
 // ─── PRODUTO IMAGENS ──────────────────────────────────────────────────────────
 
