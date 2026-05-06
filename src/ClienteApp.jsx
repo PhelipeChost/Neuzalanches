@@ -566,13 +566,18 @@ function DestaquesSecao({ promos, onAdd, onVerDetalhes }) {
           <div style={{ fontSize: 38, animation: "wiggle 1.6s ease-in-out infinite" }}>🔥</div>
           <div>
             <div style={{
-              fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800,
-              color: "#fff", letterSpacing: "0.5px", lineHeight: 1.1,
-              textShadow: "0 2px 4px rgba(0,0,0,0.15)",
+              fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+              fontSize: 24, fontWeight: 900,
+              color: "#fff", letterSpacing: "-0.3px", lineHeight: 1.05,
+              textShadow: "0 2px 6px rgba(0,0,0,0.2)",
             }}>
-              DESTAQUES DO DIA
+              Destaques do dia
             </div>
-            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.92)", marginTop: 4, fontWeight: 600 }}>
+            <div style={{
+              fontSize: 12, color: "rgba(255,255,255,0.95)",
+              marginTop: 4, fontWeight: 600,
+              fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+            }}>
               Promoções e combos só hoje · Não perca!
             </div>
           </div>
@@ -607,6 +612,11 @@ function DestaquesSecao({ promos, onAdd, onVerDetalhes }) {
 // ─── CARD DE PROMOÇÃO ────────────────────────────────────────────────────────
 function CardPromocao({ p, onAdd, onVerDetalhes }) {
   const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  // "Split pricing" — divide preço em [R$] [inteiro] [,centavos] pra dar destaque ao dígito grande
+  const splitPreco = (v) => {
+    const [int, dec] = Number(v || 0).toFixed(2).split(".");
+    return { int, dec };
+  };
   const desconto = p.preco_de && p.preco_de > p.preco
     ? Math.round(((p.preco_de - p.preco) / p.preco_de) * 100)
     : 0;
@@ -706,18 +716,42 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
           </div>
         )}
 
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: "auto", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 10, marginTop: "auto", marginBottom: 12, flexWrap: "wrap" }}>
           {p.preco_de && (
-            <span style={{ fontSize: 13, color: "#a8a29e", textDecoration: "line-through", fontWeight: 600 }}>
+            <span style={{
+              fontSize: 13, color: "#a8a29e", textDecoration: "line-through",
+              fontWeight: 600, marginBottom: 6,
+              fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+            }}>
               {fmtBRL(p.preco_de)}
             </span>
           )}
-          <span style={{
-            fontFamily: "'Syne', sans-serif",
-            fontSize: 24, fontWeight: 800, color: "#DC2626", letterSpacing: "-0.5px",
-          }}>
-            {fmtBRL(p.preco)}
-          </span>
+          {/* Preço promocional em formato "split" — varejo */}
+          {(() => {
+            const { int, dec } = splitPreco(p.preco);
+            return (
+              <div style={{
+                display: "flex", alignItems: "flex-start",
+                color: "#DC2626", fontWeight: 800, lineHeight: 1,
+                fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+              }}>
+                <span style={{ fontSize: 14, fontWeight: 800, marginTop: 4, marginRight: 2, letterSpacing: 0 }}>
+                  R$
+                </span>
+                <span style={{
+                  fontSize: 40, fontWeight: 900, letterSpacing: "-1.5px",
+                  lineHeight: 0.9,
+                }}>
+                  {int}
+                </span>
+                <span style={{
+                  fontSize: 16, fontWeight: 800, marginTop: 4, letterSpacing: 0,
+                }}>
+                  ,{dec}
+                </span>
+              </div>
+            );
+          })()}
         </div>
 
         <button
