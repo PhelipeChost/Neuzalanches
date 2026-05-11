@@ -1,47 +1,62 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "./api";
 
-const DIAS = [
-  { v: 0, l: "Dom" },
-  { v: 1, l: "Seg" },
-  { v: 2, l: "Ter" },
-  { v: 3, l: "Qua" },
-  { v: 4, l: "Qui" },
-  { v: 5, l: "Sex" },
-  { v: 6, l: "Sáb" },
-];
-
 const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+// Constrói datetime string YYYY-MM-DDTHH:MM a partir de data + hora separadas
+function buildDateTime(data, hora, padraoHora) {
+  if (!data) return null;
+  return `${data}T${hora || padraoHora}`;
+}
+
+// Vigência baseada em janela datetime contínua [inicio, fim]
+// inicio = data_inicio + hora_inicio (default 00:00)
+// fim    = data_fim    + hora_fim    (default 23:59)
 function vigenciaAgora(p) {
+  if (!p.disponivel) return "pausada";
+
   const agora = new Date();
   agora.setUTCHours(agora.getUTCHours() - 3);
-  const hoje = agora.toISOString().slice(0, 10);
-  const dia = agora.getUTCDay();
-  const hora = agora.toISOString().slice(11, 16);
+  const agoraIso = agora.toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM
 
-  if (p.promo_data_inicio && p.promo_data_inicio > hoje) return "agendada";
-  if (p.promo_data_fim && p.promo_data_fim < hoje) return "expirada";
-  if (p.promo_dias_semana) {
-    try {
-      const dias = JSON.parse(p.promo_dias_semana);
-      if (Array.isArray(dias) && dias.length > 0 && !dias.includes(dia)) return "fora_dia";
-    } catch {}
-  }
-  if (p.promo_hora_inicio && hora < p.promo_hora_inicio) return "fora_horario";
-  if (p.promo_hora_fim && hora > p.promo_hora_fim) return "fora_horario";
-  if (!p.disponivel) return "pausada";
+  const inicio = buildDateTime(p.promo_data_inicio, p.promo_hora_inicio, "00:00");
+  const fim    = buildDateTime(p.promo_data_fim,    p.promo_hora_fim,    "23:59");
+
+  if (inicio && agoraIso < inicio) return "agendada";
+  if (fim    && agoraIso > fim)    return "expirada";
   return "ativa";
 }
 
 const STATUS_VISUAL = {
-  ativa:        { cor: "#15803d", bg: "#f0fdf4", label: "🔥 ATIVA AGORA" },
-  agendada:     { cor: "#2563eb", bg: "#eff6ff", label: "📅 AGENDADA" },
-  expirada:     { cor: "#78716c", bg: "#f5f5f4", label: "⏱ EXPIRADA" },
-  fora_dia:     { cor: "#d97706", bg: "#fef3c7", label: "🗓 FORA DO DIA" },
-  fora_horario: { cor: "#d97706", bg: "#fef3c7", label: "🕐 FORA DO HORÁRIO" },
-  pausada:      { cor: "#dc2626", bg: "#fef2f2", label: "⏸ PAUSADA" },
+  ativa:    { cor: "#15803d", bg: "#f0fdf4", label: "🔥 ATIVA AGORA" },
+  agendada: { cor: "#2563eb", bg: "#eff6ff", label: "📅 AGENDADA" },
+  expirada: { cor: "#78716c", bg: "#f5f5f4", label: "⏱ EXPIRADA" },
+  pausada:  { cor: "#dc2626", bg: "#fef2f2", label: "⏸ PAUSADA" },
 };
+
+// "10/05 19:00" a partir de "2026-05-10" + "19:00"
+function fmtDataHora(data, hora) {
+  if (!data) return null;
+  const [y, m, d] = data.split("-");
+  return `${d}/${m}${hora ? " " + hora : ""}`;
+}
+
+// Calcula duração legível entre dois datetimes (start, end) já formatados ISO
+function duracaoLegivel(startIso, endIso) {
+  if (!startIso || !endIso) return null;
+  const a = new Date(startIso.includes("T") ? startIso : startIso + "T00:00");
+  const b = new Date(endIso.includes("T") ? endIso : endIso + "T23:59");
+  if (b <= a) return null;
+  const ms = b - a;
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const mm = min % 60;
+  if (h < 24) return mm ? `${h}h ${mm}min` : `${h}h`;
+  const d = Math.floor(h / 24);
+  const hh = h % 24;
+  return hh ? `${d}d ${hh}h` : (d === 1 ? "1 dia" : `${d} dias`);
+}
 
 function calcularDesconto(preco, precoDe) {
   if (!precoDe || precoDe <= preco) return 0;
@@ -62,18 +77,16 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
   const [horaFim, setHoraFim]         = useState(inicial?.promo_hora_fim || "");
   const [disponivel, setDisponivel]   = useState(inicial?.disponivel !== 0);
   const [destaque, setDestaque]       = useState(inicial?.promo_destaque !== 0);
-  const [diasSel, setDiasSel] = useState(() => {
-    if (!inicial?.promo_dias_semana) return [0, 1, 2, 3, 4, 5, 6];
-    try { return JSON.parse(inicial.promo_dias_semana); } catch { return [0, 1, 2, 3, 4, 5, 6]; }
-  });
   const [salvando, setSalvando]       = useState(false);
   const [erro, setErro]               = useState("");
 
   const desconto = calcularDesconto(Number(preco), Number(precoDe));
 
-  function toggleDia(d) {
-    setDiasSel(curr => curr.includes(d) ? curr.filter(x => x !== d) : [...curr, d].sort());
-  }
+  // Preview da duração ao vivo
+  const inicioIso = dataInicio ? `${dataInicio}T${horaInicio || "00:00"}` : null;
+  const fimIso    = dataFim    ? `${dataFim}T${horaFim || "23:59"}` : null;
+  const durStr    = duracaoLegivel(inicioIso, fimIso);
+  const janelaInvalida = inicioIso && fimIso && fimIso <= inicioIso;
 
   async function handleSalvar(e) {
     e.preventDefault();
@@ -81,13 +94,13 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
     if (!nome.trim()) return setErro("Nome é obrigatório");
     if (!preco || Number(preco) <= 0) return setErro("Preço promocional é obrigatório");
     if (precoDe && Number(precoDe) <= Number(preco)) return setErro("'De' precisa ser maior que 'Por'");
-    if (dataInicio && dataFim && dataInicio > dataFim) return setErro("Data de início depois da data de fim");
+    if (janelaInvalida) return setErro("Data/hora de fim precisa ser depois da de início");
 
     setSalvando(true);
     try {
       const dados = {
         nome: nome.trim(),
-        descricao: "", // descrição base fica vazia, usamos promo_descricao
+        descricao: "",
         promo_descricao: descricao.trim() || null,
         preco: Number(preco),
         preco_de: precoDe ? Number(precoDe) : null,
@@ -99,7 +112,7 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
         promo_data_fim: dataFim || null,
         promo_hora_inicio: horaInicio || null,
         promo_hora_fim: horaFim || null,
-        promo_dias_semana: diasSel.length === 7 ? null : diasSel,
+        promo_dias_semana: null, // não usado mais (substituído por datetime contínuo)
       };
       await onSalvar(dados);
     } catch (err) {
@@ -195,54 +208,57 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
         </div>
       </div>
 
-      {/* Período */}
+      {/* Período da promoção — datetime contínuo (início → fim) */}
       <div>
-        <label style={{ ...lbl, fontSize: 13, fontWeight: 700, color: "#1c1917" }}>📅 Período de validade</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div>
-            <div style={{ fontSize: 11, color: "#78716c", marginBottom: 3 }}>Início</div>
-            <input style={inp} type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} />
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: "#78716c", marginBottom: 3 }}>Fim</div>
-            <input style={inp} type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} />
-          </div>
-        </div>
-        <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
-          Deixe em branco pra promoção sem prazo
-        </div>
-      </div>
+        <label style={{ ...lbl, fontSize: 13, fontWeight: 700, color: "#1c1917", textTransform: "none", letterSpacing: 0 }}>
+          📅 Período da promoção
+        </label>
+        <div style={{ background: "#fafaf9", padding: 14, borderRadius: 10, border: "1px solid #e7e5e4" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            {/* INÍCIO */}
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#22C55E" }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#15803d", textTransform: "uppercase", letterSpacing: 0.6 }}>Início</span>
+              </div>
+              <input style={{ ...inp, marginBottom: 6 }} type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} />
+              <input style={inp} type="time" value={horaInicio} onChange={e => setHoraInicio(e.target.value)} placeholder="00:00" />
+              <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 4 }}>Padrão: 00:00 se em branco</div>
+            </div>
 
-      {/* Dias da semana */}
-      <div>
-        <label style={lbl}>Dias da semana ({diasSel.length}/7)</label>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-          {DIAS.map(d => (
-            <button key={d.v} type="button" onClick={() => toggleDia(d.v)}
-              style={{
-                padding: "8px 14px", borderRadius: 8,
-                border: diasSel.includes(d.v) ? "1.5px solid #F38C24" : "1.5px solid #e7e5e4",
-                background: diasSel.includes(d.v) ? "#FFF8F0" : "#fff",
-                color: diasSel.includes(d.v) ? "#92400E" : "#78716c",
-                fontSize: 12, fontWeight: 700, cursor: "pointer",
-                fontFamily: "inherit",
-              }}>
-              {d.l}
-            </button>
-          ))}
-          <button type="button" onClick={() => setDiasSel([0,1,2,3,4,5,6])}
-            style={{ marginLeft: "auto", padding: "8px 12px", border: "1px dashed #e7e5e4", borderRadius: 8, background: "transparent", color: "#78716c", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>
-            Todos
-          </button>
-        </div>
-      </div>
+            {/* FIM */}
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#DC2626" }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", textTransform: "uppercase", letterSpacing: 0.6 }}>Fim</span>
+              </div>
+              <input style={{ ...inp, marginBottom: 6 }} type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} />
+              <input style={inp} type="time" value={horaFim} onChange={e => setHoraFim(e.target.value)} placeholder="23:59" />
+              <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 4 }}>Padrão: 23:59 se em branco</div>
+            </div>
+          </div>
 
-      {/* Horário */}
-      <div>
-        <label style={lbl}>🕐 Horário do dia (opcional, ex: happy hour)</label>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <input style={inp} type="time" value={horaInicio} onChange={e => setHoraInicio(e.target.value)} placeholder="--:--" />
-          <input style={inp} type="time" value={horaFim} onChange={e => setHoraFim(e.target.value)} placeholder="--:--" />
+          {/* Preview da duração / aviso */}
+          {durStr && !janelaInvalida && (
+            <div style={{ marginTop: 12, padding: "8px 12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 12, color: "#15803d", display: "flex", alignItems: "center", gap: 6 }}>
+              ⏱ <b>Duração:</b> {durStr}
+              {inicioIso && fimIso && (
+                <span style={{ color: "#78716c", fontWeight: 500 }}>
+                  &nbsp;· {fmtDataHora(dataInicio, horaInicio || "00:00")} → {fmtDataHora(dataFim, horaFim || "23:59")}
+                </span>
+              )}
+            </div>
+          )}
+          {janelaInvalida && (
+            <div style={{ marginTop: 12, padding: "8px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: 12, color: "#b91c1c" }}>
+              ⚠ A data/hora de fim precisa ser depois da de início.
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 8, lineHeight: 1.5 }}>
+            💡 Atravessa a meia-noite? Sem problema: Ex. <b>10/05 às 19:00 → 11/05 às 01:00</b> dura 6h.<br />
+            Deixe em branco pra promoção sem prazo.
+          </div>
         </div>
       </div>
 
@@ -306,7 +322,7 @@ export default function Promocoes() {
   useEffect(() => { carregar(); }, [carregar]);
 
   async function salvar(dados) {
-    if (editando) {
+    if (editando?.id) {
       const upd = await api.promocoes.atualizar(editando.id, dados);
       setPromocoes(ps => ps.map(p => p.id === editando.id ? upd : p));
       showToast("Promoção atualizada!");
@@ -327,6 +343,18 @@ export default function Promocoes() {
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
     }
+  }
+
+  // Duplica: abre o modal de cadastro pré-preenchido com os dados (menos id e datas)
+  function duplicar(p) {
+    setEditando({
+      ...p,
+      id: undefined,             // força criar novo
+      nome: `${p.nome} (cópia)`,
+      promo_data_inicio: "",     // limpa datas — admin define novas
+      promo_data_fim: "",
+    });
+    setModal(true);
   }
 
   const com_status = promocoes.map(p => ({ ...p, _status: vigenciaAgora(p) }));
@@ -405,14 +433,15 @@ export default function Promocoes() {
           {filtradas.map(p => {
             const sv = STATUS_VISUAL[p._status] || STATUS_VISUAL.expirada;
             const desconto = calcularDesconto(p.preco, p.preco_de);
-            const dias = (() => {
-              if (!p.promo_dias_semana) return "Todos os dias";
-              try {
-                const arr = JSON.parse(p.promo_dias_semana);
-                if (arr.length === 7) return "Todos os dias";
-                return arr.map(d => DIAS[d]?.l).join(" · ");
-              } catch { return "Todos os dias"; }
+            const periodoStr = (() => {
+              if (!p.promo_data_inicio && !p.promo_data_fim) return "Sem prazo";
+              const ini = p.promo_data_inicio ? fmtDataHora(p.promo_data_inicio, p.promo_hora_inicio || "00:00") : "sempre";
+              const fim = p.promo_data_fim    ? fmtDataHora(p.promo_data_fim,    p.promo_hora_fim    || "23:59") : "sempre";
+              return `${ini} → ${fim}`;
             })();
+            const inicioIso = p.promo_data_inicio ? `${p.promo_data_inicio}T${p.promo_hora_inicio || "00:00"}` : null;
+            const fimIso    = p.promo_data_fim    ? `${p.promo_data_fim}T${p.promo_hora_fim    || "23:59"}` : null;
+            const dur = duracaoLegivel(inicioIso, fimIso);
             return (
               <div key={p.id} className="card" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
                 {/* Imagem com badges sobrepostos */}
@@ -453,29 +482,28 @@ export default function Promocoes() {
 
                   <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px", fontSize: 11, color: "#57534e", marginBottom: 12 }}>
                     <span style={{ color: "#a8a29e" }}>📅</span>
-                    <span>
-                      {p.promo_data_inicio || p.promo_data_fim ? (
-                        <>
-                          {p.promo_data_inicio || "sempre"} → {p.promo_data_fim || "sempre"}
-                        </>
-                      ) : "Sem prazo"}
-                    </span>
-                    <span style={{ color: "#a8a29e" }}>🗓</span>
-                    <span>{dias}</span>
-                    {(p.promo_hora_inicio || p.promo_hora_fim) && (
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{periodoStr}</span>
+                    {dur && (
                       <>
-                        <span style={{ color: "#a8a29e" }}>🕐</span>
-                        <span>{p.promo_hora_inicio || "00:00"} às {p.promo_hora_fim || "23:59"}</span>
+                        <span style={{ color: "#a8a29e" }}>⏱</span>
+                        <span><b>{dur}</b> de duração</span>
                       </>
                     )}
                   </div>
 
                   <div style={{ display: "flex", gap: 6, marginTop: "auto" }}>
                     <button onClick={() => { setEditando(p); setModal(true); }}
+                      title="Editar"
                       style={{ flex: 1, padding: "8px 12px", border: "1px solid #e7e5e4", borderRadius: 8, background: "#fff", color: "#1c1917", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                       ✏ Editar
                     </button>
+                    <button onClick={() => duplicar(p)}
+                      title="Duplicar (para criar uma nova promoção igual em outra data)"
+                      style={{ padding: "8px 12px", border: "1px solid #e7e5e4", borderRadius: 8, background: "#fff", color: "#2563eb", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      📋
+                    </button>
                     <button onClick={() => setConfirmDel(p)}
+                      title="Excluir"
                       style={{ padding: "8px 12px", border: "1px solid #fecaca", borderRadius: 8, background: "#fff", color: "#dc2626", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                       🗑
                     </button>
@@ -495,7 +523,7 @@ export default function Promocoes() {
             style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 640, maxHeight: "90vh", overflow: "auto", padding: 24, boxShadow: "0 24px 64px rgba(0,0,0,0.25)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <h2 style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700, color: "#1c1917" }}>
-                {editando ? "Editar promoção" : "🔥 Nova promoção"}
+                {editando?.id ? "Editar promoção" : "🔥 Nova promoção"}
               </h2>
               <button onClick={() => { setModal(false); setEditando(null); }}
                 style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #e7e5e4", background: "#fff", cursor: "pointer", fontSize: 16, color: "#78716c" }}>

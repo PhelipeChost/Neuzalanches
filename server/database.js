@@ -623,32 +623,30 @@ export function listarPromocoes() {
 }
 
 // Lista somente promoções "ativas agora" — usadas no cardápio público
-// Vigência: data atual entre data_inicio e data_fim (inclusive),
-//           dia da semana atual em promo_dias_semana,
-//           hora atual entre hora_inicio e hora_fim (se definidos)
+// Vigência: janela datetime contínua [inicio, fim]
+//   inicio = promo_data_inicio + promo_hora_inicio (default 00:00)
+//   fim    = promo_data_fim    + promo_hora_fim    (default 23:59)
+// Isso modela corretamente promoções que atravessam meia-noite
+// (ex: começa Sex 19:00 → termina Sáb 01:00 = bloco contínuo de 6h).
 export function listarPromocoesAtivas() {
   const promos = db.prepare(
     "SELECT * FROM produtos WHERE eh_promocao = 1 AND disponivel = 1 AND deleted_at IS NULL"
   ).all();
 
-  // Hora atual em BRT (UTC-3)
+  // Datetime atual em BRT (UTC-3) — formato YYYY-MM-DDTHH:MM
   const agora = new Date();
   agora.setUTCHours(agora.getUTCHours() - 3);
-  const hojeIso = agora.toISOString().slice(0, 10);
-  const diaSemana = agora.getUTCDay(); // 0=Dom .. 6=Sáb (em BRT)
-  const horaAtual = agora.toISOString().slice(11, 16); // HH:MM
+  const agoraIso = agora.toISOString().slice(0, 16);
 
   return promos.filter(p => {
-    if (p.promo_data_inicio && p.promo_data_inicio > hojeIso) return false;
-    if (p.promo_data_fim    && p.promo_data_fim    < hojeIso) return false;
-    if (p.promo_dias_semana) {
-      try {
-        const dias = JSON.parse(p.promo_dias_semana);
-        if (Array.isArray(dias) && dias.length > 0 && !dias.includes(diaSemana)) return false;
-      } catch {}
-    }
-    if (p.promo_hora_inicio && horaAtual < p.promo_hora_inicio) return false;
-    if (p.promo_hora_fim    && horaAtual > p.promo_hora_fim)    return false;
+    const inicio = p.promo_data_inicio
+      ? `${p.promo_data_inicio}T${p.promo_hora_inicio || "00:00"}`
+      : null;
+    const fim = p.promo_data_fim
+      ? `${p.promo_data_fim}T${p.promo_hora_fim || "23:59"}`
+      : null;
+    if (inicio && agoraIso < inicio) return false;
+    if (fim    && agoraIso > fim)    return false;
     return true;
   });
 }
