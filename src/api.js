@@ -223,7 +223,7 @@ export const api = {
   cozinha: {
     fila: () => request("/cozinha/fila"),
     filaUnificada: () => request("/cozinha/fila-unificada"),
-    marcarPronto: (grupo_id) => request("/cozinha/marcar-pronto", { method: "POST", body: JSON.stringify({ grupo_id }) }),
+    atualizarStatus: (grupo_id, status) => request("/cozinha/atualizar-status", { method: "POST", body: JSON.stringify({ grupo_id, status }) }),
   },
   caixaStats: () => request("/caixa/stats"),
 

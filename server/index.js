@@ -1407,20 +1407,22 @@ app.get('/api/cozinha/fila-unificada', authMiddleware, (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.post('/api/cozinha/marcar-pronto', authMiddleware, (req, res) => {
-  const { grupo_id } = req.body;
+app.post('/api/cozinha/atualizar-status', authMiddleware, (req, res) => {
+  const { grupo_id, status } = req.body;
   if (!grupo_id) return res.status(400).json({ error: "grupo_id obrigatório" });
+  if (!status || !["preparando", "pronto"].includes(status)) return res.status(400).json({ error: "status deve ser 'preparando' ou 'pronto'" });
   try {
     if (grupo_id.startsWith("comanda_")) {
       const comandaId = grupo_id.replace("comanda_", "");
-      const itens = listarItensComanda(comandaId).filter(i => i.status === "pendente" || i.status === "preparando");
-      for (const item of itens) atualizarStatusItemComanda(item.id, "pronto");
-      res.json({ ok: true, tipo: "mesa", marcados: itens.length });
+      const filtro = status === "preparando" ? ["pendente"] : ["pendente", "preparando"];
+      const itens = listarItensComanda(comandaId).filter(i => filtro.includes(i.status));
+      for (const item of itens) atualizarStatusItemComanda(item.id, status);
+      res.json({ ok: true, tipo: "mesa", marcados: itens.length, status });
     } else if (grupo_id.startsWith("pedido_")) {
       const pedidoId = grupo_id.replace("pedido_", "");
-      const pedido = atualizarStatusPedido(pedidoId, "pronto");
+      const pedido = atualizarStatusPedido(pedidoId, status);
       if (!pedido) return res.status(404).json({ error: "Pedido não encontrado" });
-      res.json({ ok: true, tipo: "delivery", pedido_id: pedidoId });
+      res.json({ ok: true, tipo: "delivery", pedido_id: pedidoId, status });
     } else {
       res.status(400).json({ error: "grupo_id inválido" });
     }

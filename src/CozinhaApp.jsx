@@ -56,22 +56,26 @@ export default function CozinhaApp({ onNavegar }) {
     return () => clearInterval(iv);
   }, [carregar]);
 
-  const handleGrupoPronto = async (grupo) => {
+  const handleGrupoStatus = async (grupo, novoStatus) => {
     setMarcando(m => ({ ...m, [grupo.grupo_id]: true }));
     try {
-      await api.cozinha.marcarPronto(grupo.grupo_id);
-      showToast(`✓ ${grupo.label}${grupo.cliente_nome ? ` — ${grupo.cliente_nome}` : ""} pronto!`);
+      await api.cozinha.atualizarStatus(grupo.grupo_id, novoStatus);
+      const msg = novoStatus === "preparando"
+        ? `🔥 ${grupo.label}${grupo.cliente_nome ? ` — ${grupo.cliente_nome}` : ""} em preparo!`
+        : `✓ ${grupo.label}${grupo.cliente_nome ? ` — ${grupo.cliente_nome}` : ""} pronto!`;
+      showToast(msg);
       await carregar();
     } catch {} finally {
       setMarcando(m => ({ ...m, [grupo.grupo_id]: false }));
     }
   };
 
-  const handleItemPronto = async (itemId, nome) => {
+  const handleItemStatus = async (itemId, nome, novoStatus) => {
     setMarcando(m => ({ ...m, [itemId]: true }));
     try {
-      await api.comandas.itens.atualizarStatus(itemId, "pronto");
-      showToast(`✓ ${nome} pronto!`);
+      await api.comandas.itens.atualizarStatus(itemId, novoStatus);
+      const msg = novoStatus === "preparando" ? `🔥 ${nome} em preparo!` : `✓ ${nome} pronto!`;
+      showToast(msg);
       await carregar();
     } catch {} finally {
       setMarcando(m => ({ ...m, [itemId]: false }));
@@ -95,13 +99,19 @@ export default function CozinhaApp({ onNavegar }) {
         .cz-item { padding: 12px 18px; border-bottom: 1px solid #1F1F1F; display: flex; align-items: flex-start; gap: 12px; }
         .cz-item:last-child { border-bottom: none; }
         .cz-card-footer { padding: 12px 18px; border-top: 1px solid #2A2A2A; background: #1D1D1D; }
-        .cz-btn-pronto { background: #15803d; color: #fff; border: none; border-radius: 10px; padding: 12px 22px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; width: 100%; }
-        .cz-btn-pronto:hover { background: #166534; transform: scale(1.02); }
-        .cz-btn-pronto:active { transform: scale(0.98); }
-        .cz-btn-pronto:disabled { opacity: 0.5; cursor: wait; transform: none; }
-        .cz-btn-item { background: #15803d; color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; white-space: nowrap; }
-        .cz-btn-item:hover { background: #166534; }
+        .cz-btn-footer { color: #fff; border: none; border-radius: 10px; padding: 12px 22px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; width: 100%; }
+        .cz-btn-footer:hover { transform: scale(1.02); }
+        .cz-btn-footer:active { transform: scale(0.98); }
+        .cz-btn-footer:disabled { opacity: 0.5; cursor: wait; transform: none; }
+        .cz-btn-preparar { background: #B45309; }
+        .cz-btn-preparar:hover { background: #92400E; }
+        .cz-btn-pronto { background: #15803d; }
+        .cz-btn-pronto:hover { background: #166534; }
+        .cz-btn-item { color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; white-space: nowrap; }
         .cz-btn-item:disabled { opacity: 0.5; cursor: wait; }
+        .cz-card.preparando { border-color: #B4530955; background: #1C1708; }
+        .cz-card.preparando .cz-card-head { background: #2A1A0A; }
+        .cz-card.preparando .cz-card-footer { background: #231A08; }
         .cz-badge { display: inline-flex; align-items: center; justify-content: center; padding: 2px 10px; border-radius: 8px; font-size: 11px; font-weight: 700; }
         .cz-toast { position: fixed; bottom: 28px; right: 28px; background: #15803d; color: #fff; padding: 14px 24px; border-radius: 12px; font-size: 15px; font-weight: 700; z-index: 200; animation: cz-fi 0.3s ease; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
         @keyframes cz-fi { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -152,8 +162,9 @@ export default function CozinhaApp({ onNavegar }) {
           {grupos.map(grupo => {
             const cfg = TIPO_CFG[grupo.tipo] || TIPO_CFG.mesa;
             const isMesa = grupo.tipo === "mesa";
+            const estaPreparando = grupo.status_grupo === "preparando";
             return (
-              <div key={grupo.grupo_id} className="cz-card" style={{ borderColor: `${cfg.color}33` }}>
+              <div key={grupo.grupo_id} className={`cz-card${estaPreparando ? " preparando" : ""}`} style={{ borderColor: estaPreparando ? "#B4530955" : `${cfg.color}33` }}>
                 <div className="cz-card-head">
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
                     <span style={{ fontSize: 20 }}>{cfg.icon}</span>
@@ -165,6 +176,9 @@ export default function CozinhaApp({ onNavegar }) {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                    {estaPreparando && (
+                      <span className="cz-badge cz-pulse" style={{ background: "#422006", color: "#F59E0B" }}>🔥 Preparando</span>
+                    )}
                     <span className="cz-badge" style={{ background: cfg.bg, color: cfg.color }}>
                       {grupo.itens.length} {grupo.itens.length === 1 ? "item" : "itens"}
                     </span>
@@ -179,35 +193,42 @@ export default function CozinhaApp({ onNavegar }) {
                   </div>
                 </div>
 
-                {grupo.itens.map((item, idx) => (
-                  <div key={item.id || idx} className="cz-item">
-                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800, color: cfg.color, minWidth: 28 }}>
-                      {item.quantidade > 1 ? `${item.quantidade}×` : ""}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 15, fontWeight: 700 }}>{item.produto_nome}</div>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
-                        <span style={{ fontSize: 11, color: "#666", fontVariantNumeric: "tabular-nums" }}>⏱ {fmtHora(item.created_at)} · {tempoDesde(item.created_at)}</span>
-                        {item.origem === "qr" && (
-                          <span className="cz-badge" style={{ background: "#1E1B4B", color: "#818CF8", fontSize: 10 }}>📱 QR</span>
-                        )}
-                        {item.origem === "online" && (
-                          <span className="cz-badge" style={{ background: "#172554", color: "#60A5FA", fontSize: 10 }}>🌐 Online</span>
+                {grupo.itens.map((item, idx) => {
+                  const itemPreparando = item.status === "preparando";
+                  const proximoStatus = itemPreparando ? "pronto" : "preparando";
+                  return (
+                    <div key={item.id || idx} className="cz-item">
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800, color: cfg.color, minWidth: 28 }}>
+                        {item.quantidade > 1 ? `${item.quantidade}×` : ""}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 15, fontWeight: 700 }}>{item.produto_nome}</div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+                          <span style={{ fontSize: 11, color: "#666", fontVariantNumeric: "tabular-nums" }}>⏱ {fmtHora(item.created_at)} · {tempoDesde(item.created_at)}</span>
+                          {itemPreparando && (
+                            <span className="cz-badge cz-pulse" style={{ background: "#422006", color: "#F59E0B", fontSize: 10 }}>🔥 Preparando</span>
+                          )}
+                          {item.origem === "qr" && (
+                            <span className="cz-badge" style={{ background: "#1E1B4B", color: "#818CF8", fontSize: 10 }}>📱 QR</span>
+                          )}
+                          {item.origem === "online" && (
+                            <span className="cz-badge" style={{ background: "#172554", color: "#60A5FA", fontSize: 10 }}>🌐 Online</span>
+                          )}
+                        </div>
+                        {item.obs && (
+                          <div style={{ marginTop: 6, fontSize: 12, color: "#F59E0B", background: "#2A1A0A", padding: "5px 10px", borderRadius: 6, fontWeight: 600 }}>
+                            📝 {item.obs}
+                          </div>
                         )}
                       </div>
-                      {item.obs && (
-                        <div style={{ marginTop: 6, fontSize: 12, color: "#F59E0B", background: "#2A1A0A", padding: "5px 10px", borderRadius: 6, fontWeight: 600 }}>
-                          📝 {item.obs}
-                        </div>
+                      {isMesa && (
+                        <button className="cz-btn-item" style={{ background: itemPreparando ? "#15803d" : "#B45309" }} disabled={!!marcando[item.id]} onClick={() => handleItemStatus(item.id, item.produto_nome, proximoStatus)}>
+                          {marcando[item.id] ? "..." : itemPreparando ? "✓ Pronto" : "🔥 Preparar"}
+                        </button>
                       )}
                     </div>
-                    {isMesa && (
-                      <button className="cz-btn-item" disabled={!!marcando[item.id]} onClick={() => handleItemPronto(item.id, item.produto_nome)}>
-                        {marcando[item.id] ? "..." : "✓ Pronto"}
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
 
                 {grupo.obs && (
                   <div style={{ padding: "10px 18px", borderTop: "1px solid #222", fontSize: 13, color: "#F59E0B", fontWeight: 600 }}>
@@ -216,10 +237,17 @@ export default function CozinhaApp({ onNavegar }) {
                 )}
 
                 <div className="cz-card-footer">
-                  <button className="cz-btn-pronto" disabled={!!marcando[grupo.grupo_id]}
-                    onClick={() => handleGrupoPronto(grupo)}>
-                    {marcando[grupo.grupo_id] ? "Marcando..." : `✓ Tudo pronto — ${grupo.label}`}
-                  </button>
+                  {estaPreparando ? (
+                    <button className="cz-btn-footer cz-btn-pronto" disabled={!!marcando[grupo.grupo_id]}
+                      onClick={() => handleGrupoStatus(grupo, "pronto")}>
+                      {marcando[grupo.grupo_id] ? "Marcando..." : `✓ Tudo pronto — ${grupo.label}`}
+                    </button>
+                  ) : (
+                    <button className="cz-btn-footer cz-btn-preparar" disabled={!!marcando[grupo.grupo_id]}
+                      onClick={() => handleGrupoStatus(grupo, "preparando")}>
+                      {marcando[grupo.grupo_id] ? "Marcando..." : `🔥 Preparar — ${grupo.label}`}
+                    </button>
+                  )}
                 </div>
               </div>
             );

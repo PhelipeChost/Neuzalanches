@@ -1679,6 +1679,10 @@ export function listarFilaCozinhaUnificada() {
       created_at: item.created_at,
     });
   }
+  for (const g of Object.values(porComanda)) {
+    const todosPreparando = g.itens.every(i => i.status === "preparando");
+    g.status_grupo = todosPreparando ? "preparando" : "pendente";
+  }
   grupos.push(...Object.values(porComanda));
 
   // Pedidos delivery/retirada
@@ -1693,6 +1697,7 @@ export function listarFilaCozinhaUnificada() {
       label: p.tipo_entrega === "retirada" ? "Retirada" : "Delivery",
       cliente_nome: p.cliente_nome,
       status: p.status,
+      status_grupo: p.status === "preparando" ? "preparando" : "pendente",
       obs: p.obs,
       created_at: p.created_at,
       pedido_id: p.id,
