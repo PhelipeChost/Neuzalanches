@@ -9,6 +9,7 @@ import CustosFixos from "./CustosFixos";
 import Estoque from "./Estoque";
 import Lixeira from "./Lixeira";
 import FrenteCaixa from "./FrenteCaixa";
+import CozinhaApp from "./CozinhaApp";
 import MesaApp from "./MesaApp";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
@@ -558,6 +559,11 @@ export default function App() {
     );
   }
 
+  // ─── SETOR: Cozinha ──────────────────────────────────────────────────────
+  if (setor === "cozinha") {
+    return <CozinhaApp onVoltar={() => setSetor(null)} />;
+  }
+
   // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
   if (setor === "caixa") {
     return <FrenteCaixa onVoltar={(destino) => {
@@ -595,6 +601,11 @@ export default function App() {
                   {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
                 </div>
               )}
+            </div>
+            <div className="hub-card" onClick={() => setSetor("cozinha")}>
+              <div style={{ width: 72, height: 72, borderRadius: 18, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>🔥</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Cozinha</div>
+              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5 }}>Fila de preparo com itens pendentes e botão de pronto</div>
             </div>
             <div className="hub-card" onClick={() => setSetor("caixa")}>
               <div style={{ width: 72, height: 72, borderRadius: 18, background: "linear-gradient(135deg, #D97706 0%, #B45309 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>🍽️</div>
