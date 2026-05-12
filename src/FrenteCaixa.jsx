@@ -18,7 +18,7 @@ const tempoDesde = (iso) => {
   return `${h}h ${m}min`;
 };
 
-export default function FrenteCaixa({ onVoltar }) {
+export default function FrenteCaixa({ onNavegar }) {
   const [tema, setTema] = useState(() => localStorage.getItem("caixa-tema") || "light");
   const [mesas, setMesas] = useState([]);
   const [mesaSel, setMesaSel] = useState(null);
@@ -365,8 +365,9 @@ export default function FrenteCaixa({ onVoltar }) {
         <div style={{ width: 1, height: 26, background: "var(--border)" }} />
         <nav className="fc-nav-tabs">
           <button className="fc-nav-tab active" style={{ cursor: "default" }}>🍽️ Caixa</button>
-          <button className="fc-nav-tab" onClick={() => onVoltar("admin")}>📊 Admin</button>
-          <button className="fc-nav-tab" onClick={() => onVoltar("cardapio")}>📋 Cardápio</button>
+          <button className="fc-nav-tab" onClick={() => onNavegar("pedidos")}>📊 Pedidos</button>
+          <button className="fc-nav-tab" onClick={() => onNavegar("cozinha")}>🔥 Cozinha</button>
+          <button className="fc-nav-tab" onClick={() => onNavegar("cardapio")}>📋 Cardápio</button>
           <button className="fc-nav-tab" onClick={() => setModalQR(true)}>📱 QR Codes</button>
         </nav>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>

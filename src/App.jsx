@@ -559,18 +559,19 @@ export default function App() {
     );
   }
 
+  const navegar = (destino) => {
+    if (destino === "cardapio") window.location.href = "/";
+    else setSetor(destino === "pedidos" || destino === "cozinha" || destino === "caixa" ? destino : null);
+  };
+
   // ─── SETOR: Cozinha ──────────────────────────────────────────────────────
   if (setor === "cozinha") {
-    return <CozinhaApp onVoltar={() => setSetor(null)} />;
+    return <CozinhaApp onNavegar={navegar} />;
   }
 
   // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
   if (setor === "caixa") {
-    return <FrenteCaixa onVoltar={(destino) => {
-      if (destino === "admin") setSetor("pedidos");
-      else if (destino === "cardapio") { window.location.href = "/"; }
-      else setSetor(null);
-    }} />;
+    return <FrenteCaixa onNavegar={navegar} />;
   }
 
   // ─── HUB: Escolha do setor ──────────────────────────────────────────────
@@ -694,6 +695,13 @@ export default function App() {
         </div>
 
         <div style={{ flex: 1, minWidth: 0 }} />
+
+        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+          <button onClick={() => navegar("cozinha")} style={{ padding: "6px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c", whiteSpace: "nowrap" }}>🔥 Cozinha</button>
+          <button onClick={() => navegar("caixa")} style={{ padding: "6px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c", whiteSpace: "nowrap" }}>🍽️ Caixa</button>
+        </div>
+
+        <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
         <div className="header-user" style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
           <div style={{ fontSize: 12, color: "#78716c" }}>

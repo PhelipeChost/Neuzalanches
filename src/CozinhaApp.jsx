@@ -20,7 +20,7 @@ const TIPO_CFG = {
   delivery: { icon: "🛵", color: "#60A5FA", bg: "#172554" },
 };
 
-export default function CozinhaApp({ onVoltar }) {
+export default function CozinhaApp({ onNavegar }) {
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [clock, setClock] = useState("");
@@ -114,9 +114,11 @@ export default function CozinhaApp({ onVoltar }) {
       <audio ref={audioRef} src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2LlZeUi3xuY2Bwg5GdnZSIeGxlZXWGl6WinJCDdm1rcYKWpqqflot+c29xgJOipZ6Wh3pzdnqIl6OimJGHfHd3fYqYoZ+WjYR+eXyEj5qfm5WPiIJ+gIeSmZ2al5CLhYKEiZKZnJmVkIuGhYiNlJqcmZWQi4eGipCWmpuYlZCLiIiLkJWZmpiVkY2KiYyRlpiYlpKOi4qMkJWYmJaUkY6Li42RlZeXlZOQjouLjZGUl5aVk5CPjIyOkpWXlpSTkI6NjpCTlZWUk5GPjo2PkZSVlZSTkY+OjpCSlJWUk5KQj46PkZOUlJOSkZCPj5CSlJSUk5KRkI+QkZOUlJOTkpGQkJGTk5OTkpKRkJCRkpOTk5OSkpGRkZKTk5OTkpKSkZGSkpOTk5KSkpGRkpKTk5OTkpKSkZGSkpOTk5KSkpKRkpKTk5OTk5KSkpKSkpOTk5OTkpKSkpKSk5OTk5OTkpKSkpKSk5OTk5OTk5KSkpKSkpOTk5OTk5KSkpKS" preload="auto" />
 
       <header className="cz-topbar">
-        <button onClick={() => onVoltar()} style={{ background: "none", border: "1.5px solid #333", borderRadius: 10, padding: "8px 16px", color: "#aaa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
-          ← Voltar
-        </button>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => onNavegar(null)} style={{ background: "none", border: "1.5px solid #333", borderRadius: 10, padding: "8px 14px", color: "#aaa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>← Menu</button>
+          <button onClick={() => onNavegar("pedidos")} style={{ background: "none", border: "1.5px solid #333", borderRadius: 10, padding: "8px 14px", color: "#aaa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>📋 Pedidos</button>
+          <button onClick={() => onNavegar("caixa")} style={{ background: "none", border: "1.5px solid #333", borderRadius: 10, padding: "8px 14px", color: "#aaa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>🍽️ Caixa</button>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🔥</div>
           <div>
