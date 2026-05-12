@@ -571,7 +571,7 @@ export default function App() {
 
   // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
   if (setor === "caixa") {
-    return <FrenteCaixa onNavegar={navegar} />;
+    return <FrenteCaixa onNavegar={navegar} nomeUsuario={usuario?.nome} />;
   }
 
   // ─── HUB: Escolha do setor ──────────────────────────────────────────────
@@ -696,17 +696,13 @@ export default function App() {
 
         <div style={{ flex: 1, minWidth: 0 }} />
 
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <button onClick={() => navegar("cozinha")} style={{ padding: "6px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c", whiteSpace: "nowrap" }}>🔥 Cozinha</button>
-          <button onClick={() => navegar("caixa")} style={{ padding: "6px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c", whiteSpace: "nowrap" }}>🍽️ Caixa</button>
-        </div>
-
-        <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
-
         <div className="header-user" style={{ display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap" }}>
           <div style={{ fontSize: 12, color: "#78716c" }}>
             {usuario.nome} <span style={{ background: "#f0fdf4", color: "#15803d", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 600, marginLeft: 4 }}>ADMIN</span>
           </div>
+          <button onClick={() => navegar(null)} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+            ← Início
+          </button>
           <button className="logout-btn" onClick={handleLogout} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
             Sair
           </button>
