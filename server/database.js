@@ -1631,6 +1631,89 @@ export function listarFilaCozinha() {
   ).all();
 }
 
+export function listarFilaCozinhaUnificada() {
+  const mesaItens = db.prepare(
+    `SELECT ci.id, ci.produto_nome, ci.quantidade, ci.obs, ci.status, ci.origem, ci.created_at, ci.adicionais,
+            c.id AS comanda_id, c.numero AS comanda_numero, c.cliente_nome,
+            m.numero AS mesa_numero
+     FROM comanda_itens ci
+     JOIN comandas c ON c.id = ci.comanda_id
+     JOIN mesas m ON m.id = c.mesa_id
+     WHERE ci.status IN ('pendente', 'preparando') AND c.status = 'aberta'
+     ORDER BY ci.created_at ASC`
+  ).all();
+
+  const deliveryPedidos = db.prepare(
+    `SELECT p.id, p.cliente_nome, p.cliente_telefone, p.tipo_entrega, p.status, p.obs, p.created_at
+     FROM pedidos p
+     WHERE p.status IN ('confirmado', 'preparando') AND p.deleted_at IS NULL
+     ORDER BY p.created_at ASC`
+  ).all();
+
+  const grupos = [];
+
+  // Agrupar itens de mesa por comanda
+  const porComanda = {};
+  for (const item of mesaItens) {
+    if (!porComanda[item.comanda_id]) {
+      porComanda[item.comanda_id] = {
+        grupo_id: `comanda_${item.comanda_id}`,
+        tipo: "mesa",
+        label: `Mesa ${item.mesa_numero}`,
+        mesa_numero: item.mesa_numero,
+        comanda_numero: item.comanda_numero,
+        cliente_nome: item.cliente_nome,
+        created_at: item.created_at,
+        itens: [],
+      };
+    }
+    porComanda[item.comanda_id].itens.push({
+      id: item.id,
+      tipo_item: "comanda_item",
+      produto_nome: item.produto_nome,
+      quantidade: item.quantidade,
+      obs: item.obs,
+      status: item.status,
+      origem: item.origem,
+      adicionais: item.adicionais,
+      created_at: item.created_at,
+    });
+  }
+  grupos.push(...Object.values(porComanda));
+
+  // Pedidos delivery/retirada
+  for (const p of deliveryPedidos) {
+    const itens = db.prepare(
+      "SELECT id, produto_nome, quantidade, adicionais FROM pedido_itens WHERE pedido_id = ?"
+    ).all(p.id);
+    grupos.push({
+      grupo_id: `pedido_${p.id}`,
+      tipo: "delivery",
+      tipo_entrega: p.tipo_entrega,
+      label: p.tipo_entrega === "retirada" ? "Retirada" : "Delivery",
+      cliente_nome: p.cliente_nome,
+      status: p.status,
+      obs: p.obs,
+      created_at: p.created_at,
+      pedido_id: p.id,
+      itens: itens.map(i => ({
+        id: i.id,
+        tipo_item: "pedido_item",
+        produto_nome: i.produto_nome,
+        quantidade: i.quantidade,
+        adicionais: i.adicionais,
+        obs: "",
+        status: p.status,
+        origem: "online",
+        created_at: p.created_at,
+      })),
+    });
+  }
+
+  grupos.sort((a, b) => a.created_at.localeCompare(b.created_at));
+  return grupos;
+}
+
 export function estatisticasCaixa() {
   const hoje = new Date();
   const hojeStr = hoje.toISOString().slice(0, 10);

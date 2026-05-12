@@ -33,7 +33,7 @@ import {
   listarMesas, buscarMesa, buscarMesaPorNumero, criarMesa, atualizarMesa, excluirMesa,
   abrirComanda, buscarComanda, buscarComandaPorMesa, fecharComanda, cancelarComanda, pedirConta,
   listarItensComanda, adicionarItemComanda, atualizarStatusItemComanda, removerItemComanda,
-  listarFilaCozinha, estatisticasCaixa,
+  listarFilaCozinha, listarFilaCozinhaUnificada, estatisticasCaixa,
 } from "./database.js";
 
 const app = express();
@@ -496,7 +496,7 @@ app.post("/api/pedidos/publico", (req, res) => {
 });
 
 app.post("/api/pedidos", authMiddleware, (req, res) => {
-  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco } = req.body;
+  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco, tipo_entrega } = req.body;
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
   }
@@ -529,7 +529,8 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     tipo: isAdmin ? (tipo || "presencial") : "online",
     metodo_pagamento: metodo_pagamento || "",
     troco_para: troco_para || null,
-    endereco: enderecoFinal,
+    tipo_entrega: tipo_entrega || "entrega",
+    endereco: tipo_entrega === "retirada" ? {} : enderecoFinal,
   });
   res.status(201).json(pedido);
 });
@@ -1399,6 +1400,31 @@ app.delete('/api/comanda-itens/:id', authMiddleware, (req, res) => {
 app.get('/api/cozinha/fila', authMiddleware, (req, res) => {
   try { res.json(listarFilaCozinha()); }
   catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/cozinha/fila-unificada', authMiddleware, (req, res) => {
+  try { res.json(listarFilaCozinhaUnificada()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/cozinha/marcar-pronto', authMiddleware, (req, res) => {
+  const { grupo_id } = req.body;
+  if (!grupo_id) return res.status(400).json({ error: "grupo_id obrigatório" });
+  try {
+    if (grupo_id.startsWith("comanda_")) {
+      const comandaId = grupo_id.replace("comanda_", "");
+      const itens = listarItensComanda(comandaId).filter(i => i.status === "pendente" || i.status === "preparando");
+      for (const item of itens) atualizarStatusItemComanda(item.id, "pronto");
+      res.json({ ok: true, tipo: "mesa", marcados: itens.length });
+    } else if (grupo_id.startsWith("pedido_")) {
+      const pedidoId = grupo_id.replace("pedido_", "");
+      const pedido = atualizarStatusPedido(pedidoId, "pronto");
+      if (!pedido) return res.status(404).json({ error: "Pedido não encontrado" });
+      res.json({ ok: true, tipo: "delivery", pedido_id: pedidoId });
+    } else {
+      res.status(400).json({ error: "grupo_id inválido" });
+    }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.get('/api/caixa/stats', authMiddleware, (req, res) => {

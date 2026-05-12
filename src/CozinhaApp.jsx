@@ -15,8 +15,13 @@ const tempoDesde = (iso) => {
   return `${Math.floor(min / 60)}h ${min % 60}min`;
 };
 
+const TIPO_CFG = {
+  mesa:     { icon: "🪑", color: "#F59E0B", bg: "#2A1A0A" },
+  delivery: { icon: "🛵", color: "#60A5FA", bg: "#172554" },
+};
+
 export default function CozinhaApp({ onVoltar }) {
-  const [fila, setFila] = useState([]);
+  const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [clock, setClock] = useState("");
   const [toast, setToast] = useState(null);
@@ -24,7 +29,7 @@ export default function CozinhaApp({ onVoltar }) {
   const prevCount = useRef(0);
   const audioRef = useRef(null);
 
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2000); };
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
@@ -35,12 +40,13 @@ export default function CozinhaApp({ onVoltar }) {
 
   const carregar = useCallback(async () => {
     try {
-      const f = await api.cozinha.fila();
-      if (f.length > prevCount.current && prevCount.current > 0) {
+      const g = await api.cozinha.filaUnificada();
+      const total = g.reduce((s, gr) => s + gr.itens.length, 0);
+      if (total > prevCount.current && prevCount.current > 0) {
         try { audioRef.current?.play(); } catch {}
       }
-      prevCount.current = f.length;
-      setFila(f);
+      prevCount.current = total;
+      setGrupos(g);
     } catch {} finally { setLoading(false); }
   }, []);
 
@@ -50,7 +56,18 @@ export default function CozinhaApp({ onVoltar }) {
     return () => clearInterval(iv);
   }, [carregar]);
 
-  const handlePronto = async (itemId, nome) => {
+  const handleGrupoPronto = async (grupo) => {
+    setMarcando(m => ({ ...m, [grupo.grupo_id]: true }));
+    try {
+      await api.cozinha.marcarPronto(grupo.grupo_id);
+      showToast(`✓ ${grupo.label}${grupo.cliente_nome ? ` — ${grupo.cliente_nome}` : ""} pronto!`);
+      await carregar();
+    } catch {} finally {
+      setMarcando(m => ({ ...m, [grupo.grupo_id]: false }));
+    }
+  };
+
+  const handleItemPronto = async (itemId, nome) => {
     setMarcando(m => ({ ...m, [itemId]: true }));
     try {
       await api.comandas.itens.atualizarStatus(itemId, "pronto");
@@ -61,12 +78,7 @@ export default function CozinhaApp({ onVoltar }) {
     }
   };
 
-  const porMesa = {};
-  fila.forEach(item => {
-    const key = item.mesa_numero || "?";
-    if (!porMesa[key]) porMesa[key] = [];
-    porMesa[key].push(item);
-  });
+  const totalItens = grupos.reduce((s, g) => s + g.itens.length, 0);
 
   return (
     <div style={{
@@ -76,23 +88,27 @@ export default function CozinhaApp({ onVoltar }) {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        .cz-topbar { position: sticky; top: 0; z-index: 50; background: #1A1A1A; border-bottom: 2px solid #2A2A2A; padding: 16px 28px; display: flex; align-items: center; gap: 20px; }
-        .cz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 18px; padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
-        .cz-mesa-card { background: #1A1A1A; border: 1.5px solid #2A2A2A; border-radius: 16px; overflow: hidden; }
-        .cz-mesa-head { padding: 14px 18px; background: #222; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2A2A2A; }
-        .cz-item { padding: 14px 18px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 14px; }
+        .cz-topbar { position: sticky; top: 0; z-index: 50; background: #1A1A1A; border-bottom: 2px solid #2A2A2A; padding: 16px 28px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+        .cz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 18px; padding: 24px 28px; max-width: 1600px; margin: 0 auto; }
+        .cz-card { background: #1A1A1A; border: 1.5px solid #2A2A2A; border-radius: 16px; overflow: hidden; }
+        .cz-card-head { padding: 14px 18px; background: #222; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #2A2A2A; gap: 10px; }
+        .cz-item { padding: 12px 18px; border-bottom: 1px solid #1F1F1F; display: flex; align-items: flex-start; gap: 12px; }
         .cz-item:last-child { border-bottom: none; }
-        .cz-btn-pronto { background: #15803d; color: #fff; border: none; border-radius: 10px; padding: 12px 22px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; }
-        .cz-btn-pronto:hover { background: #166534; transform: scale(1.04); }
-        .cz-btn-pronto:active { transform: scale(0.97); }
+        .cz-card-footer { padding: 12px 18px; border-top: 1px solid #2A2A2A; background: #1D1D1D; }
+        .cz-btn-pronto { background: #15803d; color: #fff; border: none; border-radius: 10px; padding: 12px 22px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; width: 100%; }
+        .cz-btn-pronto:hover { background: #166534; transform: scale(1.02); }
+        .cz-btn-pronto:active { transform: scale(0.98); }
         .cz-btn-pronto:disabled { opacity: 0.5; cursor: wait; transform: none; }
+        .cz-btn-item { background: #15803d; color: #fff; border: none; border-radius: 8px; padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; transition: all 0.15s; flex-shrink: 0; white-space: nowrap; }
+        .cz-btn-item:hover { background: #166534; }
+        .cz-btn-item:disabled { opacity: 0.5; cursor: wait; }
         .cz-badge { display: inline-flex; align-items: center; justify-content: center; padding: 2px 10px; border-radius: 8px; font-size: 11px; font-weight: 700; }
         .cz-toast { position: fixed; bottom: 28px; right: 28px; background: #15803d; color: #fff; padding: 14px 24px; border-radius: 12px; font-size: 15px; font-weight: 700; z-index: 200; animation: cz-fi 0.3s ease; box-shadow: 0 8px 30px rgba(0,0,0,0.4); }
         @keyframes cz-fi { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .cz-pulse { animation: cz-p 2s infinite; }
         @keyframes cz-p { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
         .cz-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 60vh; gap: 16px; color: #555; }
-        @media (max-width: 720px) { .cz-grid { grid-template-columns: 1fr; padding: 16px; } .cz-topbar { padding: 12px 16px; } }
+        @media (max-width: 720px) { .cz-grid { grid-template-columns: 1fr; padding: 16px; } .cz-topbar { padding: 12px 16px; gap: 12px; } }
       `}</style>
 
       <audio ref={audioRef} src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdH2LlZeUi3xuY2Bwg5GdnZSIeGxlZXWGl6WinJCDdm1rcYKWpqqflot+c29xgJOipZ6Wh3pzdnqIl6OimJGHfHd3fYqYoZ+WjYR+eXyEj5qfm5WPiIJ+gIeSmZ2al5CLhYKEiZKZnJmVkIuGhYiNlJqcmZWQi4eGipCWmpuYlZCLiIiLkJWZmpiVkY2KiYyRlpiYlpKOi4qMkJWYmJaUkY6Li42RlZeXlZOQjouLjZGUl5aVk5CPjIyOkpWXlpSTkI6NjpCTlZWUk5GPjo2PkZSVlZSTkY+OjpCSlJWUk5KQj46PkZOUlJOSkZCPj5CSlJSUk5KRkI+QkZOUlJOTkpGQkJGTk5OTkpKRkJCRkpOTk5OSkpGRkZKTk5OTkpKSkZGSkpOTk5KSkpGRkpKTk5OTkpKSkZGSkpOTk5KSkpKRkpKTk5OTk5KSkpKSkpOTk5OTkpKSkpKSk5OTk5OTkpKSkpKSk5OTk5OTk5KSkpKSkpOTk5OTk5KSkpKS" preload="auto" />
@@ -110,9 +126,13 @@ export default function CozinhaApp({ onVoltar }) {
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 18 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div className={fila.length > 0 ? "cz-pulse" : ""} style={{ width: 10, height: 10, borderRadius: "50%", background: fila.length > 0 ? "#DC2626" : "#333" }} />
-            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{fila.length}</span>
+            <div className={totalItens > 0 ? "cz-pulse" : ""} style={{ width: 10, height: 10, borderRadius: "50%", background: totalItens > 0 ? "#DC2626" : "#333" }} />
+            <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 800, fontVariantNumeric: "tabular-nums", letterSpacing: -1 }}>{totalItens}</span>
             <span style={{ fontSize: 13, color: "#777", fontWeight: 500 }}>na fila</span>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <span className="cz-badge" style={{ background: "#2A1A0A", color: "#F59E0B" }}>🪑 {grupos.filter(g => g.tipo === "mesa").reduce((s, g) => s + g.itens.length, 0)}</span>
+            <span className="cz-badge" style={{ background: "#172554", color: "#60A5FA" }}>🛵 {grupos.filter(g => g.tipo === "delivery").reduce((s, g) => s + g.itens.length, 0)}</span>
           </div>
           <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: "#555", fontWeight: 500 }}>{clock}</span>
         </div>
@@ -123,59 +143,89 @@ export default function CozinhaApp({ onVoltar }) {
           <div style={{ fontSize: 40 }}>🔥</div>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Carregando fila...</div>
         </div>
-      ) : fila.length === 0 ? (
+      ) : grupos.length === 0 ? (
         <div className="cz-empty">
           <div style={{ fontSize: 64 }}>✨</div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#777" }}>Nenhum item na fila</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#777" }}>Nenhum pedido na fila</div>
           <div style={{ fontSize: 14, color: "#444" }}>Aguardando novos pedidos...</div>
         </div>
       ) : (
         <div className="cz-grid">
-          {Object.entries(porMesa).sort(([a], [b]) => Number(a) - Number(b)).map(([mesa, itens]) => (
-            <div key={mesa} className="cz-mesa-card">
-              <div className="cz-mesa-head">
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 18 }}>🪑</span>
-                  <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 800 }}>Mesa {mesa}</span>
-                </div>
-                <span className="cz-badge" style={{ background: "#2A1A0A", color: "#F59E0B" }}>
-                  {itens.length} {itens.length === 1 ? "item" : "itens"}
-                </span>
-              </div>
-              {itens.map(item => (
-                <div key={item.id} className="cz-item">
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{item.produto_nome}</div>
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                      <span style={{ fontSize: 11, color: "#777", fontVariantNumeric: "tabular-nums" }}>⏱ {fmtHora(item.created_at)} · {tempoDesde(item.created_at)}</span>
-                      {item.origem === "qr" && (
-                        <span className="cz-badge" style={{ background: "#1E1B4B", color: "#818CF8", fontSize: 10 }}>📱 QR Code</span>
+          {grupos.map(grupo => {
+            const cfg = TIPO_CFG[grupo.tipo] || TIPO_CFG.mesa;
+            const isMesa = grupo.tipo === "mesa";
+            return (
+              <div key={grupo.grupo_id} className="cz-card" style={{ borderColor: `${cfg.color}33` }}>
+                <div className="cz-card-head">
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 20 }}>{cfg.icon}</span>
+                    <div>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800 }}>{grupo.label}</div>
+                      {grupo.cliente_nome && (
+                        <div style={{ fontSize: 12, color: "#999", fontWeight: 500, marginTop: 1 }}>{grupo.cliente_nome}</div>
                       )}
-                      <span className="cz-badge" style={{
-                        background: item.status === "preparando" ? "#422006" : "#172554",
-                        color: item.status === "preparando" ? "#FBBF24" : "#60A5FA",
-                        fontSize: 10,
-                      }}>
-                        {item.status === "preparando" ? "🔥 Preparando" : "⏳ Pendente"}
-                      </span>
                     </div>
-                    {item.obs && (
-                      <div style={{ marginTop: 6, fontSize: 12, color: "#F59E0B", background: "#2A1A0A", padding: "5px 10px", borderRadius: 6, fontWeight: 600 }}>
-                        📝 {item.obs}
-                      </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                    <span className="cz-badge" style={{ background: cfg.bg, color: cfg.color }}>
+                      {grupo.itens.length} {grupo.itens.length === 1 ? "item" : "itens"}
+                    </span>
+                    {!isMesa && (
+                      <span className="cz-badge" style={{
+                        background: grupo.tipo_entrega === "retirada" ? "#1A2E05" : "#172554",
+                        color: grupo.tipo_entrega === "retirada" ? "#84CC16" : "#60A5FA",
+                      }}>
+                        {grupo.tipo_entrega === "retirada" ? "🏪 Retirada" : "🛵 Entrega"}
+                      </span>
                     )}
                   </div>
-                  <button
-                    className="cz-btn-pronto"
-                    disabled={!!marcando[item.id]}
-                    onClick={() => handlePronto(item.id, item.produto_nome)}
-                  >
-                    {marcando[item.id] ? "..." : "✓ Pronto"}
+                </div>
+
+                {grupo.itens.map((item, idx) => (
+                  <div key={item.id || idx} className="cz-item">
+                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800, color: cfg.color, minWidth: 28 }}>
+                      {item.quantidade > 1 ? `${item.quantidade}×` : ""}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700 }}>{item.produto_nome}</div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 4 }}>
+                        <span style={{ fontSize: 11, color: "#666", fontVariantNumeric: "tabular-nums" }}>⏱ {fmtHora(item.created_at)} · {tempoDesde(item.created_at)}</span>
+                        {item.origem === "qr" && (
+                          <span className="cz-badge" style={{ background: "#1E1B4B", color: "#818CF8", fontSize: 10 }}>📱 QR</span>
+                        )}
+                        {item.origem === "online" && (
+                          <span className="cz-badge" style={{ background: "#172554", color: "#60A5FA", fontSize: 10 }}>🌐 Online</span>
+                        )}
+                      </div>
+                      {item.obs && (
+                        <div style={{ marginTop: 6, fontSize: 12, color: "#F59E0B", background: "#2A1A0A", padding: "5px 10px", borderRadius: 6, fontWeight: 600 }}>
+                          📝 {item.obs}
+                        </div>
+                      )}
+                    </div>
+                    {isMesa && (
+                      <button className="cz-btn-item" disabled={!!marcando[item.id]} onClick={() => handleItemPronto(item.id, item.produto_nome)}>
+                        {marcando[item.id] ? "..." : "✓ Pronto"}
+                      </button>
+                    )}
+                  </div>
+                ))}
+
+                {grupo.obs && (
+                  <div style={{ padding: "10px 18px", borderTop: "1px solid #222", fontSize: 13, color: "#F59E0B", fontWeight: 600 }}>
+                    📝 {grupo.obs}
+                  </div>
+                )}
+
+                <div className="cz-card-footer">
+                  <button className="cz-btn-pronto" disabled={!!marcando[grupo.grupo_id]}
+                    onClick={() => handleGrupoPronto(grupo)}>
+                    {marcando[grupo.grupo_id] ? "Marcando..." : `✓ Tudo pronto — ${grupo.label}`}
                   </button>
                 </div>
-              ))}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       )}
 

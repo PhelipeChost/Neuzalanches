@@ -222,6 +222,8 @@ export const api = {
   // Frente de Caixa — Cozinha & Stats
   cozinha: {
     fila: () => request("/cozinha/fila"),
+    filaUnificada: () => request("/cozinha/fila-unificada"),
+    marcarPronto: (grupo_id) => request("/cozinha/marcar-pronto", { method: "POST", body: JSON.stringify({ grupo_id }) }),
   },
   caixaStats: () => request("/caixa/stats"),
 
