@@ -428,11 +428,17 @@ export default function App() {
   }
 
   const isCaixaRoute = window.location.pathname.startsWith('/caixa');
-  const isAdminRoute = window.location.pathname.startsWith('/admin');
+  const isAdminRoute = window.location.pathname.startsWith('/admin') || isCaixaRoute;
+
+  // /caixa agora redireciona para /admin (login unificado)
+  if (isCaixaRoute) {
+    window.history.replaceState(null, "", "/admin");
+  }
 
   const [usuario, setUsuario] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [setor, setSetor] = useState(null); // null = hub, "pedidos" = admin, "caixa" = frente de caixa
   const [adminTab, setAdminTab] = useState("pedidos");
   const [pendentesCount, setPendentesCount] = useState(0);
 
@@ -509,47 +515,6 @@ export default function App() {
 
   if (loading) return null;
 
-  // ─── ROTA /caixa: Frente de Caixa (requer login admin) ───────────────────
-  if (isCaixaRoute) {
-    if (!usuario || usuario.tipo !== "admin") {
-      const lblStyle = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
-      const inpStyle = { width: "100%", padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, outline: "none", fontFamily: "'DM Sans', sans-serif", color: "#1c1917" };
-      return (
-        <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap'); * { box-sizing: border-box; margin: 0; padding: 0; }`}</style>
-          <div style={{ background: "#fff", borderRadius: 16, padding: "40px 36px", width: 400, maxWidth: "92vw", boxShadow: "0 8px 30px rgba(0,0,0,0.08)" }}>
-            <div style={{ textAlign: "center", marginBottom: 28 }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🍽️</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700 }}>Frente de Caixa</div>
-              <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>Acesse com suas credenciais de administrador</div>
-            </div>
-            <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={lblStyle}>EMAIL</label>
-                <input value={loginEmail} onChange={e => setLoginEmail(e.target.value)} type="email" required placeholder="admin@email.com" style={inpStyle} />
-              </div>
-              <div>
-                <label style={lblStyle}>SENHA</label>
-                <input value={loginSenha} onChange={e => setLoginSenha(e.target.value)} type="password" required placeholder="••••••••" minLength={4} style={inpStyle} />
-              </div>
-              {loginErro && (
-                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{loginErro}</div>
-              )}
-              <button type="submit" disabled={loginLoading}
-                style={{ padding: 12, background: "#D97706", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: loginLoading ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: loginLoading ? 0.7 : 1, marginTop: 4 }}>
-                {loginLoading ? "Entrando..." : "Entrar"}
-              </button>
-            </form>
-          </div>
-        </div>
-      );
-    }
-    return <FrenteCaixa onVoltar={(destino) => {
-      if (destino === "admin") window.location.href = "/admin";
-      else window.location.href = "/";
-    }} />;
-  }
-
   // ─── ROTA PÚBLICA: Cardápio do cliente ───────────────────────────────────
   if (!isAdminRoute) {
     return <ClienteApp />;
@@ -593,7 +558,59 @@ export default function App() {
     );
   }
 
-  // ─── ROTA /admin: Painel admin (logado) ──────────────────────────────────
+  // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
+  if (setor === "caixa") {
+    return <FrenteCaixa onVoltar={(destino) => {
+      if (destino === "admin") setSetor("pedidos");
+      else if (destino === "cardapio") { window.location.href = "/"; }
+      else setSetor(null);
+    }} />;
+  }
+
+  // ─── HUB: Escolha do setor ──────────────────────────────────────────────
+  if (setor === null) {
+    return (
+      <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@600;700;800&display=swap');
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          .hub-card { background: #fff; border: 2px solid #e7e5e4; border-radius: 20px; padding: 44px 36px; width: 280px; cursor: pointer; text-align: center; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+          .hub-card:hover { border-color: #15803d; transform: translateY(-4px); box-shadow: 0 12px 36px rgba(0,0,0,0.1); }
+          .hub-card:active { transform: translateY(-1px); }
+        `}</style>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ marginBottom: 40 }}>
+            <img src="/logo.png" alt="Logo" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", marginBottom: 14 }}
+              onError={e => { e.currentTarget.style.display = "none"; }} />
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: "#1c1917" }}>Olá, {usuario.nome}</div>
+            <div style={{ fontSize: 13, color: "#a8a29e", marginTop: 6 }}>Selecione seu setor de trabalho</div>
+          </div>
+          <div style={{ display: "flex", gap: 24, justifyContent: "center", flexWrap: "wrap" }}>
+            <div className="hub-card" onClick={() => setSetor("pedidos")}>
+              <div style={{ width: 72, height: 72, borderRadius: 18, background: "linear-gradient(135deg, #15803d 0%, #166534 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📋</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Pedidos</div>
+              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5 }}>Gerenciar pedidos, produtos, estoque e configurações</div>
+              {pendentesCount > 0 && (
+                <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 700 }}>
+                  {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
+            <div className="hub-card" onClick={() => setSetor("caixa")}>
+              <div style={{ width: 72, height: 72, borderRadius: 18, background: "linear-gradient(135deg, #D97706 0%, #B45309 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>🍽️</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Frente de Caixa</div>
+              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5 }}>Salão, mesas, comandas e cozinha em tempo real</div>
+            </div>
+          </div>
+          <button onClick={handleLogout} style={{ marginTop: 36, padding: "8px 20px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+            Sair da conta
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── SETOR: Painel admin (Pedidos) ──────────────────────────────────────
   const adminNav = [
     { key: "pedidos", label: "Pedidos", badge: pendentesCount },
     { key: "produtos", label: "Produtos" },
@@ -644,10 +661,10 @@ export default function App() {
 
       {/* Header Admin */}
       <header className="app-header" style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", height: "auto", minHeight: 56, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 50 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+        <button onClick={() => setSetor(null)} style={{ display: "flex", alignItems: "center", gap: 9, background: "none", border: "none", cursor: "pointer", padding: 0 }} title="Voltar ao menu">
           <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }} />
-          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Painel Admin</span>
-        </div>
+          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#1c1917" }}>Painel Admin</span>
+        </button>
 
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
