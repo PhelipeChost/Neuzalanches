@@ -195,6 +195,42 @@ export const api = {
     excluir:  (id) => request(`/produtos/${id}`, { method: "DELETE" }),  // reaproveita
   },
 
+  // Frente de Caixa — Mesas
+  mesas: {
+    listar: () => request("/mesas"),
+    criar: (data) => request("/mesas", { method: "POST", body: JSON.stringify(data) }),
+    atualizar: (id, data) => request(`/mesas/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    excluir: (id) => request(`/mesas/${id}`, { method: "DELETE" }),
+    pedirConta: (id) => request(`/mesas/${id}/pedir-conta`, { method: "POST" }),
+  },
+
+  // Frente de Caixa — Comandas
+  comandas: {
+    abrir: (data) => request("/comandas", { method: "POST", body: JSON.stringify(data) }),
+    buscar: (id) => request(`/comandas/${id}`),
+    porMesa: (mesaId) => request(`/comandas/mesa/${mesaId}`),
+    fechar: (id) => request(`/comandas/${id}/fechar`, { method: "POST" }),
+    cancelar: (id) => request(`/comandas/${id}/cancelar`, { method: "POST" }),
+    itens: {
+      listar: (comandaId) => request(`/comandas/${comandaId}/itens`),
+      adicionar: (comandaId, data) => request(`/comandas/${comandaId}/itens`, { method: "POST", body: JSON.stringify(data) }),
+      atualizarStatus: (itemId, status) => request(`/comanda-itens/${itemId}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+      remover: (itemId) => request(`/comanda-itens/${itemId}`, { method: "DELETE" }),
+    },
+  },
+
+  // Frente de Caixa — Cozinha & Stats
+  cozinha: {
+    fila: () => request("/cozinha/fila"),
+  },
+  caixaStats: () => request("/caixa/stats"),
+
+  // Mesa pública (QR code — sem auth)
+  mesaPublica: {
+    info: (numero) => fetch(`/api/mesa/${numero}/info`).then(r => { if (!r.ok) throw new Error("Mesa não encontrada"); return r.json(); }),
+    pedido: (numero, data) => fetch(`/api/mesa/${numero}/pedido`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }).then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || "Erro ao enviar pedido"); }); return r.json(); }),
+  },
+
   // Lixeira
   lixeira: {
     listar: () => request("/lixeira"),

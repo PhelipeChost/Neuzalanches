@@ -8,6 +8,8 @@ import Insumos from "./Insumos";
 import CustosFixos from "./CustosFixos";
 import Estoque from "./Estoque";
 import Lixeira from "./Lixeira";
+import FrenteCaixa from "./FrenteCaixa";
+import MesaApp from "./MesaApp";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
 const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
@@ -419,6 +421,13 @@ function AdminConfig() {
 }
 
 export default function App() {
+  // /mesa/:numero — cardápio público para QR code (sem login)
+  const mesaMatch = window.location.pathname.match(/^\/mesa\/(\d+)/);
+  if (mesaMatch) {
+    return <MesaApp mesaNumero={parseInt(mesaMatch[1], 10)} />;
+  }
+
+  const isCaixaRoute = window.location.pathname.startsWith('/caixa');
   const isAdminRoute = window.location.pathname.startsWith('/admin');
 
   const [usuario, setUsuario] = useState(null);
@@ -499,6 +508,47 @@ export default function App() {
   };
 
   if (loading) return null;
+
+  // ─── ROTA /caixa: Frente de Caixa (requer login admin) ───────────────────
+  if (isCaixaRoute) {
+    if (!usuario || usuario.tipo !== "admin") {
+      const lblStyle = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
+      const inpStyle = { width: "100%", padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, outline: "none", fontFamily: "'DM Sans', sans-serif", color: "#1c1917" };
+      return (
+        <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap'); * { box-sizing: border-box; margin: 0; padding: 0; }`}</style>
+          <div style={{ background: "#fff", borderRadius: 16, padding: "40px 36px", width: 400, maxWidth: "92vw", boxShadow: "0 8px 30px rgba(0,0,0,0.08)" }}>
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🍽️</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700 }}>Frente de Caixa</div>
+              <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>Acesse com suas credenciais de administrador</div>
+            </div>
+            <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={lblStyle}>EMAIL</label>
+                <input value={loginEmail} onChange={e => setLoginEmail(e.target.value)} type="email" required placeholder="admin@email.com" style={inpStyle} />
+              </div>
+              <div>
+                <label style={lblStyle}>SENHA</label>
+                <input value={loginSenha} onChange={e => setLoginSenha(e.target.value)} type="password" required placeholder="••••••••" minLength={4} style={inpStyle} />
+              </div>
+              {loginErro && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{loginErro}</div>
+              )}
+              <button type="submit" disabled={loginLoading}
+                style={{ padding: 12, background: "#D97706", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: loginLoading ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", opacity: loginLoading ? 0.7 : 1, marginTop: 4 }}>
+                {loginLoading ? "Entrando..." : "Entrar"}
+              </button>
+            </form>
+          </div>
+        </div>
+      );
+    }
+    return <FrenteCaixa onVoltar={(destino) => {
+      if (destino === "admin") window.location.href = "/admin";
+      else window.location.href = "/";
+    }} />;
+  }
 
   // ─── ROTA PÚBLICA: Cardápio do cliente ───────────────────────────────────
   if (!isAdminRoute) {

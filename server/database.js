@@ -1408,4 +1408,247 @@ export function excluirDefinitivoLixeira(tipo, id) {
   return meta.hardDelete(id);
 }
 
+// ─── MESAS (Frente de Caixa) ────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mesas (
+    id TEXT PRIMARY KEY,
+    numero INTEGER UNIQUE NOT NULL,
+    lugares INTEGER NOT NULL DEFAULT 4,
+    status TEXT NOT NULL DEFAULT 'livre' CHECK(status IN ('livre', 'ocupada', 'fechar', 'reservada')),
+    reserva_nome TEXT DEFAULT '',
+    reserva_hora TEXT DEFAULT '',
+    reserva_pessoas INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS comandas (
+    id TEXT PRIMARY KEY,
+    mesa_id TEXT NOT NULL,
+    numero INTEGER NOT NULL,
+    cliente_nome TEXT DEFAULT '',
+    pessoas INTEGER DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'aberta' CHECK(status IN ('aberta', 'fechada', 'cancelada')),
+    opened_at TEXT DEFAULT (datetime('now')),
+    closed_at TEXT DEFAULT NULL,
+    FOREIGN KEY (mesa_id) REFERENCES mesas(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS comanda_itens (
+    id TEXT PRIMARY KEY,
+    comanda_id TEXT NOT NULL,
+    produto_id TEXT DEFAULT NULL,
+    produto_nome TEXT NOT NULL,
+    quantidade INTEGER NOT NULL DEFAULT 1,
+    preco_unitario REAL NOT NULL,
+    adicionais TEXT DEFAULT '[]',
+    obs TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente', 'preparando', 'pronto', 'entregue', 'cancelado')),
+    origem TEXT DEFAULT 'caixa',
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (comanda_id) REFERENCES comandas(id) ON DELETE CASCADE,
+    FOREIGN KEY (produto_id) REFERENCES produtos(id)
+  );
+`);
+
+// Seed mesas padrão (12 mesas) se tabela vazia
+{
+  const count = db.prepare("SELECT COUNT(*) AS c FROM mesas").get().c;
+  if (count === 0) {
+    const ins = db.prepare("INSERT INTO mesas (id, numero, lugares) VALUES (?, ?, ?)");
+    const lugaresDefault = [2, 4, 4, 2, 4, 6, 2, 4, 2, 6, 2, 4];
+    for (let i = 0; i < 12; i++) {
+      ins.run(gerarId(), i + 1, lugaresDefault[i]);
+    }
+    console.log("12 mesas criadas automaticamente");
+  }
+}
+
+// Sequence para número da comanda
+{
+  const exists = db.prepare("SELECT 1 FROM config WHERE key = 'comanda_seq'").get();
+  if (!exists) {
+    db.prepare("INSERT INTO config (key, value) VALUES ('comanda_seq', '0')").run();
+  }
+}
+
+export function listarMesas() {
+  const mesas = db.prepare("SELECT * FROM mesas ORDER BY numero ASC").all();
+  const comandaAberta = db.prepare(
+    `SELECT c.id, c.numero, c.cliente_nome, c.pessoas, c.opened_at,
+            COALESCE(SUM(ci.quantidade * ci.preco_unitario), 0) AS total,
+            COUNT(ci.id) AS total_itens
+     FROM comandas c
+     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
+     WHERE c.mesa_id = ? AND c.status = 'aberta'
+     GROUP BY c.id
+     LIMIT 1`
+  );
+  return mesas.map(m => {
+    const comanda = comandaAberta.get(m.id);
+    return { ...m, comanda: comanda || null };
+  });
+}
+
+export function buscarMesa(id) {
+  return db.prepare("SELECT * FROM mesas WHERE id = ?").get(id);
+}
+
+export function buscarMesaPorNumero(numero) {
+  return db.prepare("SELECT * FROM mesas WHERE numero = ?").get(numero);
+}
+
+export function criarMesa({ numero, lugares }) {
+  const id = gerarId();
+  db.prepare("INSERT INTO mesas (id, numero, lugares) VALUES (?, ?, ?)").run(id, numero, lugares || 4);
+  return buscarMesa(id);
+}
+
+export function atualizarMesa(id, { lugares, status, reserva_nome, reserva_hora, reserva_pessoas }) {
+  const atual = buscarMesa(id);
+  if (!atual) return null;
+  db.prepare(
+    `UPDATE mesas SET lugares = ?, status = ?, reserva_nome = ?, reserva_hora = ?, reserva_pessoas = ? WHERE id = ?`
+  ).run(
+    lugares ?? atual.lugares,
+    status ?? atual.status,
+    reserva_nome ?? atual.reserva_nome,
+    reserva_hora ?? atual.reserva_hora,
+    reserva_pessoas ?? atual.reserva_pessoas,
+    id
+  );
+  return buscarMesa(id);
+}
+
+export function excluirMesa(id) {
+  return db.prepare("DELETE FROM mesas WHERE id = ?").run(id).changes > 0;
+}
+
+// ─── COMANDAS ───────────────────────────────────────────────────────────────
+
+function proximoNumeroComanda() {
+  const row = db.prepare("SELECT value FROM config WHERE key = 'comanda_seq'").get();
+  const next = parseInt(row.value, 10) + 1;
+  db.prepare("UPDATE config SET value = ? WHERE key = 'comanda_seq'").run(String(next));
+  return next;
+}
+
+export function abrirComanda({ mesa_id, cliente_nome, pessoas }) {
+  const mesa = buscarMesa(mesa_id);
+  if (!mesa) throw new Error("Mesa não encontrada");
+  const existente = db.prepare("SELECT 1 FROM comandas WHERE mesa_id = ? AND status = 'aberta'").get(mesa_id);
+  if (existente) throw new Error("Mesa já possui comanda aberta");
+  const id = gerarId();
+  const numero = proximoNumeroComanda();
+  db.prepare(
+    "INSERT INTO comandas (id, mesa_id, numero, cliente_nome, pessoas) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, mesa_id, numero, cliente_nome || "", pessoas || 1);
+  db.prepare("UPDATE mesas SET status = 'ocupada' WHERE id = ?").run(mesa_id);
+  return buscarComanda(id);
+}
+
+export function buscarComanda(id) {
+  const c = db.prepare(
+    `SELECT c.*, m.numero AS mesa_numero,
+            COALESCE(SUM(ci.quantidade * ci.preco_unitario), 0) AS total,
+            COUNT(ci.id) AS total_itens
+     FROM comandas c
+     JOIN mesas m ON m.id = c.mesa_id
+     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
+     WHERE c.id = ?
+     GROUP BY c.id`
+  ).get(id);
+  return c || null;
+}
+
+export function buscarComandaPorMesa(mesa_id) {
+  const c = db.prepare(
+    `SELECT c.*, m.numero AS mesa_numero,
+            COALESCE(SUM(ci.quantidade * ci.preco_unitario), 0) AS total,
+            COUNT(ci.id) AS total_itens
+     FROM comandas c
+     JOIN mesas m ON m.id = c.mesa_id
+     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
+     WHERE c.mesa_id = ? AND c.status = 'aberta'
+     GROUP BY c.id`
+  ).get(mesa_id);
+  return c || null;
+}
+
+export function fecharComanda(id) {
+  const c = buscarComanda(id);
+  if (!c) throw new Error("Comanda não encontrada");
+  db.prepare("UPDATE comandas SET status = 'fechada', closed_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare("UPDATE mesas SET status = 'livre', reserva_nome = '', reserva_hora = '', reserva_pessoas = 0 WHERE id = ?").run(c.mesa_id);
+  return buscarComanda(id);
+}
+
+export function cancelarComanda(id) {
+  const c = buscarComanda(id);
+  if (!c) throw new Error("Comanda não encontrada");
+  db.prepare("UPDATE comandas SET status = 'cancelada', closed_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare("UPDATE mesas SET status = 'livre', reserva_nome = '', reserva_hora = '', reserva_pessoas = 0 WHERE id = ?").run(c.mesa_id);
+  return buscarComanda(id);
+}
+
+export function pedirConta(mesa_id) {
+  db.prepare("UPDATE mesas SET status = 'fechar' WHERE id = ?").run(mesa_id);
+  return buscarMesa(mesa_id);
+}
+
+// ─── COMANDA ITENS ──────────────────────────────────────────────────────────
+
+export function listarItensComanda(comanda_id) {
+  return db.prepare("SELECT * FROM comanda_itens WHERE comanda_id = ? ORDER BY created_at ASC").all(comanda_id);
+}
+
+export function adicionarItemComanda({ comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem }) {
+  const id = gerarId();
+  db.prepare(
+    `INSERT INTO comanda_itens (id, comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, comanda_id, produto_id || null, produto_nome, quantidade || 1, preco_unitario, JSON.stringify(adicionais || []), obs || "", origem || "caixa");
+  return db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
+}
+
+export function atualizarStatusItemComanda(id, status) {
+  db.prepare("UPDATE comanda_itens SET status = ? WHERE id = ?").run(status, id);
+  return db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
+}
+
+export function removerItemComanda(id) {
+  return db.prepare("DELETE FROM comanda_itens WHERE id = ?").run(id).changes > 0;
+}
+
+export function listarFilaCozinha() {
+  return db.prepare(
+    `SELECT ci.*, c.numero AS comanda_numero, m.numero AS mesa_numero
+     FROM comanda_itens ci
+     JOIN comandas c ON c.id = ci.comanda_id
+     JOIN mesas m ON m.id = c.mesa_id
+     WHERE ci.status IN ('pendente', 'preparando') AND c.status = 'aberta'
+     ORDER BY ci.created_at ASC`
+  ).all();
+}
+
+export function estatisticasCaixa() {
+  const hoje = new Date();
+  const hojeStr = hoje.toISOString().slice(0, 10);
+
+  const mesas = db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'livre' THEN 1 ELSE 0 END) AS livres, SUM(CASE WHEN status = 'ocupada' THEN 1 ELSE 0 END) AS ocupadas, SUM(CASE WHEN status = 'fechar' THEN 1 ELSE 0 END) AS fechando FROM mesas").get();
+
+  const faturamento = db.prepare(
+    `SELECT COALESCE(SUM(ci.quantidade * ci.preco_unitario), 0) AS total, COUNT(DISTINCT c.id) AS pedidos
+     FROM comandas c
+     JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
+     WHERE c.status = 'fechada' AND date(c.closed_at) = ?`
+  ).get(hojeStr);
+
+  const mesasHoje = db.prepare(
+    `SELECT COUNT(DISTINCT mesa_id) AS total FROM comandas WHERE date(opened_at) = ?`
+  ).get(hojeStr);
+
+  return { mesas, faturamento: { ...faturamento, mesas_atendidas: mesasHoje.total } };
+}
+
 export default db;

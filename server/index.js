@@ -1,5 +1,6 @@
 import "dotenv/config";
 import fs from "fs";
+import { join } from "path";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
@@ -29,6 +30,10 @@ import {
   listarEstoqueAjustes, registrarAjuste,
   estoqueDashboard,
   listarImagensProduto, adicionarImagemProduto, removerImagemProduto, reordenarImagensProduto,
+  listarMesas, buscarMesa, buscarMesaPorNumero, criarMesa, atualizarMesa, excluirMesa,
+  abrirComanda, buscarComanda, buscarComandaPorMesa, fecharComanda, cancelarComanda, pedirConta,
+  listarItensComanda, adicionarItemComanda, atualizarStatusItemComanda, removerItemComanda,
+  listarFilaCozinha, estatisticasCaixa,
 } from "./database.js";
 
 const app = express();
@@ -1290,8 +1295,203 @@ app.post('/api/bot/enviar', async (req, res) => {
   }
 });
 
+// ─── FRENTE DE CAIXA: MESAS ─────────────────────────────────────────────────
+
+app.get('/api/mesas', authMiddleware, (req, res) => {
+  try { res.json(listarMesas()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/mesas', authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { numero, lugares } = req.body;
+    if (!numero) return res.status(400).json({ error: "Número da mesa é obrigatório" });
+    res.status(201).json(criarMesa({ numero, lugares }));
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.put('/api/mesas/:id', authMiddleware, adminOnly, (req, res) => {
+  try {
+    const mesa = atualizarMesa(req.params.id, req.body);
+    if (!mesa) return res.status(404).json({ error: "Mesa não encontrada" });
+    res.json(mesa);
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.delete('/api/mesas/:id', authMiddleware, adminOnly, (req, res) => {
+  try {
+    if (!excluirMesa(req.params.id)) return res.status(404).json({ error: "Mesa não encontrada" });
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// ─── FRENTE DE CAIXA: COMANDAS ──────────────────────────────────────────────
+
+app.post('/api/comandas', authMiddleware, (req, res) => {
+  try {
+    const { mesa_id, cliente_nome, pessoas } = req.body;
+    if (!mesa_id) return res.status(400).json({ error: "mesa_id é obrigatório" });
+    res.status(201).json(abrirComanda({ mesa_id, cliente_nome, pessoas }));
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.get('/api/comandas/:id', authMiddleware, (req, res) => {
+  try {
+    const c = buscarComanda(req.params.id);
+    if (!c) return res.status(404).json({ error: "Comanda não encontrada" });
+    res.json(c);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/comandas/mesa/:mesa_id', authMiddleware, (req, res) => {
+  try {
+    const c = buscarComandaPorMesa(req.params.mesa_id);
+    res.json(c || null);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/comandas/:id/fechar', authMiddleware, (req, res) => {
+  try { res.json(fecharComanda(req.params.id)); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.post('/api/comandas/:id/cancelar', authMiddleware, (req, res) => {
+  try { res.json(cancelarComanda(req.params.id)); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.post('/api/mesas/:id/pedir-conta', authMiddleware, (req, res) => {
+  try { res.json(pedirConta(req.params.id)); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// ─── FRENTE DE CAIXA: ITENS DA COMANDA ──────────────────────────────────────
+
+app.get('/api/comandas/:id/itens', authMiddleware, (req, res) => {
+  try { res.json(listarItensComanda(req.params.id)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/api/comandas/:id/itens', authMiddleware, (req, res) => {
+  try {
+    const { produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem } = req.body;
+    if (!produto_nome || preco_unitario == null) return res.status(400).json({ error: "produto_nome e preco_unitario obrigatórios" });
+    res.status(201).json(adicionarItemComanda({ comanda_id: req.params.id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem }));
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.put('/api/comanda-itens/:id/status', authMiddleware, (req, res) => {
+  try {
+    const { status } = req.body;
+    res.json(atualizarStatusItemComanda(req.params.id, status));
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+app.delete('/api/comanda-itens/:id', authMiddleware, (req, res) => {
+  try {
+    if (!removerItemComanda(req.params.id)) return res.status(404).json({ error: "Item não encontrado" });
+    res.json({ ok: true });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// ─── FRENTE DE CAIXA: FILA DA COZINHA & STATS ──────────────────────────────
+
+app.get('/api/cozinha/fila', authMiddleware, (req, res) => {
+  try { res.json(listarFilaCozinha()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/caixa/stats', authMiddleware, (req, res) => {
+  try { res.json(estatisticasCaixa()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── MESA QR CODE — ROTAS PÚBLICAS (sem auth) ──────────────────────────────
+
+// Info da mesa + cardápio (produtos + categorias + adicionais)
+app.get('/api/mesa/:numero/info', (req, res) => {
+  const numero = parseInt(req.params.numero, 10);
+  if (isNaN(numero)) return res.status(400).json({ error: "Número de mesa inválido" });
+  const mesa = buscarMesaPorNumero(numero);
+  if (!mesa) return res.status(404).json({ error: "Mesa não encontrada" });
+  const produtos = listarProdutos(true);
+  const cats = listarCategorias();
+  const adds = listarAdicionais(true);
+  const comanda = buscarComandaPorMesa(mesa.id);
+  res.json({ mesa, produtos, categorias: cats, adicionais: adds, comanda });
+});
+
+// Pedido público via mesa (auto-abre comanda se não existir)
+app.post('/api/mesa/:numero/pedido', (req, res) => {
+  const numero = parseInt(req.params.numero, 10);
+  if (isNaN(numero)) return res.status(400).json({ error: "Número de mesa inválido" });
+  const mesa = buscarMesaPorNumero(numero);
+  if (!mesa) return res.status(404).json({ error: "Mesa não encontrada" });
+
+  const { itens, cliente_nome } = req.body;
+  if (!itens || !Array.isArray(itens) || itens.length === 0) {
+    return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
+  }
+  for (const item of itens) {
+    if (!item.produto_nome || item.preco_unitario == null) {
+      return res.status(400).json({ error: "Cada item precisa de produto_nome e preco_unitario" });
+    }
+  }
+
+  try {
+    let comanda = buscarComandaPorMesa(mesa.id);
+    if (!comanda) {
+      comanda = abrirComanda({ mesa_id: mesa.id, cliente_nome: cliente_nome || "Cliente QR", pessoas: 1 });
+    }
+
+    const itensAdicionados = [];
+    for (const item of itens) {
+      const added = adicionarItemComanda({
+        comanda_id: comanda.id,
+        produto_id: item.produto_id || null,
+        produto_nome: item.produto_nome,
+        quantidade: item.quantidade || 1,
+        preco_unitario: item.preco_unitario,
+        adicionais: item.adicionais || [],
+        obs: item.obs || "",
+        origem: "qr",
+      });
+      itensAdicionados.push(added);
+    }
+
+    const comandaAtualizada = buscarComanda(comanda.id);
+    res.status(201).json({ comanda: comandaAtualizada, itens: itensAdicionados });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── SERVIR FRONTEND (SPA fallback para produção) ──────────────────────────
+
+const distPath = join(process.cwd(), "dist");
+const distIndex = join(distPath, "index.html");
+if (fs.existsSync(distIndex)) {
+  app.use(express.static(distPath));
+  const indexHtml = fs.readFileSync(distIndex, "utf-8");
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      res.type("html").send(indexHtml);
+    } else {
+      next();
+    }
+  });
+}
+
 // ─── START ──────────────────────────────────────────────────────────────────
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Servidor API rodando em http://localhost:${PORT}`);
+  if (fs.existsSync(distIndex)) {
+    console.log(`Frontend servido em http://localhost:${PORT} (build de produção)`);
+    console.log(`  → Cardápio:  http://localhost:${PORT}/`);
+    console.log(`  → Admin:     http://localhost:${PORT}/admin`);
+    console.log(`  → Caixa:     http://localhost:${PORT}/caixa`);
+  } else {
+    console.log(`Frontend: rode "npm run dev" ou "npm run build" para servir a interface`);
+  }
 });
