@@ -50,6 +50,11 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
   const [modalQR, setModalQR] = useState(false);
   const [qrUrls, setQrUrls] = useState({});
 
+  // Gerenciar mesas modal
+  const [modalMesas, setModalMesas] = useState(false);
+  const [novaMesaNumero, setNovaMesaNumero] = useState("");
+  const [novaMesaLugares, setNovaMesaLugares] = useState(4);
+
   // Clock
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }));
@@ -235,6 +240,31 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
         setItens(it);
       }
       showToast("Item marcado como pronto!");
+    } catch (err) { showToast(err.message, "var(--danger)"); }
+  };
+
+  // Criar mesa
+  const handleCriarMesa = async () => {
+    const num = parseInt(novaMesaNumero);
+    if (!num || num < 1) return showToast("Número inválido", "var(--danger)");
+    if (mesas.some(m => m.numero === num)) return showToast(`Mesa ${num} já existe`, "var(--danger)");
+    try {
+      await api.mesas.criar({ numero: num, lugares: novaMesaLugares || 4 });
+      setNovaMesaNumero("");
+      setNovaMesaLugares(4);
+      await carregarTudo();
+      showToast(`Mesa ${num} criada!`);
+    } catch (err) { showToast(err.message, "var(--danger)"); }
+  };
+
+  // Excluir mesa
+  const handleExcluirMesa = async (mesa) => {
+    if (mesa.status !== "livre") return showToast("Só é possível excluir mesas livres", "var(--danger)");
+    try {
+      await api.mesas.excluir(mesa.id);
+      if (mesaSel?.id === mesa.id) { setMesaSel(null); setComanda(null); setItens([]); }
+      await carregarTudo();
+      showToast(`Mesa ${mesa.numero} excluída`);
     } catch (err) { showToast(err.message, "var(--danger)"); }
   };
 
@@ -436,7 +466,25 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
               ].map(f => (
                 <button key={f.key} className={`fc-chip ${filtro === f.key ? "active" : ""}`} onClick={() => setFiltro(f.key)}>{f.label}</button>
               ))}
+              <div style={{ marginLeft: "auto" }}>
+                <button className="fc-chip" onClick={() => setModalMesas(v => !v)} style={{ background: modalMesas ? "var(--gold)" : undefined, color: modalMesas ? "#fff" : undefined }}>⚙ Mesas</button>
+              </div>
             </div>
+
+            {modalMesas && (
+              <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", background: "var(--surface)", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>Nova mesa:</span>
+                <input type="number" placeholder="Nº" value={novaMesaNumero} onChange={e => setNovaMesaNumero(e.target.value)} min="1"
+                  style={{ width: 70, padding: "7px 10px", border: "1.5px solid var(--border)", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "var(--bg)", color: "var(--text)" }} />
+                <label style={{ fontSize: 12, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                  Lugares:
+                  <input type="number" value={novaMesaLugares} onChange={e => setNovaMesaLugares(parseInt(e.target.value) || 1)} min="1" max="20"
+                    style={{ width: 55, padding: "7px 10px", border: "1.5px solid var(--border)", borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: "var(--bg)", color: "var(--text)" }} />
+                </label>
+                <button onClick={handleCriarMesa} style={{ padding: "7px 16px", background: "var(--success)", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>+ Criar</button>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>Clique no × para excluir mesas livres</span>
+              </div>
+            )}
 
             <div className="fc-salon-bg">
               <div className="fc-mesas-grid">
@@ -475,6 +523,10 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
                         }
                       }}
                     >
+                      {modalMesas && mesa.status === "livre" && (
+                        <div onClick={e => { e.stopPropagation(); handleExcluirMesa(mesa); }}
+                          style={{ position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: "50%", background: "#dc2626", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, cursor: "pointer", lineHeight: 1, zIndex: 2 }}>×</div>
+                      )}
                       {pendentes > 0 && <div className="fc-badge">{pendentes}</div>}
                       <div className="fc-mesa-bar" style={{ background: statusColor }} />
                       <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 28, fontWeight: 800, lineHeight: 1, letterSpacing: -1 }}>{mesa.numero}</div>
