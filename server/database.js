@@ -101,7 +101,7 @@ db.exec(`
     tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
     metodo_pagamento TEXT DEFAULT '',
     troco_para REAL DEFAULT NULL,
-    tipo_entrega TEXT DEFAULT 'entrega' CHECK(tipo_entrega IN ('entrega','retirada')),
+    tipo_entrega TEXT DEFAULT 'entrega' CHECK(tipo_entrega IN ('entrega','retirada','casa')),
     endereco_cep TEXT DEFAULT '',
     endereco_rua TEXT DEFAULT '',
     endereco_numero TEXT DEFAULT '',
@@ -323,6 +323,41 @@ for (const tabela of TABELAS_LIXEIRA) {
 // Índice opcional para acelerar queries de lixeira
 for (const tabela of TABELAS_LIXEIRA) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${tabela}_deleted_at ON ${tabela}(deleted_at)`);
+}
+
+// ─── MIGRAÇÃO: adicionar 'casa' ao CHECK de tipo_entrega ─────────────────
+{
+  const sqlCreate = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='pedidos'").get();
+  if (sqlCreate && sqlCreate.sql && !sqlCreate.sql.includes("'casa'")) {
+    db.exec(`
+      CREATE TABLE pedidos_new AS SELECT * FROM pedidos;
+      DROP TABLE pedidos;
+      CREATE TABLE pedidos (
+        id TEXT PRIMARY KEY,
+        cliente_id TEXT,
+        cliente_nome TEXT DEFAULT '',
+        cliente_telefone TEXT DEFAULT '',
+        cliente_email TEXT DEFAULT '',
+        total REAL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente','confirmado','preparando','pronto','entregue','cancelado')),
+        obs TEXT DEFAULT '',
+        tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
+        metodo_pagamento TEXT DEFAULT '',
+        troco_para REAL DEFAULT NULL,
+        tipo_entrega TEXT DEFAULT 'entrega' CHECK(tipo_entrega IN ('entrega','retirada','casa')),
+        endereco_cep TEXT DEFAULT '',
+        endereco_rua TEXT DEFAULT '',
+        endereco_numero TEXT DEFAULT '',
+        endereco_bairro TEXT DEFAULT '',
+        endereco_referencia TEXT DEFAULT '',
+        deleted_at TEXT DEFAULT NULL,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO pedidos SELECT * FROM pedidos_new;
+      DROP TABLE pedidos_new;
+      CREATE INDEX IF NOT EXISTS idx_pedidos_deleted_at ON pedidos(deleted_at);
+    `);
+  }
 }
 
 // ─── MIGRAÇÃO PROMOÇÕES — colunas extras em produtos ───────────────────────
@@ -825,7 +860,7 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
   );
 
   const transaction = db.transaction(() => {
-    const tipoEnt = tipo_entrega === 'retirada' ? 'retirada' : 'entrega';
+    const tipoEnt = ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega';
     inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
     for (const item of itens) {
       // Buscar custo do produto no banco
@@ -1694,7 +1729,7 @@ export function listarFilaCozinhaUnificada() {
       grupo_id: `pedido_${p.id}`,
       tipo: "delivery",
       tipo_entrega: p.tipo_entrega,
-      label: p.tipo_entrega === "retirada" ? "Retirada" : "Delivery",
+      label: p.tipo_entrega === "retirada" ? "Retirada" : p.tipo_entrega === "casa" ? "No local" : "Delivery",
       cliente_nome: p.cliente_nome,
       status: p.status,
       status_grupo: p.status === "preparando" ? "preparando" : "pendente",

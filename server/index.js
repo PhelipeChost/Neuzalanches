@@ -485,8 +485,8 @@ app.post("/api/pedidos/publico", (req, res) => {
     tipo: "online",
     metodo_pagamento: metodo_pagamento || "",
     troco_para: troco_para || null,
-    tipo_entrega: tipo_entrega === 'retirada' ? 'retirada' : 'entrega',
-    endereco: tipo_entrega === 'retirada' ? {} : (endereco || {}),
+    tipo_entrega: ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega',
+    endereco: ['retirada', 'casa'].includes(tipo_entrega) ? {} : (endereco || {}),
   });
 
   // Notificar cliente via WhatsApp (não bloqueia a resposta)
@@ -530,7 +530,7 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     metodo_pagamento: metodo_pagamento || "",
     troco_para: troco_para || null,
     tipo_entrega: tipo_entrega || "entrega",
-    endereco: tipo_entrega === "retirada" ? {} : enderecoFinal,
+    endereco: ["retirada", "casa"].includes(tipo_entrega) ? {} : enderecoFinal,
   });
   res.status(201).json(pedido);
 });

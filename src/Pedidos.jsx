@@ -302,6 +302,7 @@ export default function Pedidos() {
   const [loading, setLoading] = useState(true);
   const [modalManual, setModalManual] = useState(false);
   const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
   const [filtroMes, setFiltroMes] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -519,6 +520,7 @@ export default function Pedidos() {
 
   const filtrados = pedidos.filter(p => {
     if (filtroStatus !== "todos" && p.status !== filtroStatus) return false;
+    if (filtroTipo !== "todos" && (p.tipo_entrega || "entrega") !== filtroTipo) return false;
     if (filtroMes && filtroMes !== "todos") {
       if (!p.created_at) return false;
       const d = parseDateUTC(p.created_at);
@@ -664,6 +666,13 @@ export default function Pedidos() {
             {k === "pendente" && pendentesCount > 0 && (
               <span style={{ marginLeft: 4, background: "#dc2626", color: "#fff", borderRadius: 10, padding: "1px 6px", fontSize: 10, fontWeight: 700 }}>{pendentesCount}</span>
             )}
+          </button>
+        ))}
+        <span style={{ width: 1, height: 22, background: "#e7e5e4", margin: "0 4px" }} />
+        {[["todos", "📋 Todos"], ["entrega", "🛵 Delivery"], ["retirada", "🏪 Retirada"], ["casa", "🍽️ No local"]].map(([k, v]) => (
+          <button key={`t-${k}`} className={`fil ${filtroTipo === k ? "ativo" : ""}`} onClick={() => setFiltroTipo(k)}
+            style={filtroTipo === k && k !== "todos" ? { borderColor: "#2563eb", color: "#2563eb", background: "#eff6ff" } : undefined}>
+            {v}
           </button>
         ))}
       </div>
@@ -861,8 +870,15 @@ export default function Pedidos() {
                       </div>
                     )}
 
+                    {p.tipo_entrega === "casa" && (
+                      <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#92400e", marginBottom: 4, letterSpacing: "0.06em" }}>🍽️ CONSUMIR NO LOCAL</div>
+                        <div style={{ fontSize: 13, color: "#1c1917" }}>O cliente está no estabelecimento.</div>
+                      </div>
+                    )}
+
                     {/* Endereço de entrega */}
-                    {p.tipo_entrega !== "retirada" && p.endereco_rua && (
+                    {!["retirada", "casa"].includes(p.tipo_entrega) && p.endereco_rua && (
                       <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: "#2563eb", marginBottom: 4, letterSpacing: "0.06em" }}>🏠 ENDEREÇO DE ENTREGA</div>
                         <div style={{ fontSize: 13, color: "#1c1917" }}>

@@ -18,6 +18,8 @@ const tempoDesde = (iso) => {
 const TIPO_CFG = {
   mesa:     { icon: "🪑", color: "#F59E0B", bg: "#2A1A0A" },
   delivery: { icon: "🛵", color: "#60A5FA", bg: "#172554" },
+  retirada: { icon: "🏪", color: "#84CC16", bg: "#1A2E05" },
+  casa:     { icon: "🍽️", color: "#C084FC", bg: "#2E1065" },
 };
 
 export default function CozinhaApp({ onNavegar }) {
@@ -26,6 +28,7 @@ export default function CozinhaApp({ onNavegar }) {
   const [clock, setClock] = useState("");
   const [toast, setToast] = useState(null);
   const [marcando, setMarcando] = useState({});
+  const [filtro, setFiltro] = useState("todos");
   const prevCount = useRef(0);
   const audioRef = useRef(null);
 
@@ -84,6 +87,15 @@ export default function CozinhaApp({ onNavegar }) {
 
   const totalItens = grupos.reduce((s, g) => s + g.itens.length, 0);
 
+  const tipoGrupo = (g) => {
+    if (g.tipo === "mesa") return "mesa";
+    if (g.tipo_entrega === "retirada") return "retirada";
+    if (g.tipo_entrega === "casa") return "casa";
+    return "delivery";
+  };
+
+  const gruposFiltrados = filtro === "todos" ? grupos : grupos.filter(g => tipoGrupo(g) === filtro);
+
   return (
     <div style={{
       fontFamily: "'DM Sans', 'Inter', system-ui, sans-serif",
@@ -139,19 +151,45 @@ export default function CozinhaApp({ onNavegar }) {
             <span style={{ fontSize: 13, color: "#777", fontWeight: 500 }}>na fila</span>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <span className="cz-badge" style={{ background: "#2A1A0A", color: "#F59E0B" }}>🪑 {grupos.filter(g => g.tipo === "mesa").reduce((s, g) => s + g.itens.length, 0)}</span>
-            <span className="cz-badge" style={{ background: "#172554", color: "#60A5FA" }}>🛵 {grupos.filter(g => g.tipo === "delivery").reduce((s, g) => s + g.itens.length, 0)}</span>
+            <span className="cz-badge" style={{ background: "#2A1A0A", color: "#F59E0B" }}>🪑 {grupos.filter(g => tipoGrupo(g) === "mesa").reduce((s, g) => s + g.itens.length, 0)}</span>
+            <span className="cz-badge" style={{ background: "#172554", color: "#60A5FA" }}>🛵 {grupos.filter(g => tipoGrupo(g) === "delivery").reduce((s, g) => s + g.itens.length, 0)}</span>
+            <span className="cz-badge" style={{ background: "#1A2E05", color: "#84CC16" }}>🏪 {grupos.filter(g => tipoGrupo(g) === "retirada").reduce((s, g) => s + g.itens.length, 0)}</span>
+            <span className="cz-badge" style={{ background: "#2E1065", color: "#C084FC" }}>🍽️ {grupos.filter(g => tipoGrupo(g) === "casa").reduce((s, g) => s + g.itens.length, 0)}</span>
           </div>
           <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: "#555", fontWeight: 500 }}>{clock}</span>
         </div>
       </header>
+
+      <div style={{ display: "flex", gap: 8, padding: "14px 28px 0", flexWrap: "wrap" }}>
+        {[
+          { key: "todos", label: "Todos", icon: "" },
+          { key: "mesa", label: "Mesas", icon: "🪑" },
+          { key: "delivery", label: "Delivery", icon: "🛵" },
+          { key: "retirada", label: "Retirada", icon: "🏪" },
+          { key: "casa", label: "No local", icon: "🍽️" },
+        ].map(f => {
+          const ativo = filtro === f.key;
+          const cfg = TIPO_CFG[f.key];
+          return (
+            <button key={f.key} onClick={() => setFiltro(f.key)} style={{
+              background: ativo ? (cfg?.bg || "#333") : "#1A1A1A",
+              color: ativo ? (cfg?.color || "#F5F5F4") : "#777",
+              border: `1.5px solid ${ativo ? (cfg?.color || "#555") + "55" : "#2A2A2A"}`,
+              borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+            }}>
+              {f.icon ? `${f.icon} ` : ""}{f.label}
+            </button>
+          );
+        })}
+      </div>
 
       {loading ? (
         <div className="cz-empty">
           <div style={{ fontSize: 40 }}>🔥</div>
           <div style={{ fontSize: 14, fontWeight: 600 }}>Carregando fila...</div>
         </div>
-      ) : grupos.length === 0 ? (
+      ) : gruposFiltrados.length === 0 ? (
         <div className="cz-empty">
           <div style={{ fontSize: 64 }}>✨</div>
           <div style={{ fontSize: 20, fontWeight: 700, color: "#777" }}>Nenhum pedido na fila</div>
@@ -159,8 +197,9 @@ export default function CozinhaApp({ onNavegar }) {
         </div>
       ) : (
         <div className="cz-grid">
-          {grupos.map(grupo => {
-            const cfg = TIPO_CFG[grupo.tipo] || TIPO_CFG.mesa;
+          {gruposFiltrados.map(grupo => {
+            const tg = tipoGrupo(grupo);
+            const cfg = TIPO_CFG[tg] || TIPO_CFG.mesa;
             const isMesa = grupo.tipo === "mesa";
             const estaPreparando = grupo.status_grupo === "preparando";
             return (
@@ -183,11 +222,8 @@ export default function CozinhaApp({ onNavegar }) {
                       {grupo.itens.length} {grupo.itens.length === 1 ? "item" : "itens"}
                     </span>
                     {!isMesa && (
-                      <span className="cz-badge" style={{
-                        background: grupo.tipo_entrega === "retirada" ? "#1A2E05" : "#172554",
-                        color: grupo.tipo_entrega === "retirada" ? "#84CC16" : "#60A5FA",
-                      }}>
-                        {grupo.tipo_entrega === "retirada" ? "🏪 Retirada" : "🛵 Entrega"}
+                      <span className="cz-badge" style={{ background: cfg.bg, color: cfg.color }}>
+                        {cfg.icon} {grupo.label}
                       </span>
                     )}
                   </div>

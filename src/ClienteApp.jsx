@@ -142,7 +142,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
   }, [cep]);
 
   const clienteValido = () => clienteNome.trim() && clienteTelefone.replace(/\D/g, "").length >= 10;
-  const enderecoValido = () => tipoEntrega === "retirada" || (rua.trim() && bairro.trim());
+  const enderecoValido = () => tipoEntrega === "retirada" || tipoEntrega === "casa" || (rua.trim() && bairro.trim());
 
   const copiarPix = () => {
     navigator.clipboard.writeText(pixInfo.pix_key).then(() => {
@@ -167,7 +167,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
 
   const confirmar = () => {
     const trocoNum = metodoPagamento === "dinheiro" && precisaTroco ? parseValor(trocoPara) : null;
-    const enderecoFinal = tipoEntrega === "retirada"
+    const enderecoFinal = (tipoEntrega === "retirada" || tipoEntrega === "casa")
       ? { cep: "", rua: "", numero: "", bairro: "", referencia: "" }
       : { cep: cep.replace(/\D/g, ""), rua, numero, bairro, referencia };
     onConfirm({
@@ -240,16 +240,17 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
           <div>
             <div style={{ ...labelStyle, marginBottom: 10 }}>Como prefere receber?</div>
             <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-              <button type="button" onClick={() => setTipoEntrega("entrega")}
-                style={{ flex: 1, padding: "16px 12px", background: tipoEntrega === "entrega" ? "var(--brand-light)" : "var(--surface-warm)", color: tipoEntrega === "entrega" ? "var(--brand)" : "var(--text-muted)", border: `1.5px solid ${tipoEntrega === "entrega" ? "var(--brand)" : "var(--border-dark)"}`, borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito', sans-serif", display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
-                <span style={{ fontSize: 24 }}>🏠</span>
-                <span>Entrega no endereço</span>
-              </button>
-              <button type="button" onClick={() => setTipoEntrega("retirada")}
-                style={{ flex: 1, padding: "16px 12px", background: tipoEntrega === "retirada" ? "var(--brand-light)" : "var(--surface-warm)", color: tipoEntrega === "retirada" ? "var(--brand)" : "var(--text-muted)", border: `1.5px solid ${tipoEntrega === "retirada" ? "var(--brand)" : "var(--border-dark)"}`, borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito', sans-serif", display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
-                <span style={{ fontSize: 24 }}>🏪</span>
-                <span>Retirar no estabelecimento</span>
-              </button>
+              {[
+                { key: "entrega", icon: "🏠", label: "Entrega" },
+                { key: "retirada", icon: "🏪", label: "Retirada" },
+                { key: "casa", icon: "🍽️", label: "Comer no local" },
+              ].map(opt => (
+                <button key={opt.key} type="button" onClick={() => setTipoEntrega(opt.key)}
+                  style={{ flex: 1, padding: "16px 12px", background: tipoEntrega === opt.key ? "var(--brand-light)" : "var(--surface-warm)", color: tipoEntrega === opt.key ? "var(--brand)" : "var(--text-muted)", border: `1.5px solid ${tipoEntrega === opt.key ? "var(--brand)" : "var(--border-dark)"}`, borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Nunito', sans-serif", display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+                  <span style={{ fontSize: 24 }}>{opt.icon}</span>
+                  <span>{opt.label}</span>
+                </button>
+              ))}
             </div>
 
             {tipoEntrega === "entrega" && (
@@ -287,6 +288,15 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
                 <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>🏪 Retirada no estabelecimento</div>
                 <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
                   Quando o pedido estiver pronto, você receberá um aviso pelo WhatsApp para vir buscar.
+                </div>
+              </div>
+            )}
+
+            {tipoEntrega === "casa" && (
+              <div style={{ background: "var(--brand-light)", border: "1.5px solid var(--brand)", borderRadius: 12, padding: "18px 20px" }}>
+                <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>🍽️ Consumir no local</div>
+                <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
+                  Seu pedido será preparado e servido diretamente na sua mesa.
                 </div>
               </div>
             )}
@@ -1227,7 +1237,8 @@ function MeusPedidosView({ ativo }) {
           {pedidos.map(p => {
             const aberto = expandido === p.id;
             const corStatus = p.status === "cancelado" ? "#dc2626" : p.status === "entregue" ? "#16a34a" : "var(--brand)";
-            const isRetirada = p.tipo_entrega === "retirada" || (!p.endereco_rua && p.tipo_entrega !== "entrega");
+            const isRetirada = p.tipo_entrega === "retirada" || (!p.endereco_rua && !["entrega", "casa"].includes(p.tipo_entrega));
+            const isCasa = p.tipo_entrega === "casa";
             return (
               <div key={p.id} style={{
                 background: "var(--surface)", border: "1.5px solid var(--border)",
@@ -1349,7 +1360,9 @@ function MeusPedidosView({ ativo }) {
                       background: "var(--surface-warm)", borderRadius: 10,
                       padding: "10px 14px", marginBottom: 8, fontSize: 13, fontFamily: "'Nunito', sans-serif", color: "var(--text)",
                     }}>
-                      {isRetirada ? (
+                      {isCasa ? (
+                        <><span style={{ fontWeight: 800 }}>🍽️ Consumir no local</span></>
+                      ) : isRetirada ? (
                         <><span style={{ fontWeight: 800 }}>🏪 Retirada no estabelecimento</span></>
                       ) : (
                         <>

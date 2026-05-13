@@ -73,7 +73,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
     try {
       const [m, f, s, p] = await Promise.all([
         api.mesas.listar(),
-        api.cozinha.fila(),
+        api.cozinha.filaUnificada(),
         api.caixaStats(),
         api.produtos.listar(),
       ]);
@@ -435,7 +435,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
             <div className="fc-stat">
               <div className="fc-stat-icon" style={{ background: "var(--warning-bg)" }}>⏱️</div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Fila cozinha</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>{fila.length}</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>{fila.reduce((s, g) => s + (g.itens?.length || 0), 0)}</div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>itens em preparo</div>
             </div>
             <div className="fc-stat">
@@ -508,7 +508,8 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
                     fechar: "var(--warning)",
                     reservada: "var(--info)",
                   }[mesa.status];
-                  const pendentes = mesa.comanda ? fila.filter(f => f.comanda_numero === mesa.comanda.numero).length : 0;
+                  const grupoMesa = mesa.comanda ? fila.find(g => g.tipo === "mesa" && g.comanda_numero === mesa.comanda.numero) : null;
+                  const pendentes = grupoMesa ? grupoMesa.itens.length : 0;
 
                   return (
                     <div
@@ -624,23 +625,34 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
           <div className="fc-side-card">
             <div className="fc-side-head">
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6 }}>🔔 Fila da cozinha</div>
-              <span className="fc-pill" style={{ background: "var(--success)" }}>{fila.length} ativos</span>
+              <span className="fc-pill" style={{ background: "var(--success)" }}>{fila.reduce((s, g) => s + (g.itens?.length || 0), 0)} ativos</span>
             </div>
             <div style={{ padding: "8px 0" }}>
               {fila.length === 0 ? (
                 <div style={{ padding: "20px 18px", textAlign: "center", color: "var(--text-soft)", fontSize: 13 }}>Nenhum item na fila</div>
-              ) : fila.map(item => (
-                <div key={item.id} className="fc-new-order">
-                  <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, fontVariantNumeric: "tabular-nums", minWidth: 38, marginTop: 1 }}>
-                    {fmtHora(item.created_at)}
+              ) : fila.map(grupo => {
+                const tipoIcon = grupo.tipo === "mesa" ? "🪑" : grupo.tipo_entrega === "retirada" ? "🏪" : grupo.tipo_entrega === "casa" ? "🍽️" : "🛵";
+                const tipoColor = grupo.tipo === "mesa" ? "var(--gold-deep)" : grupo.tipo_entrega === "retirada" ? "#16a34a" : grupo.tipo_entrega === "casa" ? "#9333ea" : "#2563eb";
+                return (
+                  <div key={grupo.grupo_id} style={{ borderBottom: "1px solid var(--border)", padding: "8px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: tipoColor }}>{tipoIcon} {grupo.label}</span>
+                      {grupo.cliente_nome && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>· {grupo.cliente_nome}</span>}
+                      <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{fmtHora(grupo.created_at)}</span>
+                    </div>
+                    {grupo.itens.map((item, idx) => (
+                      <div key={item.id || idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 12 }}>
+                        <span style={{ flex: 1, lineHeight: 1.4 }}>
+                          {item.quantidade > 1 ? `${item.quantidade}× ` : ""}{item.produto_nome}
+                        </span>
+                        {grupo.tipo === "mesa" && (
+                          <button onClick={() => handleItemPronto(item.id)} style={{ fontSize: 10, background: "var(--success-bg)", color: "var(--success)", border: "none", padding: "3px 8px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontFamily: "inherit" }}>Pronto</button>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--gold-deep)", marginBottom: 2 }}>🪑 Mesa {item.mesa_numero}</div>
-                    <div style={{ fontSize: 12, lineHeight: 1.4 }}>{item.produto_nome}</div>
-                  </div>
-                  <button onClick={() => handleItemPronto(item.id)} style={{ fontSize: 10, background: "var(--success-bg)", color: "var(--success)", border: "none", padding: "4px 8px", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontFamily: "inherit" }}>Pronto</button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </aside>
