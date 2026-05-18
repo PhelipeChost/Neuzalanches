@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "./api";
 import ClienteApp from "./ClienteApp";
 import FluxoCaixa from "./fluxo-de-caixa";
-import Produtos from "./Produtos";
 import Pedidos from "./Pedidos";
 import Insumos from "./Insumos";
 import CustosFixos from "./CustosFixos";
@@ -10,6 +9,7 @@ import Estoque from "./Estoque";
 import Lixeira from "./Lixeira";
 import FrenteCaixa from "./FrenteCaixa";
 import CozinhaApp from "./CozinhaApp";
+import ProdutosApp from "./ProdutosApp";
 import MesaApp from "./MesaApp";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
@@ -30,11 +30,6 @@ const DIAS_SEMANA = [
 function AdminConfig() {
   const [emails, setEmails] = useState([]);
   const [novoEmail, setNovoEmail] = useState("");
-  const [categorias, setCategorias] = useState([]);
-  const [novaCat, setNovaCat] = useState("");
-  const [novaCatAdicionais, setNovaCatAdicionais] = useState(false);
-  const [adicionais, setAdicionais] = useState([]);
-  const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "" });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
@@ -48,13 +43,9 @@ function AdminConfig() {
   useEffect(() => {
     Promise.all([
       api.adminEmails.listar(),
-      api.categorias.listar(),
-      api.adicionais.listar(),
       api.horario.obter(),
-    ]).then(([em, cats, ads, hor]) => {
+    ]).then(([em, hor]) => {
       setEmails(em);
-      setCategorias(cats);
-      setAdicionais(ads);
       const { aberto, ...cfg } = hor;
       setHorario(cfg);
       setHorarioAberto(aberto);
@@ -104,89 +95,12 @@ function AdminConfig() {
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
-  // ── Categorias ──
-  const adicionarCategoria = async () => {
-    const nome = novaCat.trim();
-    if (!nome) return showToast("Digite o nome da categoria", "#dc2626");
-    try {
-      const nova = await api.categorias.criar({ nome, permite_adicionais: novaCatAdicionais });
-      setCategorias(cs => [...cs, nova]);
-      setNovaCat("");
-      setNovaCatAdicionais(false);
-      showToast("Categoria criada!");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const removerCategoria = async (id) => {
-    try {
-      await api.categorias.excluir(id);
-      setCategorias(cs => cs.filter(c => c.id !== id));
-      showToast("Categoria removida", "#7c3aed");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const toggleAdicionais = async (cat) => {
-    try {
-      const atualizada = await api.categorias.atualizar(cat.id, { nome: cat.nome, permite_adicionais: !cat.permite_adicionais });
-      setCategorias(cs => cs.map(c => c.id === cat.id ? atualizada : c));
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const moverCategoria = async (id, direcao) => {
-    const idx = categorias.findIndex(c => c.id === id);
-    if (idx < 0) return;
-    const novoIdx = idx + direcao;
-    if (novoIdx < 0 || novoIdx >= categorias.length) return;
-    // Otimismo: atualiza local primeiro
-    const novaLista = [...categorias];
-    [novaLista[idx], novaLista[novoIdx]] = [novaLista[novoIdx], novaLista[idx]];
-    setCategorias(novaLista);
-    try {
-      await api.categorias.reordenar(novaLista.map(c => c.id));
-    } catch (err) {
-      showToast("Erro ao reordenar: " + err.message, "#dc2626");
-      // Reverte recarregando do servidor
-      try { setCategorias(await api.categorias.listar()); } catch { /* noop */ }
-    }
-  };
-
-  // ── Adicionais ──
-  const adicionarAdicional = async () => {
-    const nome = novoAd.nome.trim();
-    const preco = parseFloat(novoAd.preco);
-    const custo = parseFloat(novoAd.custo) || 0;
-    if (!nome || isNaN(preco) || preco < 0) return showToast("Preencha nome e preco valido", "#dc2626");
-    try {
-      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true });
-      setAdicionais(ads => [...ads, novo]);
-      setNovoAd({ nome: "", preco: "", custo: "" });
-      showToast("Adicional criado!");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const removerAdicional = async (id) => {
-    try {
-      await api.adicionais.excluir(id);
-      setAdicionais(ads => ads.filter(a => a.id !== id));
-      showToast("Adicional removido", "#7c3aed");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const toggleDisponivel = async (ad) => {
-    try {
-      const atualizado = await api.adicionais.atualizar(ad.id, { nome: ad.nome, preco: ad.preco, custo: ad.custo || 0, disponivel: !ad.disponivel });
-      setAdicionais(ads => ads.map(a => a.id === ad.id ? atualizado : a));
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const fmtPreco = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
 
   return (
     <div className="anim">
-      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600, marginBottom: 4 }}>Configuracoes</div>
-      <div style={{ fontSize: 12, color: "#a8a29e", marginBottom: 24 }}>Gerencie categorias, adicionais e acessos administrativos</div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600, marginBottom: 4 }}>Configurações</div>
+      <div style={{ fontSize: 12, color: "#a8a29e", marginBottom: 24 }}>Horário de funcionamento e acessos administrativos</div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
 
@@ -281,106 +195,6 @@ function AdminConfig() {
             style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvandoHorario ? 0.6 : 1 }}>
             {salvandoHorario ? "Salvando..." : "💾 Salvar configuração"}
           </button>
-        </div>
-
-        {/* ── CATEGORIAS ─────────────────────────────────────────────── */}
-        <div className="card">
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Categorias de Produtos</div>
-          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-            Categorias disponiveis para classificar os produtos. Marque "Permite adicionais" para categorias como Lanches.
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
-            <input value={novaCat} onChange={e => setNovaCat(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionarCategoria()}
-              placeholder="Nova categoria" style={{ ...cfgInp, flex: 1 }} />
-            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#78716c", whiteSpace: "nowrap", cursor: "pointer" }}>
-              <input type="checkbox" checked={novaCatAdicionais} onChange={e => setNovaCatAdicionais(e.target.checked)} style={{ accentColor: "#15803d" }} />
-              Adicionais
-            </label>
-            <button onClick={adicionarCategoria} style={cfgBtn}>+ Criar</button>
-          </div>
-
-          {categorias.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhuma categoria.</div>
-          ) : (
-            <>
-              <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 8, fontStyle: "italic" }}>
-                A ordem abaixo é a mesma em que aparecem no cardápio do cliente. Use ↑ ↓ para reorganizar.
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {categorias.map((c, idx) => (
-                  <div key={c.id} style={cfgRow}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                        <button onClick={() => moverCategoria(c.id, -1)} disabled={idx === 0}
-                          title="Mover para cima"
-                          style={{ background: idx === 0 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === 0 ? "not-allowed" : "pointer", color: idx === 0 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>▲</button>
-                        <button onClick={() => moverCategoria(c.id, 1)} disabled={idx === categorias.length - 1}
-                          title="Mover para baixo"
-                          style={{ background: idx === categorias.length - 1 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === categorias.length - 1 ? "not-allowed" : "pointer", color: idx === categorias.length - 1 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>▼</button>
-                      </div>
-                      <span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 700, minWidth: 18 }}>{idx + 1}.</span>
-                      <span style={{ fontSize: 14, fontWeight: 600 }}>{c.nome}</span>
-                      {c.permite_adicionais ? (
-                        <span style={{ background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>Adicionais</span>
-                      ) : null}
-                    </div>
-                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <button onClick={() => toggleAdicionais(c)}
-                        style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-                        {c.permite_adicionais ? "Desativar adicionais" : "Ativar adicionais"}
-                      </button>
-                      <button onClick={() => removerCategoria(c.id)} style={cfgDel}>Remover</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* ── ADICIONAIS ─────────────────────────────────────────────── */}
-        <div className="card">
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Adicionais (Acompanhamentos)</div>
-          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-            Itens extras que o cliente pode adicionar aos produtos de categorias com adicionais habilitados. Ex: Cheddar, Bacon, Ovo.
-          </div>
-
-          <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
-            <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
-              placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
-            <input value={novoAd.preco} onChange={e => setNovoAd({ ...novoAd, preco: e.target.value })}
-              placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
-            <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
-              placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
-            <button onClick={adicionarAdicional} style={cfgBtn}>+ Criar</button>
-          </div>
-
-          {adicionais.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhum adicional cadastrado.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {adicionais.map(a => (
-                <div key={a.id} style={cfgRow}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>{a.nome}</span>
-                    <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>{fmtPreco(a.preco)}</span>
-                    {a.custo > 0 && <span style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmtPreco(a.custo)}</span>}
-                    <span style={{ background: a.disponivel ? "#dcfce7" : "#fee2e2", color: a.disponivel ? "#15803d" : "#dc2626", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
-                      {a.disponivel ? "Ativo" : "Inativo"}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={() => toggleDisponivel(a)}
-                      style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-                      {a.disponivel ? "Desativar" : "Ativar"}
-                    </button>
-                    <button onClick={() => removerAdicional(a.id)} style={cfgDel}>Remover</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* ── ADMIN EMAILS ───────────────────────────────────────────── */}
@@ -561,12 +375,17 @@ export default function App() {
 
   const navegar = (destino) => {
     if (destino === "cardapio") window.location.href = "/";
-    else setSetor(destino === "pedidos" || destino === "cozinha" || destino === "caixa" ? destino : null);
+    else setSetor(["pedidos", "cozinha", "caixa", "produtos"].includes(destino) ? destino : null);
   };
 
   // ─── SETOR: Cozinha ──────────────────────────────────────────────────────
   if (setor === "cozinha") {
     return <CozinhaApp onNavegar={navegar} />;
+  }
+
+  // ─── SETOR: Produtos e Promoções ─────────────────────────────────────────
+  if (setor === "produtos") {
+    return <ProdutosApp onNavegar={navegar} />;
   }
 
   // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
@@ -593,10 +412,15 @@ export default function App() {
             <div style={{ fontSize: 13, color: "#a8a29e", marginTop: 6 }}>Selecione seu setor de trabalho</div>
           </div>
           <div style={{ display: "flex", gap: 24, justifyContent: "center", flexWrap: "wrap" }}>
+            <div className="hub-card" onClick={() => setSetor("produtos")}>
+              <div style={{ width: 72, height: 72, borderRadius: 18, background: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>🍔</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Produtos e Promoções</div>
+              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5 }}>Cardápio, categorias, adicionais e promoções</div>
+            </div>
             <div className="hub-card" onClick={() => setSetor("pedidos")}>
               <div style={{ width: 72, height: 72, borderRadius: 18, background: "linear-gradient(135deg, #15803d 0%, #166534 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📋</div>
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Pedidos</div>
-              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5 }}>Gerenciar pedidos, produtos, estoque e configurações</div>
+              <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5 }}>Gerenciar pedidos e acompanhar status</div>
               {pendentesCount > 0 && (
                 <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "4px 14px", fontSize: 12, fontWeight: 700 }}>
                   {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
@@ -625,7 +449,6 @@ export default function App() {
   // ─── SETOR: Painel admin (Pedidos) ──────────────────────────────────────
   const adminNav = [
     { key: "pedidos", label: "Pedidos", badge: pendentesCount },
-    { key: "produtos", label: "Produtos" },
     { key: "insumos", label: "Insumos" },
     { key: "estoque", label: "Estoque" },
     { key: "financeiro", label: "Financeiro" },
@@ -711,7 +534,6 @@ export default function App() {
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
         {adminTab === "pedidos" && <Pedidos />}
-        {adminTab === "produtos" && <Produtos />}
         {adminTab === "insumos" && <Insumos />}
         {adminTab === "estoque" && <Estoque />}
         {adminTab === "financeiro" && <FluxoCaixa />}
