@@ -3,6 +3,8 @@ import { api } from "./api";
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const fmt = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
+const inpLight = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
 const parseDateUTC = (str) => {
   if (!str) return new Date(NaN);
   if (str instanceof Date) return str;
@@ -72,6 +74,233 @@ function StatusPipelineDark({ status }) {
   );
 }
 
+// ─── MODAL ADICIONAIS (light, for overlay) ──────────────────────────────────
+function ModalAdicionaisInline({ produto, adicionais, onConfirm, onClose }) {
+  const [selecionados, setSelecionados] = useState([]);
+
+  const updateQtdAd = (ad, delta) => {
+    setSelecionados(prev => {
+      const existing = prev.find(s => s.id === ad.id);
+      if (existing) {
+        const newQtd = existing.quantidade + delta;
+        if (newQtd <= 0) return prev.filter(s => s.id !== ad.id);
+        return prev.map(s => s.id === ad.id ? { ...s, quantidade: newQtd } : s);
+      } else if (delta > 0) {
+        return [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco, quantidade: 1 }];
+      }
+      return prev;
+    });
+  };
+
+  const totalAdicionais = selecionados.reduce((s, a) => s + a.preco * a.quantidade, 0);
+  const totalItem = produto.preco + totalAdicionais;
+
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, padding: "22px 24px", width: 380, boxShadow: "0 15px 50px rgba(0,0,0,0.2)" }} onClick={e => e.stopPropagation()}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: "#1c1917", marginBottom: 4 }}>{produto.nome}</div>
+      <div style={{ fontSize: 13, color: "#15803d", fontWeight: 500, marginBottom: 14 }}>{fmt(produto.preco)}</div>
+
+      <div style={{ fontSize: 11, fontWeight: 600, color: "#78716c", marginBottom: 8, letterSpacing: "0.06em" }}>ADICIONAIS</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 14 }}>
+        {adicionais.map(ad => {
+          const sel = selecionados.find(s => s.id === ad.id);
+          const qtd = sel ? sel.quantidade : 0;
+          return (
+            <div key={ad.id} style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+              background: qtd > 0 ? "#f0fdf4" : "#fafaf9", border: `1px solid ${qtd > 0 ? "#86efac" : "#e7e5e4"}`,
+              borderRadius: 8, fontSize: 12, color: "#1c1917"
+            }}>
+              <span style={{ flex: 1, fontWeight: 500 }}>{ad.nome}</span>
+              <span style={{ fontWeight: 600, color: "#15803d" }}>+ {fmt(ad.preco)}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0}
+                  style={{ width: 22, height: 22, border: "1px solid #e7e5e4", borderRadius: 4, background: "#fff", cursor: qtd > 0 ? "pointer" : "default", fontSize: 12, lineHeight: 1, color: qtd > 0 ? "#1c1917" : "#d6d3d1" }}>-</button>
+                <span style={{ fontSize: 12, fontWeight: 600, minWidth: 18, textAlign: "center" }}>{qtd}</span>
+                <button onClick={() => updateQtdAd(ad, 1)}
+                  style={{ width: 22, height: 22, border: "1px solid #e7e5e4", borderRadius: 4, background: "#fff", cursor: "pointer", fontSize: 12, lineHeight: 1 }}>+</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1.5px solid #e7e5e4", paddingTop: 12 }}>
+        <span style={{ fontSize: 18, fontWeight: 600, color: "#15803d" }}>{fmt(totalItem)}</span>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={onClose} style={{ padding: "7px 14px", background: "#fff", border: "1px solid #e7e5e4", borderRadius: 6, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
+          <button onClick={() => onConfirm(selecionados)} style={{ padding: "7px 14px", background: "#15803d", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff" }}>Adicionar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MODAL PEDIDO MANUAL (light, for overlay) ──────────────────────────────
+function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave, onClose }) {
+  const [clienteNome, setClienteNome] = useState("");
+  const [obs, setObs] = useState("");
+  const [itens, setItens] = useState([]);
+  const [salvando, setSalvando] = useState(false);
+  const [modalAdItem, setModalAdItem] = useState(null);
+
+  const catPermiteAdicionais = {};
+  categorias.forEach(c => { catPermiteAdicionais[c.nome] = !!c.permite_adicionais; });
+
+  let uidCounter = useRef(0);
+  const nextUid = () => `_manual_${Date.now()}_${++uidCounter.current}`;
+
+  const handleClickProduto = (produto) => {
+    if (catPermiteAdicionais[produto.categoria] && adicionaisDisponiveis.length > 0) {
+      setModalAdItem(produto);
+    } else {
+      addItem(produto, []);
+    }
+  };
+
+  const addItem = (produto, adicionaisSel) => {
+    const adKey = adicionaisSel.map(a => `${a.id}:${a.quantidade || 1}`).sort().join(",");
+    const existente = itens.find(i => i.produto_id === produto.id && (i._adKey || "") === adKey);
+    if (existente) {
+      setItens(itens.map(i => i._uid === existente._uid ? { ...i, quantidade: i.quantidade + 1 } : i));
+    } else {
+      setItens([...itens, {
+        _uid: nextUid(),
+        _adKey: adKey,
+        produto_id: produto.id,
+        produto_nome: produto.nome,
+        preco_unitario: produto.preco,
+        quantidade: 1,
+        adicionais: adicionaisSel,
+      }]);
+    }
+  };
+
+  const removeItem = (uid) => setItens(itens.filter(i => i._uid !== uid));
+  const updateQtd = (uid, qtd) => {
+    if (qtd < 1) return removeItem(uid);
+    setItens(itens.map(i => i._uid === uid ? { ...i, quantidade: qtd } : i));
+  };
+
+  const calcItemTotal = (item) => {
+    const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
+    return (item.preco_unitario + adTotal) * item.quantidade;
+  };
+
+  const total = itens.reduce((s, i) => s + calcItemTotal(i), 0);
+
+  const salvar = async () => {
+    if (itens.length === 0) return;
+    setSalvando(true);
+    try {
+      const itensLimpos = itens.map(({ _uid, _adKey, ...rest }) => rest);
+      await onSave({ itens: itensLimpos, obs, cliente_nome: clienteNome || "Pedido presencial", tipo: "presencial" });
+      onClose();
+    } catch { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 560, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", color: "#1c1917" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Pedido Manual (Presencial)</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
+        </div>
+
+        <div>
+          <label style={lbl}>Nome do cliente (opcional)</label>
+          <input style={inpLight} value={clienteNome} onChange={e => setClienteNome(e.target.value)} placeholder="Ex: João Silva" />
+        </div>
+
+        {/* Lista de produtos */}
+        <div style={{ marginTop: 16 }}>
+          <label style={lbl}>ADICIONAR PRODUTOS</label>
+          <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid #e7e5e4", borderRadius: 8, padding: 4 }}>
+            {produtos.filter(p => p.disponivel).length === 0 ? (
+              <div style={{ padding: 16, textAlign: "center", color: "#a8a29e", fontSize: 12 }}>Nenhum produto disponível</div>
+            ) : produtos.filter(p => p.disponivel).map(p => (
+              <div key={p.id} onClick={() => handleClickProduto(p)}
+                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", cursor: "pointer", borderRadius: 6, transition: "background 0.1s" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#f0fdf4"}
+                onMouseLeave={e => e.currentTarget.style.background = ""}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{p.nome}</div>
+                  <span style={{ fontSize: 10, color: "#a8a29e" }}>
+                    {p.categoria}
+                    {catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.length > 0 ? " · com adicionais" : ""}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d" }}>{fmt(p.preco)}</span>
+                  <span style={{ background: "#15803d", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>+</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Itens selecionados */}
+        {itens.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <label style={lbl}>ITENS DO PEDIDO</label>
+            {itens.map(item => (
+              <div key={item._uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f5f5f4" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500 }}>{item.produto_nome}</div>
+                  {item.adicionais && item.adicionais.length > 0 && (
+                    <div style={{ marginTop: 2 }}>
+                      {item.adicionais.map(a => (
+                        <span key={a.id} style={{ display: "inline-block", background: "#f0fdf4", color: "#15803d", fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 3, marginRight: 3 }}>
+                          {(a.quantidade || 1) > 1 ? `${a.quantidade}x ` : "+ "}{a.nome} ({fmt(a.preco * (a.quantidade || 1))})
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button onClick={() => updateQtd(item._uid, item.quantidade - 1)} style={{ width: 24, height: 24, border: "1px solid #e7e5e4", borderRadius: 4, background: "#fff", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>-</button>
+                  <span style={{ fontSize: 13, fontWeight: 600, minWidth: 20, textAlign: "center" }}>{item.quantidade}</span>
+                  <button onClick={() => updateQtd(item._uid, item.quantidade + 1)} style={{ width: 24, height: 24, border: "1px solid #e7e5e4", borderRadius: 4, background: "#fff", cursor: "pointer", fontSize: 14, lineHeight: 1 }}>+</button>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: "#15803d", minWidth: 80, textAlign: "right" }}>{fmt(calcItemTotal(item))}</span>
+                  <button onClick={() => removeItem(item._uid)} style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 14 }}>×</button>
+                </div>
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12, paddingTop: 12, borderTop: "2px solid #e7e5e4" }}>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Total</span>
+              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: "#15803d" }}>{fmt(total)}</span>
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14 }}>
+          <label style={lbl}>Observação (opcional)</label>
+          <input style={inpLight} value={obs} onChange={e => setObs(e.target.value)} placeholder="Notas sobre o pedido..." />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
+          <button onClick={salvar} disabled={salvando || itens.length === 0} style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (salvando || itens.length === 0) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (salvando || itens.length === 0) ? 0.5 : 1 }}>
+            {salvando ? "Registrando..." : `Registrar pedido — ${fmt(total)}`}
+          </button>
+        </div>
+
+        {/* Mini-modal de adicionais */}
+        {modalAdItem && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setModalAdItem(null)}>
+            <ModalAdicionaisInline
+              produto={modalAdItem}
+              adicionais={adicionaisDisponiveis}
+              onConfirm={(sel) => { addItem(modalAdItem, sel); setModalAdItem(null); }}
+              onClose={() => setModalAdItem(null)}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function CozinhaApp({ onNavegar }) {
   const [pedidos, setPedidos] = useState([]);
@@ -87,6 +316,11 @@ export default function CozinhaApp({ onNavegar }) {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   });
   const [expandido, setExpandido] = useState(null);
+  const [modo, setModo] = useState("fila"); // "fila" = active queue, "historico" = all orders
+  const [produtos, setProdutos] = useState([]);
+  const [categorias, setCategorias] = useState([]);
+  const [adicionaisDisponiveis, setAdicionaisDisponiveis] = useState([]);
+  const [modalManual, setModalManual] = useState(false);
 
   // ─── SOM & NOTIFICACOES ──────────────────────────────────────────────────
   const [somAtivo, setSomAtivo] = useState(() => {
@@ -174,10 +408,16 @@ export default function CozinhaApp({ onNavegar }) {
   // ─── CARREGAR DADOS ──────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
     try {
-      const [peds, fila] = await Promise.all([
+      const [peds, fila, prods, cats, ads] = await Promise.all([
         api.pedidos.listar(),
         api.cozinha.filaUnificada(),
+        api.produtos.listar(),
+        api.categorias.listar(),
+        api.adicionais.listar(),
       ]);
+      setProdutos(prods);
+      setCategorias(cats);
+      setAdicionaisDisponiveis(ads);
       const pendentes = peds.filter(p => p.status === "pendente").length;
       const mesaItens = fila.filter(g => g.tipo === "mesa").reduce((s, g) => s + g.itens.length, 0);
       const totalNovo = pendentes + mesaItens;
@@ -215,6 +455,23 @@ export default function CozinhaApp({ onNavegar }) {
       if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
       setTimeout(tocarSom, 100);
     }
+  };
+
+  // ─── PEDIDO MANUAL & EXCLUIR ──────────────────────────────────────────────
+  const criarPedidoManual = async (dados) => {
+    await api.pedidos.criar(dados);
+    showToast("✅ Pedido manual registrado!");
+    await carregar();
+  };
+
+  const excluirPedido = async (id) => {
+    if (!window.confirm("Tem certeza que deseja excluir este pedido permanentemente?")) return;
+    try {
+      await api.pedidos.excluir(id);
+      setPedidos(ps => ps.filter(p => p.id !== id));
+      setExpandido(null);
+      showToast("🗑️ Pedido excluído");
+    } catch { showToast("Erro ao excluir pedido"); }
   };
 
   // ─── STATUS MANAGEMENT ───────────────────────────────────────────────────
@@ -263,6 +520,8 @@ export default function CozinhaApp({ onNavegar }) {
     if (filtroTipo === "mesa") return false;
     if (filtroTipo !== "todos" && tipoFromPedido(p) !== filtroTipo) return false;
     if (filtroStatus !== "todos" && p.status !== filtroStatus) return false;
+    // In "fila" mode, hide terminal statuses unless explicitly filtered
+    if (modo === "fila" && filtroStatus === "todos" && ["entregue", "cancelado"].includes(p.status)) return false;
     if (filtroMes && filtroMes !== "todos") {
       const d = parseDateUTC(p.created_at);
       const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -272,6 +531,7 @@ export default function CozinhaApp({ onNavegar }) {
   });
 
   const mesasFiltradas = gruposMesa.filter(g => {
+    if (modo === "historico") return false; // hide mesa groups in history mode
     if (filtroTipo !== "todos" && filtroTipo !== "mesa") return false;
     if (filtroStatus !== "todos") {
       if (!["pendente", "preparando"].includes(filtroStatus)) return false;
@@ -372,6 +632,7 @@ export default function CozinhaApp({ onNavegar }) {
       {/* ─── TOP BAR ───────────────────────────────────────────────────────── */}
       <header className="cz-topbar">
         <button onClick={() => onNavegar(null)} style={{ background: "none", border: "1.5px solid #333", borderRadius: 10, padding: "8px 14px", color: "#aaa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>{"←"} Início</button>
+        <button onClick={() => setModalManual(true)} style={{ background: "#15803d", border: "none", borderRadius: 10, padding: "8px 16px", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>{"+"} Pedido Manual</button>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{"\u{1F525}"}</div>
           <div>
@@ -435,6 +696,28 @@ export default function CozinhaApp({ onNavegar }) {
         </div>
       )}
 
+      {/* ─── MODE TOGGLE ──────────────────────────────────────────────────── */}
+      <div style={{ padding: "14px 28px 0", display: "flex", gap: 6, alignItems: "center" }}>
+        {[
+          { key: "fila", label: "🔥 Fila Ativa", desc: "Pedidos em andamento" },
+          { key: "historico", label: "📋 Histórico", desc: "Todos os pedidos" },
+        ].map(m => {
+          const ativo = modo === m.key;
+          return (
+            <button key={m.key} onClick={() => { setModo(m.key); if (m.key === "fila") { setFiltroStatus("todos"); setFiltroMes(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }); } }} style={{
+              background: ativo ? (m.key === "fila" ? "#350A0A" : "#172554") : "#1A1A1A",
+              color: ativo ? (m.key === "fila" ? "#F87171" : "#60A5FA") : "#555",
+              border: `1.5px solid ${ativo ? (m.key === "fila" ? "#7F1D1D" : "#1E40AF") : "#2A2A2A"}`,
+              borderRadius: 10, padding: "8px 16px", fontSize: 13, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+            }}>
+              {m.label}
+            </button>
+          );
+        })}
+        <span style={{ fontSize: 12, color: "#444", marginLeft: 8 }}>{modo === "fila" ? "Mostrando pedidos em andamento" : "Mostrando todo o histórico"}</span>
+      </div>
+
       {/* ─── FILTERS ───────────────────────────────────────────────────────── */}
       <div style={{ padding: "14px 28px 0", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         {[
@@ -483,14 +766,18 @@ export default function CozinhaApp({ onNavegar }) {
 
       {/* ─── DATE CONTROLS ─────────────────────────────────────────────────── */}
       <div style={{ padding: "10px 28px 0", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <label style={{ fontSize: 11, color: "#555", fontWeight: 600, letterSpacing: "0.06em" }}>MÊS</label>
-        <select value={filtroMes} onChange={e => setFiltroMes(e.target.value)} style={{
-          background: "#1A1A1A", color: "#F5F5F4", border: "1.5px solid #2A2A2A", borderRadius: 8,
-          padding: "7px 12px", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
-        }}>
-          <option value="todos">Todos os meses</option>
-          {mesesDisponiveis.map(ym => <option key={ym} value={ym}>{labelMes(ym)}</option>)}
-        </select>
+        {modo === "historico" && (
+          <>
+            <label style={{ fontSize: 11, color: "#555", fontWeight: 600, letterSpacing: "0.06em" }}>MÊS</label>
+            <select value={filtroMes} onChange={e => setFiltroMes(e.target.value)} style={{
+              background: "#1A1A1A", color: "#F5F5F4", border: "1.5px solid #2A2A2A", borderRadius: 8,
+              padding: "7px 12px", fontSize: 12, fontWeight: 600, fontFamily: "inherit", cursor: "pointer",
+            }}>
+              <option value="todos">Todos os meses</option>
+              {mesesDisponiveis.map(ym => <option key={ym} value={ym}>{labelMes(ym)}</option>)}
+            </select>
+          </>
+        )}
         <span style={{ fontSize: 12, color: "#555" }}>
           {pedidosFiltrados.length} {pedidosFiltrados.length === 1 ? "pedido" : "pedidos"}
           {mesasFiltradas.length > 0 && ` · ${mesasFiltradas.length} mesa${mesasFiltradas.length > 1 ? "s" : ""}`}
@@ -732,6 +1019,13 @@ export default function CozinhaApp({ onNavegar }) {
                               {"✅"} Entregue {"—"} {fmt(p.total)} registrado no caixa
                             </div>
                           )}
+
+                          {/* Delete button */}
+                          <div style={{ marginTop: 10, borderTop: "1px solid #222", paddingTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                            <button onClick={() => excluirPedido(p.id)} style={{ background: "none", border: "1px solid #7F1D1D", borderRadius: 8, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", color: "#F87171", display: "flex", alignItems: "center", gap: 5 }}>
+                              {"🗑️"} Excluir pedido
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -752,6 +1046,17 @@ export default function CozinhaApp({ onNavegar }) {
       )}
 
       {toast && <div className="cz-toast">{toast}</div>}
+
+      {/* ─── MODAL PEDIDO MANUAL ──────────────────────────────────────────── */}
+      {modalManual && (
+        <ModalPedidoManual
+          produtos={produtos}
+          categorias={categorias}
+          adicionaisDisponiveis={adicionaisDisponiveis}
+          onSave={criarPedidoManual}
+          onClose={() => setModalManual(false)}
+        />
+      )}
     </div>
   );
 }
