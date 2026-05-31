@@ -143,6 +143,7 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
   const [itens, setItens] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [modalAdItem, setModalAdItem] = useState(null);
+  const [registrados, setRegistrados] = useState(0); // T11: contador de lançamentos na sessão
 
   const catPermiteAdicionais = {};
   categorias.forEach(c => { catPermiteAdicionais[c.nome] = !!c.permite_adicionais; });
@@ -189,13 +190,20 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
 
   const total = itens.reduce((s, i) => s + calcItemTotal(i), 0);
 
-  const salvar = async () => {
+  const salvar = async (continuar = false) => {
     if (itens.length === 0) return;
     setSalvando(true);
     try {
       const itensLimpos = itens.map(({ _uid, _adKey, ...rest }) => rest);
       await onSave({ itens: itensLimpos, obs, cliente_nome: clienteNome || "Pedido presencial", tipo: "presencial" });
-      onClose();
+      if (continuar) {
+        // T11: lançamento rápido — limpa o form e mantém o modal aberto para o próximo
+        setItens([]); setObs(""); setClienteNome("");
+        setRegistrados(n => n + 1);
+        setSalvando(false);
+      } else {
+        onClose();
+      }
     } catch { setSalvando(false); }
   };
 
@@ -203,7 +211,14 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 560, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)", color: "#1c1917" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Pedido Manual (Presencial)</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Pedido Manual (Presencial)</div>
+            {registrados > 0 && (
+              <span style={{ background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0", borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 700 }}>
+                {registrados} lançado{registrados > 1 ? "s" : ""} nesta sessão
+              </span>
+            )}
+          </div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
         </div>
 
@@ -279,9 +294,12 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
         </div>
 
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
-          <button onClick={salvar} disabled={salvando || itens.length === 0} style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (salvando || itens.length === 0) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (salvando || itens.length === 0) ? 0.5 : 1 }}>
-            {salvando ? "Registrando..." : `Registrar pedido — ${fmt(total)}`}
+          <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>{registrados > 0 ? "Concluir" : "Cancelar"}</button>
+          <button onClick={() => salvar(true)} disabled={salvando || itens.length === 0} title="Registra e mantém aberto para o próximo (lançamento rápido)" style={{ flex: 1.4, padding: 11, background: "#fff", border: "1.5px solid #15803d", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (salvando || itens.length === 0) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#15803d", opacity: (salvando || itens.length === 0) ? 0.5 : 1 }}>
+            {salvando ? "..." : "+ Registrar e novo"}
+          </button>
+          <button onClick={() => salvar(false)} disabled={salvando || itens.length === 0} style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (salvando || itens.length === 0) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (salvando || itens.length === 0) ? 0.5 : 1 }}>
+            {salvando ? "Registrando..." : `Registrar — ${fmt(total)}`}
           </button>
         </div>
 
