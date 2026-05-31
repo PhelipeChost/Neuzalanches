@@ -27,10 +27,10 @@ const tempoDesde = (iso) => {
 
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const TIPO_CFG = {
-  mesa:     { icon: "\u{1FA91}", color: "#F59E0B", bg: "#2A1A0A" },
-  delivery: { icon: "\u{1F6F5}", color: "#60A5FA", bg: "#172554" },
-  retirada: { icon: "\u{1F3EA}", color: "#84CC16", bg: "#1A2E05" },
-  casa:     { icon: "\u{1F37D}️", color: "#C084FC", bg: "#2E1065" },
+  mesa:     { icon: "\u{1FA91}", color: "#F59E0B", bg: "#2A1A0A", label: "Mesas na cozinha" },
+  delivery: { icon: "\u{1F6F5}", color: "#60A5FA", bg: "#172554", label: "Delivery ativos" },
+  retirada: { icon: "\u{1F3EA}", color: "#84CC16", bg: "#1A2E05", label: "Retiradas ativas" },
+  casa:     { icon: "\u{1F37D}️", color: "#C084FC", bg: "#2E1065", label: "No local ativos" },
 };
 
 const STATUS_PIPELINE = ["pendente", "confirmado", "preparando", "pronto", "entregue"];
@@ -675,7 +675,7 @@ export default function CozinhaApp({ onNavegar }) {
           </div>
           <div style={{ display: "flex", gap: 5 }}>
             {Object.entries(TIPO_CFG).map(([k, c]) => (
-              <span key={k} className="cz-badge" style={{ background: c.bg, color: c.color }}>{c.icon} {countByTipo[k]}</span>
+              <span key={k} className="cz-badge" title={`${c.label}: ${countByTipo[k]}`} style={{ background: c.bg, color: c.color }}>{c.icon} {countByTipo[k]}</span>
             ))}
           </div>
           <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: "#555", fontWeight: 500 }}>{clock}</span>

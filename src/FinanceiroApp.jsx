@@ -25,6 +25,9 @@ export default function FinanceiroApp({ onNavegar }) {
         .mes-sel { padding: 8px 14px; border: 1.5px solid #e7e5e4; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; color: #1c1917; background: #fff; cursor: pointer; }
         .saldo-edit-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; padding: 3px 10px; cursor: pointer; font-size: 11px; color: rgba(255,255,255,0.8); font-family: 'DM Sans', sans-serif; transition: all 0.15s; }
         .saldo-edit-btn:hover { background: rgba(255,255,255,0.25); color: #fff; }
+        .nav-pill { padding: 8px 16px; border-radius: 8px; border: none; background: none; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 12px; color: #78716c; white-space: nowrap; transition: all 0.15s; }
+        .nav-pill:hover { background: #fff; color: #1c1917; }
+        .nav-pill.active { background: #fff; color: #15803d; font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
       `}</style>
 
       {/* Header */}

@@ -874,8 +874,8 @@ app.get("/api/estoque/dashboard", authMiddleware, adminOnly, (req, res) => {
 // ─── HORÁRIO DE FUNCIONAMENTO ────────────────────────────────────────────────
 
 const HORARIO_DEFAULT = {
-  status: 'auto',           // 'auto' | 'aberto' | 'fechado'
-  dias: [0, 2, 3, 4, 5, 6], // 0=Dom 1=Seg 2=Ter 3=Qua 4=Qui 5=Sex 6=Sab
+  status: 'auto',                 // 'auto' | 'aberto' | 'fechado'
+  dias: [0, 1, 2, 3, 4, 5, 6],    // 0=Dom 1=Seg 2=Ter 3=Qua 4=Qui 5=Sex 6=Sab — default do template: todos os dias ativos
   abertura: '19:00',
   fechamento: '01:00',
 };

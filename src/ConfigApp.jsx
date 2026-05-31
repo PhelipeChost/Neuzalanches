@@ -30,7 +30,7 @@ function GeralTab() {
   const [toast, setToast] = useState("");
 
   // Horário de funcionamento
-  const [horario, setHorario] = useState({ status: "auto", dias: [0,2,3,4,5,6], abertura: "19:00", fechamento: "01:00" });
+  const [horario, setHorario] = useState({ status: "auto", dias: [0,1,2,3,4,5,6], abertura: "19:00", fechamento: "01:00" });
   const [horarioAberto, setHorarioAberto] = useState(false);
   const [salvandoHorario, setSalvandoHorario] = useState(false);
 
