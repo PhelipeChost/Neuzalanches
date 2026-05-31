@@ -517,6 +517,141 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
   );
 }
 
+// ─── T9: IMPORTAÇÃO VIA CSV ───────────────────────────────────────────────────
+function splitCSVLine(line, delim) {
+  const out = []; let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+    else if (c === delim && !q) { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+function parsePrecoBR(s) {
+  s = String(s || "").replace(/[R$\s]/g, "");
+  if (s.includes(",") && s.includes(".")) s = s.replace(/\./g, "").replace(",", ".");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  return parseFloat(s);
+}
+function parseProdutosCSV(text) {
+  const linhas = String(text).trim().split(/\r?\n/).filter(l => l.trim());
+  if (linhas.length < 2) return { rows: [], erro: "Inclua um cabeçalho e ao menos 1 linha de produto." };
+  const delim = (linhas[0].match(/;/g) || []).length > (linhas[0].match(/,/g) || []).length ? ";" : ",";
+  const norm = s => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const headers = splitCSVLine(linhas[0], delim).map(norm);
+  const acha = (alts) => headers.findIndex(h => alts.includes(h));
+  const idx = {
+    nome: acha(["nome", "produto", "name", "item"]),
+    preco: acha(["preco", "price", "valor", "venda", "preco_venda"]),
+    categoria: acha(["categoria", "category", "cat", "grupo"]),
+    descricao: acha(["descricao", "description", "desc", "detalhe"]),
+    custo: acha(["custo", "cmv", "cost"]),
+    disponivel: acha(["disponivel", "ativo", "available", "status"]),
+  };
+  if (idx.nome < 0 || idx.preco < 0) return { rows: [], erro: "O cabeçalho precisa ter pelo menos as colunas 'nome' e 'preco'." };
+  const rows = [];
+  for (let i = 1; i < linhas.length; i++) {
+    const cols = splitCSVLine(linhas[i], delim);
+    const nome = (cols[idx.nome] || "").trim();
+    const preco = parsePrecoBR(cols[idx.preco]);
+    if (!nome || isNaN(preco)) continue;
+    rows.push({
+      nome,
+      preco,
+      categoria: idx.categoria >= 0 ? (cols[idx.categoria] || "").trim() : "",
+      descricao: idx.descricao >= 0 ? (cols[idx.descricao] || "").trim() : "",
+      custo: idx.custo >= 0 ? (parsePrecoBR(cols[idx.custo]) || 0) : 0,
+      disponivel: idx.disponivel >= 0 ? !/^(0|nao|n|false|indispon|inativo)/i.test(norm(cols[idx.disponivel] || "")) : true,
+    });
+  }
+  return { rows, erro: rows.length ? null : "Nenhuma linha válida encontrada (verifique nome e preço)." };
+}
+
+function ModalImportarCSV({ onImport, onClose }) {
+  const [texto, setTexto] = useState("");
+  const [importando, setImportando] = useState(false);
+  const fileRef = useRef(null);
+  const { rows, erro } = parseProdutosCSV(texto);
+
+  const carregarArquivo = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => setTexto(String(reader.result || ""));
+    reader.readAsText(f, "utf-8");
+  };
+
+  const importar = async () => {
+    if (!rows.length) return;
+    setImportando(true);
+    try { await onImport(rows); onClose(); }
+    catch { setImportando(false); }
+  };
+
+  const exemplo = "nome,categoria,preco,descricao,disponivel\nX-Tudo,Lanches,28.90,Hambúrguer completo,sim\nCoca-Cola Lata,Bebidas,7,,sim";
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "26px 28px", width: 600, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Importar produtos (CSV)</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
+        </div>
+        <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14 }}>
+          Cole o conteúdo do CSV ou carregue um arquivo. Colunas aceitas: <b>nome</b> e <b>preco</b> (obrigatórias), categoria, descricao, custo, disponivel.
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <button onClick={() => fileRef.current?.click()} style={{ padding: "8px 14px", background: "#f5f5f4", border: "1px solid #e7e5e4", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e", fontWeight: 500 }}>📄 Carregar arquivo .csv</button>
+          <button onClick={() => setTexto(exemplo)} style={{ padding: "8px 14px", background: "#fff", border: "1px solid #e7e5e4", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>Usar exemplo</button>
+          <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" onChange={carregarArquivo} style={{ display: "none" }} />
+        </div>
+
+        <textarea value={texto} onChange={e => setTexto(e.target.value)} placeholder={exemplo}
+          style={{ width: "100%", minHeight: 130, padding: "10px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "monospace", fontSize: 12, outline: "none", resize: "vertical", color: "#1c1917" }} />
+
+        {texto && erro && (
+          <div style={{ marginTop: 10, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{erro}</div>
+        )}
+
+        {rows.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#15803d", marginBottom: 6 }}>{rows.length} produto(s) prontos para importar — prévia:</div>
+            <div style={{ border: "1px solid #e7e5e4", borderRadius: 8, overflow: "hidden", maxHeight: 200, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ background: "#fafaf9" }}>
+                  {["Nome", "Categoria", "Preço", "CMV", "Disp."].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "#78716c", fontWeight: 600 }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {rows.slice(0, 50).map((r, i) => (
+                    <tr key={i} style={{ borderTop: "1px solid #f5f5f4" }}>
+                      <td style={{ padding: "6px 10px", fontWeight: 500 }}>{r.nome}</td>
+                      <td style={{ padding: "6px 10px", color: "#78716c" }}>{r.categoria || "—"}</td>
+                      <td style={{ padding: "6px 10px", color: "#15803d", fontWeight: 600 }}>{Number(r.preco).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
+                      <td style={{ padding: "6px 10px", color: "#78716c" }}>{r.custo ? Number(r.custo).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</td>
+                      <td style={{ padding: "6px 10px" }}>{r.disponivel ? "✅" : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
+          <button onClick={importar} disabled={!rows.length || importando}
+            style={{ flex: 2, padding: 11, background: "#F38C24", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (!rows.length || importando) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (!rows.length || importando) ? 0.5 : 1 }}>
+            {importando ? "Importando..." : `Importar ${rows.length || ""} produto(s)`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
 export default function Produtos() {
   const [produtos, setProdutos] = useState([]);
@@ -524,6 +659,7 @@ export default function Produtos() {
   const [insumos, setInsumos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
+  const [modalImport, setModalImport] = useState(false);
   const [editando, setEditando] = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
   const [toast, setToast] = useState("");
@@ -569,6 +705,19 @@ export default function Produtos() {
     }
   };
 
+  // T9 — importação em lote via CSV
+  const importarCSV = async (rows) => {
+    let ok = 0, fail = 0;
+    for (const r of rows) {
+      try {
+        const novo = await api.produtos.criar({ ...r, preco: Number(r.preco), custo: Number(r.custo) || 0 });
+        setProdutos(ps => [...ps, novo]);
+        ok++;
+      } catch { fail++; }
+    }
+    showToast(`${ok} produto(s) importado(s)${fail ? `, ${fail} com erro` : ""}.`, fail ? "#d97706" : "#14532d");
+  };
+
   // Chamado pela ficha técnica após salvar composição (já atualizou CMV no servidor)
   const fichaSalva = (produto) => {
     setProdutos(ps => ps.map(x => x.id === produto.id ? produto : x));
@@ -604,6 +753,9 @@ export default function Produtos() {
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
           <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} style={{ flex: 1, minWidth: 0, width: "100%" }} />
+          <button className="btn-add" onClick={() => setModalImport(true)} style={{ background: "#fff", color: "#57534e", border: "1.5px solid #e7e5e4", flex: "0 0 auto" }}>
+            ⬆ Importar CSV
+          </button>
           <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24", flex: "0 0 auto" }}>
             <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo produto
           </button>
@@ -647,6 +799,7 @@ export default function Produtos() {
       )}
 
       {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} />}
+      {modalImport && <ModalImportarCSV onImport={importarCSV} onClose={() => setModalImport(false)} />}
 
       {confirmDel && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setConfirmDel(null)}>
