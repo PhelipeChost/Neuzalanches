@@ -10,6 +10,66 @@ import FinanceiroApp from "./FinanceiroApp";
 import ConfigApp from "./ConfigApp";
 import MesaApp from "./MesaApp";
 
+// ─── T5: Onboarding em 4 passos (primeiro acesso) ────────────────────────────
+function OnboardingCard({ onNavegar, produtosTem, steps, onStep, onDismiss }) {
+  const PASSOS = [
+    { key: "produtos", icon: "🍔", setor: "produtos", titulo: "Monte seu cardápio", desc: "Cadastre produtos, categorias e adicionais", auto: produtosTem },
+    { key: "horario",  icon: "🕕", setor: "config",   titulo: "Configure o horário", desc: "Dias e horas de funcionamento da loja" },
+    { key: "qr",       icon: "🪑", setor: "caixa",    titulo: "Imprima os QR Codes", desc: "Um por mesa, para o cliente pedir sozinho" },
+    { key: "cozinha",  icon: "🔥", setor: "cozinha",  titulo: "Abra a Cozinha", desc: "Acompanhe os pedidos chegando em tempo real" },
+  ];
+  const isDone = (p) => p.auto || !!steps[p.key];
+  const concluidos = PASSOS.filter(isDone).length;
+  const pct = Math.round((concluidos / PASSOS.length) * 100);
+
+  return (
+    <div style={{ background: "#fff", border: "2px solid #15803d", borderRadius: 18, padding: "22px 24px", maxWidth: 620, width: "100%", margin: "0 auto 28px", textAlign: "left", boxShadow: "0 8px 30px rgba(21,128,61,0.10)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+        <div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 800, color: "#1c1917" }}>👋 Bem-vindo! Vamos configurar em 4 passos</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginTop: 2 }}>Leva uns minutinhos. Você pode voltar aqui quando quiser.</div>
+        </div>
+        <button onClick={onDismiss} title="Dispensar" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "#a8a29e", lineHeight: 1, padding: 4 }}>×</button>
+      </div>
+
+      {/* Barra de progresso */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "10px 0 16px" }}>
+        <div style={{ flex: 1, height: 7, background: "#f0fdf4", borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ width: `${pct}%`, height: "100%", background: "#15803d", borderRadius: 4, transition: "width 0.4s ease" }} />
+        </div>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#15803d", whiteSpace: "nowrap" }}>{concluidos}/{PASSOS.length}</span>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {PASSOS.map((p, i) => {
+          const done = isDone(p);
+          return (
+            <div key={p.key} onClick={() => { onStep(p.key); onNavegar(p.setor); }}
+              style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: 12, cursor: "pointer",
+                background: done ? "#f0fdf4" : "#fafaf9", border: `1.5px solid ${done ? "#bbf7d0" : "#e7e5e4"}`, transition: "all 0.15s" }}
+              onMouseEnter={e => { if (!done) e.currentTarget.style.background = "#f5f5f4"; }}
+              onMouseLeave={e => { if (!done) e.currentTarget.style.background = "#fafaf9"; }}>
+              <div style={{ width: 34, height: 34, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18,
+                background: done ? "#15803d" : "#fff", border: done ? "none" : "1.5px solid #e7e5e4", color: "#fff" }}>
+                {done ? "✓" : p.icon}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: done ? "#15803d" : "#1c1917", textDecoration: done ? "line-through" : "none" }}>
+                  {i + 1}. {p.titulo}
+                </div>
+                <div style={{ fontSize: 12, color: "#78716c" }}>{p.desc}</div>
+              </div>
+              <span style={{ fontSize: 13, color: done ? "#15803d" : "#a8a29e", fontWeight: 600, whiteSpace: "nowrap" }}>
+                {done ? "Feito" : "Abrir →"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // /mesa/:numero — cardápio público para QR code (sem login)
   const mesaMatch = window.location.pathname.match(/^\/mesa\/(\d+)/);
@@ -28,8 +88,17 @@ export default function App() {
   const [usuario, setUsuario] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [setor, setSetor] = useState(null); // null = hub
+  const [setor, setSetor] = useState(() => localStorage.getItem("nl_setor") || null); // null = hub; restaura último setor
   const [pendentesCount, setPendentesCount] = useState(0);
+
+  // T5 — onboarding (primeiro acesso)
+  const [onbDismissed, setOnbDismissed] = useState(() => localStorage.getItem("nl_onb_done") === "1");
+  const [onbSteps, setOnbSteps] = useState(() => { try { return JSON.parse(localStorage.getItem("nl_onb_steps") || "{}"); } catch { return {}; } });
+  const [produtosTem, setProdutosTem] = useState(false);
+  const marcarPasso = (key) => {
+    setOnbSteps(prev => { const nx = { ...prev, [key]: true }; localStorage.setItem("nl_onb_steps", JSON.stringify(nx)); return nx; });
+  };
+  const dispensarOnb = () => { localStorage.setItem("nl_onb_done", "1"); setOnbDismissed(true); };
 
   // Admin login form
   const [loginEmail, setLoginEmail] = useState("");
@@ -72,6 +141,18 @@ export default function App() {
     const interval = setInterval(checkPendentes, 10000);
     return () => clearInterval(interval);
   }, [usuario]);
+
+  // T6 — lembrar último setor acessado (volta direto nele no próximo acesso)
+  useEffect(() => {
+    if (setor) localStorage.setItem("nl_setor", setor);
+    else localStorage.removeItem("nl_setor");
+  }, [setor]);
+
+  // T5 — detecta se já há produtos (auto-conclui o passo do cardápio)
+  useEffect(() => {
+    if (!usuario || usuario.tipo !== "admin" || onbDismissed) return;
+    api.produtos.listar().then(ps => setProdutosTem(Array.isArray(ps) && ps.length > 0)).catch(() => {});
+  }, [usuario, onbDismissed]);
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
@@ -188,6 +269,16 @@ export default function App() {
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: "#1c1917" }}>Olá, {usuario.nome}</div>
           <div style={{ fontSize: 13, color: "#a8a29e", marginTop: 6 }}>Selecione seu setor de trabalho</div>
         </div>
+
+        {!onbDismissed && (
+          <OnboardingCard
+            onNavegar={setSetor}
+            produtosTem={produtosTem}
+            steps={onbSteps}
+            onStep={marcarPasso}
+            onDismiss={dispensarOnb}
+          />
+        )}
         <div style={{ display: "flex", gap: 18, justifyContent: "center", flexWrap: "wrap", maxWidth: 900 }}>
           {/* Produtos e Promoções */}
           <div className="hub-card" onClick={() => setSetor("produtos")}>
