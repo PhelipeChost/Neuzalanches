@@ -220,6 +220,15 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
 
   return (
     <div className="anim">
+      {itens.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "56px 24px", maxWidth: 460, margin: "0 auto" }}>
+          <div style={{ width: 80, height: 80, borderRadius: 20, background: "#f0fdf4", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40, margin: "0 auto 18px" }}>📦</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 19, fontWeight: 700, color: "#1c1917", marginBottom: 8 }}>Comece seu controle de estoque</div>
+          <div style={{ fontSize: 13, color: "#78716c", lineHeight: 1.5, marginBottom: 22 }}>Cadastre seu primeiro insumo para acompanhar saldo, custo médio e receber alertas de estoque baixo automaticamente.</div>
+          <button onClick={abrirNovo} style={{ ...btnPrimary, padding: "12px 26px", fontSize: 14 }}>+ Cadastrar primeiro item</button>
+        </div>
+      ) : (
+      <>
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         <input className="search" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar item..." style={{ maxWidth: 260 }} />
         <div style={{ flex: 1 }} />
@@ -227,9 +236,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
       </div>
 
       {itensFiltrados.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 40, color: "#a8a29e" }}>
-          {itens.length === 0 ? "Nenhum item cadastrado. Clique em + Novo Item para começar." : "Nenhum item encontrado."}
-        </div>
+        <div style={{ textAlign: "center", padding: 40, color: "#a8a29e" }}>Nenhum item encontrado.</div>
       ) : (
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -269,6 +276,8 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
             </tbody>
           </table>
         </div>
+      )}
+      </>
       )}
 
       {/* Modal novo/editar */}
@@ -1115,23 +1124,31 @@ export default function Estoque() {
         </div>
       </div>
 
-      {/* Nav */}
-      <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", marginBottom: 24, overflowX: "auto" }}>
-        {nav.map(n => (
-          <button key={n.key} className={`est-nav-pill ${tab === n.key ? "active" : ""}`} onClick={() => setTab(n.key)}>
-            {n.label}
-          </button>
-        ))}
-      </div>
+      {/* Nav — escondida até existir ao menos 1 item (T3: progressive disclosure) */}
+      {itens.length > 0 && (
+        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", marginBottom: 24, overflowX: "auto" }}>
+          {nav.map(n => (
+            <button key={n.key} className={`est-nav-pill ${tab === n.key ? "active" : ""}`} onClick={() => setTab(n.key)}>
+              {n.label}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {tab === "dashboard" && <Dashboard onTabChange={setTab} />}
-      {tab === "itens" && <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-      {tab === "rapida" && <EntradaRapida itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-      {tab === "lote" && <EntradaLote itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-      {tab === "saidas" && <Saidas itens={itens} onReload={carregarDados} showToast={showToast} />}
-      {tab === "ajustes" && <Ajustes itens={itens} onReload={carregarDados} showToast={showToast} />}
-      {tab === "fornecedores" && <FornecedoresTab fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-      {tab === "categorias" && <CategoriasTab categorias={categorias} onReload={carregarDados} showToast={showToast} />}
+      {itens.length === 0 ? (
+        <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />
+      ) : (
+        <>
+          {tab === "dashboard" && <Dashboard onTabChange={setTab} />}
+          {tab === "itens" && <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+          {tab === "rapida" && <EntradaRapida itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+          {tab === "lote" && <EntradaLote itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+          {tab === "saidas" && <Saidas itens={itens} onReload={carregarDados} showToast={showToast} />}
+          {tab === "ajustes" && <Ajustes itens={itens} onReload={carregarDados} showToast={showToast} />}
+          {tab === "fornecedores" && <FornecedoresTab fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+          {tab === "categorias" && <CategoriasTab categorias={categorias} onReload={carregarDados} showToast={showToast} />}
+        </>
+      )}
 
       {toast && (
         <div className="toast" style={{ background: toast.cor }}>{toast.msg}</div>
