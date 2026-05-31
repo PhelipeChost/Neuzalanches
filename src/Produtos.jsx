@@ -234,6 +234,14 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
         for (let i = 0; i < paraSubir.length; i++) {
           await api.produtos.imagens.adicionar(produto.id, paraSubir[i].imagem, i);
         }
+
+        // 4. T8: ficha técnica montada na criação — salva junto com o produto novo
+        if (!editando && composicao.length > 0) {
+          await api.composicao.salvar(
+            produto.id,
+            composicao.map(r => ({ insumo_id: r.insumo_id, quantidade: r.quantidade }))
+          ).catch(() => {});
+        }
       }
 
       onClose(); // só fecha depois de tudo salvo com sucesso
@@ -253,17 +261,15 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
         </div>
 
-        {/* Abas — só mostra Ficha Técnica se está editando */}
-        {editando && (
-          <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 8, padding: 3, marginBottom: 20 }}>
-            {[["produto", "Produto"], ["ficha", "Ficha Técnica"]].map(([k, v]) => (
-              <button key={k} onClick={() => setAbaModal(k)}
-                style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", background: abaModal === k ? "#fff" : "none", color: abaModal === k ? "#15803d" : "#78716c", fontWeight: abaModal === k ? 600 : 400, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", boxShadow: abaModal === k ? "0 1px 4px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }}>
-                {v}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Abas — Produto + Ficha Técnica (T8: ficha disponível também na criação) */}
+        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 8, padding: 3, marginBottom: 20 }}>
+          {[["produto", "Produto"], ["ficha", "Ficha Técnica (opcional)"]].map(([k, v]) => (
+            <button key={k} onClick={() => setAbaModal(k)}
+              style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: "none", background: abaModal === k ? "#fff" : "none", color: abaModal === k ? "#15803d" : "#78716c", fontWeight: abaModal === k ? 600 : 400, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", boxShadow: abaModal === k ? "0 1px 4px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }}>
+              {v}
+            </button>
+          ))}
+        </div>
 
         {/* ─── ABA: PRODUTO ─── */}
         {abaModal === "produto" && (
@@ -393,6 +399,16 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
               <div style={{ textAlign: "center", padding: 32, color: "#a8a29e", fontSize: 13 }}>Carregando...</div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {!editando && (
+                  <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#1e40af" }}>
+                    💡 Opcional. A ficha é salva junto com o produto e calcula o CMV automaticamente. Você também pode cadastrá-la depois.
+                  </div>
+                )}
+                {insumos.length === 0 && (
+                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#92400e" }}>
+                    Nenhum insumo cadastrado ainda. Cadastre em <b>Estoque e Insumos → Insumos</b> para montar a ficha técnica.
+                  </div>
+                )}
                 {/* Adicionar insumo */}
                 <div style={{ background: "#fafaf9", borderRadius: 10, padding: "14px 16px", border: "1px solid #e7e5e4" }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 10 }}>ADICIONAR INSUMO</div>
@@ -470,10 +486,17 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
                     style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>
                     ← Voltar
                   </button>
-                  <button onClick={salvarFicha} disabled={salvando}
-                    style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
-                    {salvando ? "Salvando..." : "Salvar ficha técnica"}
-                  </button>
+                  {editando ? (
+                    <button onClick={salvarFicha} disabled={salvando}
+                      style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
+                      {salvando ? "Salvando..." : "Salvar ficha técnica"}
+                    </button>
+                  ) : (
+                    <button onClick={() => setAbaModal("produto")}
+                      style={{ flex: 2, padding: 11, background: "#15803d", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff" }}>
+                      Concluir ficha → voltar ao produto
+                    </button>
+                  )}
                 </div>
               </div>
             )}
