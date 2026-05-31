@@ -1527,6 +1527,21 @@ export default function ClienteApp() {
 
   const totalCarrinho = carrinho.reduce((s, i) => s + calcItemTotal(i), 0);
 
+  // T12 — sugestões de upsell no carrinho (prioriza bebida se não houver, depois sobremesa/acompanhamento)
+  const sugestoesUpsell = (() => {
+    if (carrinho.length === 0) return [];
+    const idsNoCarrinho = new Set(carrinho.map(i => i.produto_id));
+    const catsNoCarrinho = new Set(carrinho.map(i => (produtos.find(p => p.id === i.produto_id) || {}).categoria).filter(Boolean));
+    const isBebida = (cat) => /bebida|drink|suco|refri/i.test(cat || "");
+    const isExtra = (cat) => /sobremesa|acompanha|porç|porc|adicional|doce|combo|batata/i.test(cat || "");
+    const base = produtos.filter(p => p.disponivel && !p.eh_promocao && !idsNoCarrinho.has(p.id));
+    const temBebida = [...catsNoCarrinho].some(isBebida);
+    let lista = temBebida ? [] : base.filter(p => isBebida(p.categoria));
+    lista = [...lista, ...base.filter(p => !lista.includes(p) && isExtra(p.categoria))];
+    if (lista.length < 4) lista = [...lista, ...base.filter(p => !lista.includes(p))];
+    return lista.slice(0, 4);
+  })();
+
   const abrirCheckout = () => {
     if (carrinho.length === 0) return;
     setModalCheckout(true);
@@ -2027,6 +2042,22 @@ export default function ClienteApp() {
                     </div>
                   );
                 })}
+
+                {/* T12 — Sugestões de upsell */}
+                {sugestoesUpsell.length > 0 && (
+                  <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)", background: "var(--brand-light)" }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", marginBottom: 12, fontFamily: "'Syne', sans-serif" }}>Que tal adicionar? 🍟🥤</div>
+                    <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
+                      {sugestoesUpsell.map(p => (
+                        <div key={p.id} style={{ flex: "0 0 auto", width: 132, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text)", lineHeight: 1.2 }}>{p.nome}</div>
+                          <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--brand)", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{fmt(p.preco)}</div>
+                          <button onClick={() => handleAddProduto(p)} style={{ marginTop: "auto", background: "var(--brand)", color: "#fff", border: "none", borderRadius: 8, padding: "7px 0", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>+ Adicionar</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Observação */}
                 <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)" }}>
