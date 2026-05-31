@@ -239,4 +239,10 @@ export const api = {
     restaurar: (tipo, id) => request(`/lixeira/${tipo}/${id}/restaurar`, { method: "POST" }),
     excluirDefinitivo: (tipo, id) => request(`/lixeira/${tipo}/${id}`, { method: "DELETE" }),
   },
+
+  // T10 — analytics do cardápio
+  cardapio: {
+    registrarVisita: () => fetch(`${API}/public/visita`, { method: "POST" }).catch(() => {}),
+    stats: () => request("/cardapio/stats"),
+  },
 };

@@ -228,6 +228,11 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (item_id) REFERENCES estoque_itens(id)
   );
+
+  CREATE TABLE IF NOT EXISTS visitas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
 
 // Inserir saldo inicial padrão se não existir
@@ -525,6 +530,30 @@ export function salvarConfig(key, value) {
   db.prepare(
     "INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value"
   ).run(key, String(value));
+}
+
+// ─── ANALYTICS DO CARDÁPIO (T10) ─────────────────────────────────────────────
+
+export function registrarVisita() {
+  db.prepare("INSERT INTO visitas DEFAULT VALUES").run();
+}
+
+export function getCardapioStats() {
+  const c = (sql, ...p) => db.prepare(sql).get(...p);
+  const visitasTotal = c("SELECT COUNT(*) v FROM visitas").v;
+  const visitas7d = c("SELECT COUNT(*) v FROM visitas WHERE created_at >= datetime('now','-7 days')").v;
+  const pedidosTotal = c("SELECT COUNT(*) v FROM pedidos").v;
+  const pedidos7d = c("SELECT COUNT(*) v FROM pedidos WHERE created_at >= datetime('now','-7 days')").v;
+  const receita7d = c("SELECT COALESCE(SUM(total),0) v FROM pedidos WHERE created_at >= datetime('now','-7 days') AND status != 'cancelado'").v;
+  const serie = db.prepare(
+    "SELECT date(created_at) d, COUNT(*) c FROM visitas WHERE created_at >= datetime('now','-7 days') GROUP BY date(created_at) ORDER BY d"
+  ).all();
+  return {
+    visitasTotal, visitas7d, pedidosTotal, pedidos7d, receita7d,
+    conversao: visitasTotal > 0 ? pedidosTotal / visitasTotal : 0,
+    conversao7d: visitas7d > 0 ? pedidos7d / visitas7d : 0,
+    serie,
+  };
 }
 
 // ─── CATEGORIAS ─────────────────────────────────────────────────────────────

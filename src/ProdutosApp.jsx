@@ -228,11 +228,85 @@ function AdicionaisTab() {
 }
 
 // ─── PRODUTOS APP (Hub Section) ──────────────────────────────────────────────
+// ─── T10: DESEMPENHO DO CARDÁPIO ──────────────────────────────────────────────
+function DesempenhoTab() {
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.cardapio.stats().then(setStats).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const fmtR = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const fmtPct = (v) => `${((v || 0) * 100).toFixed(1)}%`;
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando desempenho...</div>;
+  if (!stats) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Sem dados de desempenho ainda.</div>;
+
+  const Kpi = ({ label, value, sub, cor = "#1c1917" }) => (
+    <div className="card" style={{ flex: "1 1 160px", minWidth: 0 }}>
+      <div style={{ fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 6, textTransform: "uppercase" }}>{label}</div>
+      <div style={{ fontSize: 26, fontWeight: 700, color: cor, fontFamily: "'Inter', sans-serif" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 3 }}>{sub}</div>}
+    </div>
+  );
+
+  const nomesDia = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+  const maxSerie = Math.max(...stats.serie.map(s => s.c), 1);
+
+  return (
+    <div className="anim">
+      <div style={{ marginBottom: 18 }}>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Status do cardápio</div>
+        <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>Quantas pessoas viram seu cardápio e quantas viraram pedido</div>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <Kpi label="Visitas (total)" value={stats.visitasTotal} sub="acessos ao cardápio" cor="#2563eb" />
+        <Kpi label="Pedidos (total)" value={stats.pedidosTotal} sub="pedidos recebidos" cor="#15803d" />
+        <Kpi label="Conversão" value={fmtPct(stats.conversao)} sub="pedidos ÷ visitas" cor="#F38C24" />
+        <Kpi label="Receita (7 dias)" value={fmtR(stats.receita7d)} sub="pedidos não cancelados" cor="#15803d" />
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Últimos 7 dias</div>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14, fontSize: 13, color: "#57534e" }}>
+          <span><b style={{ color: "#2563eb" }}>{stats.visitas7d}</b> visitas</span>
+          <span><b style={{ color: "#15803d" }}>{stats.pedidos7d}</b> pedidos</span>
+          <span>conversão <b style={{ color: "#F38C24" }}>{fmtPct(stats.conversao7d)}</b></span>
+        </div>
+        {stats.serie.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#a8a29e", padding: "12px 0" }}>Ainda sem visitas registradas nos últimos 7 dias.</div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 10, height: 120, paddingTop: 8 }}>
+            {stats.serie.map(s => {
+              const h = Math.round((s.c / maxSerie) * 100);
+              const d = new Date(s.d + "T00:00:00");
+              return (
+                <div key={s.d} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#2563eb" }}>{s.c}</div>
+                  <div style={{ width: "100%", maxWidth: 40, height: `${Math.max(h, 4)}%`, background: "linear-gradient(180deg, #60a5fa, #2563eb)", borderRadius: "6px 6px 0 0", transition: "height 0.4s ease" }} />
+                  <div style={{ fontSize: 10, color: "#a8a29e" }}>{nomesDia[d.getDay()]}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 11, color: "#a8a29e" }}>
+        💡 As visitas são contadas uma vez por sessão de cada cliente que abre o cardápio público.
+      </div>
+    </div>
+  );
+}
+
 const NAV_TABS = [
   { key: "produtos", label: "Produtos", icon: "\u{1F354}" },
   { key: "promocoes", label: "Promoções", icon: "\u{1F525}" },
   { key: "categorias", label: "Categorias", icon: "\u{1F4C2}" },
   { key: "adicionais", label: "Adicionais", icon: "\u{2795}" },
+  { key: "desempenho", label: "Desempenho", icon: "\u{1F4CA}" },
 ];
 
 export default function ProdutosApp({ onNavegar }) {
@@ -295,6 +369,7 @@ export default function ProdutosApp({ onNavegar }) {
         {aba === "promocoes" && <Promocoes />}
         {aba === "categorias" && <CategoriasTab />}
         {aba === "adicionais" && <AdicionaisTab />}
+        {aba === "desempenho" && <DesempenhoTab />}
       </div>
     </div>
   );

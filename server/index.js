@@ -34,6 +34,7 @@ import {
   abrirComanda, buscarComanda, buscarComandaPorMesa, fecharComanda, cancelarComanda, pedirConta,
   listarItensComanda, adicionarItemComanda, atualizarStatusItemComanda, removerItemComanda,
   listarFilaCozinha, listarFilaCozinhaUnificada, estatisticasCaixa,
+  registrarVisita, getCardapioStats,
 } from "./database.js";
 
 const app = express();
@@ -928,6 +929,18 @@ function isAbertoAgora(cfg) {
 app.get('/api/config/horario', (req, res) => {
   const cfg = getHorarioConfig();
   res.json({ ...cfg, aberto: isAbertoAgora(cfg) });
+});
+
+// ─── ANALYTICS DO CARDÁPIO (T10) ─────────────────────────────────────────────
+// POST público — registra uma visita ao cardápio (cliente faz ping 1x por sessão)
+app.post('/api/public/visita', (req, res) => {
+  try { registrarVisita(); } catch { /* não bloqueia o cliente */ }
+  res.json({ ok: true });
+});
+
+// GET autenticado — estatísticas do cardápio para o admin
+app.get('/api/cardapio/stats', authMiddleware, (req, res) => {
+  res.json(getCardapioStats());
 });
 
 // PUT autenticado — admin salva configuração

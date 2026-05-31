@@ -1474,6 +1474,13 @@ export default function ClienteApp() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // T10 — registra 1 visita por sessão para os analytics do cardápio
+  useEffect(() => {
+    if (sessionStorage.getItem("nl_visita_registrada")) return;
+    sessionStorage.setItem("nl_visita_registrada", "1");
+    api.cardapio.registrarVisita();
+  }, []);
+
   const abrirModalProduto = (produto) => setModalProduto(produto);
 
   const handleAddProduto = (produto) => {
