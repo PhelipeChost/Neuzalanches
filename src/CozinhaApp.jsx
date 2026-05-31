@@ -319,12 +319,22 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
   );
 }
 
+// ─── RELÓGIO ISOLADO (T2: evita re-render da grade inteira a cada 1s) ─────────
+function RelogioCozinha() {
+  const hora = () => new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const [agora, setAgora] = useState(hora);
+  useEffect(() => {
+    const iv = setInterval(() => setAgora(hora()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  return <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: "#555", fontWeight: 500 }}>{agora}</span>;
+}
+
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
 export default function CozinhaApp({ onNavegar }) {
   const [pedidos, setPedidos] = useState([]);
   const [gruposMesa, setGruposMesa] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [clock, setClock] = useState("");
   const [toast, setToast] = useState(null);
   const [marcando, setMarcando] = useState({});
   const [filtroTipo, setFiltroTipo] = useState("todos");
@@ -358,13 +368,6 @@ export default function CozinhaApp({ onNavegar }) {
   useEffect(() => { somAtivoRef.current = somAtivo; localStorage.setItem("nl_coz_som", somAtivo ? "1" : "0"); }, [somAtivo]);
   useEffect(() => { repetirRef.current = repetirSom; localStorage.setItem("nl_coz_repetir", repetirSom ? "1" : "0"); }, [repetirSom]);
 
-  // Clock
-  useEffect(() => {
-    const tick = () => setClock(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-    tick();
-    const iv = setInterval(tick, 1000);
-    return () => clearInterval(iv);
-  }, []);
 
   // Desbloqueia AudioContext no primeiro clique
   useEffect(() => {
@@ -696,7 +699,7 @@ export default function CozinhaApp({ onNavegar }) {
               <span key={k} className="cz-badge" title={`${c.label}: ${countByTipo[k]}`} style={{ background: c.bg, color: c.color }}>{c.icon} {countByTipo[k]}</span>
             ))}
           </div>
-          <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: "#555", fontWeight: 500 }}>{clock}</span>
+          <RelogioCozinha />
         </div>
       </header>
 
