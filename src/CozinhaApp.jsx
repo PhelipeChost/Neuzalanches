@@ -47,6 +47,70 @@ const STATUS_CORES = {
   cancelado:  { bg: "#350A0A", color: "#F87171", border: "#DC2626" },
 };
 
+// ─── IMPRESSÃO TÉRMICA 80mm (XP-80) ──────────────────────────────────────────
+const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const TIPO_CUPOM = { delivery: "DELIVERY", retirada: "RETIRADA", casa: "CONSUMIR NO LOCAL" };
+
+function gerarCupomCozinha(p) {
+  const tipo = p.tipo_entrega === "retirada" ? "retirada" : p.tipo_entrega === "casa" ? "casa" : "delivery";
+  const hora = fmtHora(p.created_at);
+  const idCurto = String(p.id || "").slice(0, 6).toUpperCase();
+  const origem = p.tipo === "online" ? "ONLINE" : "PRESENCIAL";
+
+  const itensHtml = (p.itens || []).map(it => {
+    const ads = (it.adicionais || []).map(a => `<div class="add">+ ${(a.quantidade || 1) > 1 ? (a.quantidade + "x ") : ""}${escHtml(a.nome)}</div>`).join("");
+    return `<div class="item">${it.quantidade}x ${escHtml(it.produto_nome)}</div>${ads}`;
+  }).join("");
+
+  let blocoEntrega = "";
+  if (tipo === "delivery" && p.endereco_rua) {
+    blocoEntrega = `<div class="hr"></div><div class="b">ENTREGA:</div><div>${escHtml(p.endereco_rua)}${p.endereco_numero ? ", " + escHtml(p.endereco_numero) : ""}</div><div>${escHtml(p.endereco_bairro || "")}</div>${p.endereco_referencia ? `<div>Ref: ${escHtml(p.endereco_referencia)}</div>` : ""}`;
+  }
+
+  let pagamento = "";
+  if (p.metodo_pagamento) {
+    const labels = { pix: "PIX", credito: "CARTAO CREDITO", debito: "CARTAO DEBITO", dinheiro: "DINHEIRO" };
+    const troco = Number(p.troco_para), total = Number(p.total);
+    const trocoTxt = (p.metodo_pagamento === "dinheiro" && troco > total) ? ` (troco p/ ${fmt(troco)})` : "";
+    pagamento = `<div>Pgto: ${labels[p.metodo_pagamento] || escHtml(p.metodo_pagamento)}${trocoTxt}</div>`;
+  }
+
+  const obsHtml = p.obs ? `<div class="obs">OBS: ${escHtml(p.obs)}</div>` : "";
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pedido ${idCurto}</title><style>
+    @page { size: 72mm auto; margin: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { width: 72mm; font-family: 'Courier New', monospace; color: #000; padding: 8px 6px 20px; font-size: 12px; line-height: 1.35; }
+    .center { text-align: center; }
+    .b { font-weight: bold; }
+    .huge { font-size: 19px; font-weight: bold; letter-spacing: 1px; }
+    .big { font-size: 14px; font-weight: bold; }
+    .hr { border-top: 1px dashed #000; margin: 7px 0; }
+    .row { display: flex; justify-content: space-between; align-items: baseline; }
+    .item { font-size: 16px; font-weight: bold; margin: 5px 0 2px; }
+    .add { font-size: 12px; padding-left: 16px; font-weight: normal; }
+    .obs { font-size: 14px; font-weight: bold; border: 2px solid #000; padding: 5px; margin-top: 6px; text-align: center; }
+    .tag { display: inline-block; border: 2px solid #000; padding: 2px 8px; font-size: 15px; font-weight: bold; margin: 4px 0; }
+  </style></head><body>
+    <div class="center huge">NEUZA LANCHES</div>
+    <div class="center big">&gt;&gt; COZINHA &lt;&lt;</div>
+    <div class="hr"></div>
+    <div class="row"><span class="big">#${idCurto}</span><span class="big">${hora}</span></div>
+    <div class="center"><span class="tag">${TIPO_CUPOM[tipo]}</span></div>
+    <div>Cliente: ${escHtml(p.cliente_nome || "-")}</div>
+    <div>Origem: ${origem}</div>
+    <div class="hr"></div>
+    ${itensHtml}
+    ${obsHtml}
+    ${blocoEntrega}
+    <div class="hr"></div>
+    ${pagamento}
+    <div class="row b"><span>TOTAL</span><span>${fmt(p.total || 0)}</span></div>
+    <div class="hr"></div>
+    <div class="center" style="font-size:10px">${new Date().toLocaleString("pt-BR")}</div>
+  </body></html>`;
+}
+
 // ─── STATUS PIPELINE COMPONENT (dark) ────────────────────────────────────────
 function StatusPipelineDark({ status }) {
   const idx = STATUS_PIPELINE.indexOf(status);
@@ -365,8 +429,21 @@ export default function CozinhaApp({ onNavegar }) {
   const somAtivoRef = useRef(somAtivo);
   const repetirRef = useRef(repetirSom);
 
+  // ─── IMPRESSÃO XP-80 ──────────────────────────────────────────────────────
+  const [autoPrint, setAutoPrint] = useState(() => { const v = localStorage.getItem("nl_coz_print"); return v === null ? true : v === "1"; });
+  const autoPrintRef = useRef(autoPrint);
+  const printFrameRef = useRef(null);
+  const printedRef = useRef(null);
+  if (printedRef.current === null) {
+    try { printedRef.current = new Set(JSON.parse(localStorage.getItem("nl_coz_printed") || "[]")); } catch { printedRef.current = new Set(); }
+  }
+  const primeiraCargaImpRef = useRef(true);
+  const printQueueRef = useRef([]);
+  const printingRef = useRef(false);
+
   useEffect(() => { somAtivoRef.current = somAtivo; localStorage.setItem("nl_coz_som", somAtivo ? "1" : "0"); }, [somAtivo]);
   useEffect(() => { repetirRef.current = repetirSom; localStorage.setItem("nl_coz_repetir", repetirSom ? "1" : "0"); }, [repetirSom]);
+  useEffect(() => { autoPrintRef.current = autoPrint; localStorage.setItem("nl_coz_print", autoPrint ? "1" : "0"); }, [autoPrint]);
 
 
   // Desbloqueia AudioContext no primeiro clique
@@ -426,6 +503,30 @@ export default function CozinhaApp({ onNavegar }) {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
+  // ─── IMPRESSÃO: fila sequencial via iframe oculto ─────────────────────────
+  const imprimirAgora = useCallback((pedido) => {
+    try {
+      const frame = printFrameRef.current;
+      if (!frame || !frame.contentWindow) return;
+      const doc = frame.contentWindow.document;
+      doc.open(); doc.write(gerarCupomCozinha(pedido)); doc.close();
+      setTimeout(() => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch {} }, 280);
+    } catch {}
+  }, []);
+  const processarFilaImpressao = useCallback(() => {
+    if (printingRef.current) return;
+    const prox = printQueueRef.current.shift();
+    if (!prox) return;
+    printingRef.current = true;
+    imprimirAgora(prox);
+    setTimeout(() => { printingRef.current = false; processarFilaImpressao(); }, 1700);
+  }, [imprimirAgora]);
+  const enfileirarImpressao = useCallback((pedido) => {
+    printQueueRef.current.push(pedido);
+    processarFilaImpressao();
+  }, [processarFilaImpressao]);
+  const imprimirManual = (pedido) => { imprimirAgora(pedido); showToast("\u{1F5A8}\u{FE0F} Enviado para impressão"); };
+
   // ─── CARREGAR DADOS ──────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
     try {
@@ -450,10 +551,25 @@ export default function CozinhaApp({ onNavegar }) {
         notificarNavegador(pendentes);
       }
       prevPendRef.current = totalNovo;
+
+      // Impressão automática de pedidos novos na XP-80
+      const novosParaImprimir = [];
+      for (const p of peds) {
+        if (!printedRef.current.has(p.id)) {
+          if (!primeiraCargaImpRef.current && autoPrintRef.current && !["entregue", "cancelado"].includes(p.status)) {
+            novosParaImprimir.push(p);
+          }
+          printedRef.current.add(p.id);
+        }
+      }
+      primeiraCargaImpRef.current = false;
+      novosParaImprimir.forEach(enfileirarImpressao);
+      try { localStorage.setItem("nl_coz_printed", JSON.stringify([...printedRef.current].slice(-400))); } catch {}
+
       setPedidos(peds);
       setGruposMesa(fila.filter(g => g.tipo === "mesa"));
     } catch {} finally { setLoading(false); }
-  }, [tocarSom, notificarNavegador]);
+  }, [tocarSom, notificarNavegador, enfileirarImpressao]);
 
   useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => {
@@ -543,7 +659,8 @@ export default function CozinhaApp({ onNavegar }) {
     if (filtroStatus !== "todos" && p.status !== filtroStatus) return false;
     // In "fila" mode, hide terminal statuses unless explicitly filtered
     if (modo === "fila" && filtroStatus === "todos" && ["entregue", "cancelado"].includes(p.status)) return false;
-    if (filtroMes && filtroMes !== "todos") {
+    // O filtro de mês só vale no Histórico — a Fila mostra todos os pedidos ativos
+    if (modo === "historico" && filtroMes && filtroMes !== "todos") {
       const d = parseDateUTC(p.created_at);
       const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
       if (ym !== filtroMes) return false;
@@ -672,6 +789,16 @@ export default function CozinhaApp({ onNavegar }) {
             display: "flex", alignItems: "center", gap: 5,
           }}>
             {somAtivo ? "\u{1F514}" : "\u{1F515}"} {somAtivo ? "Som" : "Mudo"}
+          </button>
+          {/* Toggle impressão automática XP-80 */}
+          <button onClick={() => setAutoPrint(v => !v)} title="Imprimir automaticamente os pedidos novos na impressora (XP-80)" style={{
+            background: autoPrint ? "#0C2A4A" : "#1A1A1A",
+            color: autoPrint ? "#60A5FA" : "#555",
+            border: `1.5px solid ${autoPrint ? "#1E40AF" : "#2A2A2A"}`,
+            borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            display: "flex", alignItems: "center", gap: 5,
+          }}>
+            {"\u{1F5A8}\u{FE0F}"} {autoPrint ? "Impressão ON" : "Impressão OFF"}
           </button>
           {somAtivo && (
             <button onClick={() => setRepetirSom(r => !r)} style={{
@@ -1041,8 +1168,11 @@ export default function CozinhaApp({ onNavegar }) {
                             </div>
                           )}
 
-                          {/* Delete button */}
-                          <div style={{ marginTop: 10, borderTop: "1px solid #222", paddingTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                          {/* Print + Delete buttons */}
+                          <div style={{ marginTop: 10, borderTop: "1px solid #222", paddingTop: 10, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                            <button onClick={() => imprimirManual(p)} style={{ background: "none", border: "1px solid #1E40AF", borderRadius: 8, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", color: "#60A5FA", display: "flex", alignItems: "center", gap: 5 }}>
+                              {"\u{1F5A8}\u{FE0F}"} Imprimir
+                            </button>
                             <button onClick={() => excluirPedido(p.id)} style={{ background: "none", border: "1px solid #7F1D1D", borderRadius: 8, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", color: "#F87171", display: "flex", alignItems: "center", gap: 5 }}>
                               {"🗑️"} Excluir pedido
                             </button>
@@ -1067,6 +1197,10 @@ export default function CozinhaApp({ onNavegar }) {
       )}
 
       {toast && <div className="cz-toast">{toast}</div>}
+
+      {/* iframe oculto usado para imprimir os cupons na XP-80 */}
+      <iframe ref={printFrameRef} title="impressao-cozinha" aria-hidden="true" tabIndex={-1}
+        style={{ position: "fixed", width: 0, height: 0, border: 0, left: -9999, top: -9999, visibility: "hidden" }} />
 
       {/* ─── MODAL PEDIDO MANUAL ──────────────────────────────────────────── */}
       {modalManual && (
