@@ -381,6 +381,14 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
         .fc-prod-item { padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px; cursor: pointer; transition: all 0.15s; }
         .fc-prod-item:hover { border-color: var(--gold); background: var(--gold-soft); }
         @media (max-width: 1100px) { .fc-layout { grid-template-columns: 1fr; } .fc-stats-row { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 720px) {
+          .fc-topbar { flex-wrap: wrap; gap: 10px 14px; padding: 12px 16px; }
+          .fc-topbar > div[style*="width: 1px"], .fc-topbar > div[style*="width:1px"] { display: none; }
+          .fc-layout { padding: 16px; }
+          .fc-salon-bg { padding: 18px 14px; }
+          .fc-mesas-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+          .fc-prod-grid { grid-template-columns: 1fr; }
+        }
       `}</style>
 
       {/* ─── HEADER ─── */}
