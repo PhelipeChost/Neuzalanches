@@ -2,6 +2,39 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import QRCode from "qrcode";
 
+const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ─── CUPOM TÉRMICO DO QR CODE DA MESA (XP-80, 80mm) ──────────────────────────
+function gerarCupomQRMesa(mesa, qrDataUrl, marca = "NEUZA LANCHES") {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR Mesa ${mesa.numero}</title><style>
+    @page { size: 72mm auto; margin: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { width: 72mm; font-family: 'Courier New', monospace; color: #000; padding: 10px 4px 24px; text-align: center; }
+    .marca { font-size: 15px; font-weight: bold; letter-spacing: 1.5px; }
+    .submarca { font-size: 10px; letter-spacing: 1px; margin-top: 2px; }
+    .hr { border-top: 1px dashed #000; margin: 8px 0; }
+    .hr-strong { border-top: 2px solid #000; margin: 6px 0; }
+    .mesa-label { font-size: 11px; font-weight: bold; letter-spacing: 4px; margin-top: 6px; color: #000; }
+    .mesa-num { font-size: 56px; font-weight: 900; line-height: 1; margin: 2px 0 10px; letter-spacing: -2px; font-family: Arial, Helvetica, sans-serif; }
+    .qr-wrap { padding: 6px; border: 2px solid #000; display: inline-block; margin: 4px 0 8px; }
+    .qr-wrap img { display: block; }
+    .instr { font-size: 14px; font-weight: bold; margin: 8px 0 4px; letter-spacing: 0.5px; }
+    .sub { font-size: 11px; line-height: 1.4; margin-bottom: 2px; }
+    .pago { font-size: 10px; font-weight: bold; margin-top: 2px; letter-spacing: 0.5px; }
+  </style></head><body>
+    <div class="marca">${escHtml(marca)}</div>
+    <div class="submarca">CARDÁPIO DIGITAL</div>
+    <div class="hr"></div>
+    <div class="mesa-label">MESA</div>
+    <div class="mesa-num">${escHtml(mesa.numero)}</div>
+    <div class="qr-wrap"><img src="${qrDataUrl}" width="220" height="220" /></div>
+    <div class="instr">FAÇA SEU PEDIDO</div>
+    <div class="sub">Aponte a câmera do<br/>celular para o QR Code</div>
+    <div class="hr"></div>
+    <div class="pago">PAGAMENTO NO CAIXA</div>
+  </body></html>`;
+}
+
 const fmtBRL = (v) => (v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const fmtHora = (iso) => {
   if (!iso) return "";
@@ -48,6 +81,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
 
   // QR Code modal
   const [modalQR, setModalQR] = useState(false);
+  const printQRFrameRef = useRef(null);
+  const qrQueueRef = useRef([]);
+  const qrPrintingRef = useRef(false);
   const [qrUrls, setQrUrls] = useState({});
 
   // Gerenciar mesas modal
@@ -110,6 +146,41 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
       setQrUrls(urls);
     })();
   }, [modalQR, mesas]);
+
+  // ─── Impressão XP-80 (térmica 80mm) ──────────────────────────────────────
+  const imprimirQRTermicaAgora = useCallback((mesa) => {
+    try {
+      const frame = printQRFrameRef.current;
+      if (!frame || !frame.contentWindow || !qrUrls[mesa.numero]) return;
+      const doc = frame.contentWindow.document;
+      doc.open(); doc.write(gerarCupomQRMesa(mesa, qrUrls[mesa.numero])); doc.close();
+      setTimeout(() => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch {} }, 320);
+    } catch {}
+  }, [qrUrls]);
+
+  const processarFilaQR = useCallback(() => {
+    if (qrPrintingRef.current) return;
+    const prox = qrQueueRef.current.shift();
+    if (!prox) return;
+    qrPrintingRef.current = true;
+    imprimirQRTermicaAgora(prox);
+    setTimeout(() => { qrPrintingRef.current = false; processarFilaQR(); }, 2000);
+  }, [imprimirQRTermicaAgora]);
+
+  const imprimirQRTermica = (mesa) => {
+    if (!qrUrls[mesa.numero]) return;
+    qrQueueRef.current.push(mesa);
+    processarFilaQR();
+    showToast(`🖨️ Mesa ${mesa.numero} enviada para a impressora térmica`);
+  };
+
+  const imprimirTodosQRTermica = () => {
+    const lista = mesas.filter(m => qrUrls[m.numero]);
+    if (!lista.length) return;
+    qrQueueRef.current.push(...lista);
+    processarFilaQR();
+    showToast(`🖨️ ${lista.length} QR Code(s) na fila da impressora térmica`);
+  };
 
   // Imprimir QR codes em nova janela
   const handlePrintQR = (singleMesa) => {
@@ -731,9 +802,12 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
                 <div style={{ fontSize: 18, fontWeight: 700 }}>📱 QR Codes das Mesas</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Imprima e cole nas mesas para pedidos pelo celular</div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button className="fc-btn fc-btn-secondary" style={{ padding: "10px 16px" }} onClick={imprimirTodosQRTermica} disabled={Object.keys(qrUrls).length === 0} title="Imprime um QR Code por mesa na impressora térmica XP-80 (80mm)">
+                  🖨️ Térmica (XP-80) — Todos
+                </button>
                 <button className="fc-btn fc-btn-primary" style={{ gridColumn: "auto", padding: "10px 20px" }} onClick={() => handlePrintQR(null)} disabled={Object.keys(qrUrls).length === 0}>
-                  🖨️ Imprimir Todos
+                  🖨️ A4 — Todos
                 </button>
                 <button className="fc-btn fc-btn-secondary" onClick={() => setModalQR(false)}>Fechar</button>
               </div>
@@ -762,13 +836,21 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
                       )}
                       <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 32, fontWeight: 800, letterSpacing: -1, lineHeight: 1 }}>Mesa {mesa.numero}</div>
                       <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, lineHeight: 1.5 }}>Escaneie o QR Code acima para<br />ver o cardápio e fazer seu pedido</div>
-                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)", display: "flex", gap: 6, justifyContent: "center" }}>
+                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border)", display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+                        <button
+                          className="fc-btn fc-btn-secondary"
+                          style={{ fontSize: 11, padding: "6px 12px" }}
+                          onClick={() => imprimirQRTermica(mesa)}
+                          title="Imprime na impressora térmica XP-80 (80mm)"
+                        >
+                          🖨️ Térmica
+                        </button>
                         <button
                           className="fc-btn fc-btn-secondary"
                           style={{ fontSize: 11, padding: "6px 12px" }}
                           onClick={() => handlePrintQR(mesa)}
                         >
-                          🖨️ Imprimir
+                          🖨️ A4
                         </button>
                         <button
                           className="fc-btn fc-btn-secondary"
@@ -789,6 +871,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
                 </div>
               )}
             </div>
+            {/* iframe oculto para impressão térmica dos QR Codes (XP-80) */}
+            <iframe ref={printQRFrameRef} title="impressao-qr-mesas" aria-hidden="true" tabIndex={-1}
+              style={{ position: "absolute", width: 0, height: 0, border: 0, left: -9999, top: -9999, visibility: "hidden" }} />
           </div>
         </div>
       )}
