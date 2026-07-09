@@ -3,7 +3,8 @@
     "allow": [
       "Bash(taskkill //F //IM node.exe)",
       "Bash(npx kill-port:*)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "PowerShell(npx vite build)"
     ]
   }
 }

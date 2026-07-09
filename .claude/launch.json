@@ -12,6 +12,18 @@
       "runtimeExecutable": "npx",
       "runtimeArgs": ["vite", "--port", "5174"],
       "port": 5174
+    },
+    {
+      "name": "PDV desktop (teste rework)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["_serve-desktop-test.mjs"],
+      "port": 5511
+    },
+    {
+      "name": "Cardapio online (teste rework)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["_serve-online-test.mjs"],
+      "port": 5512
     }
   ]
 }

@@ -58,8 +58,10 @@ function SlideshowModal({ produto }) {
 }
 
 // ─── CARD PRODUTO ─────────────────────────────────────────────────────────────
-function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDetalhes, onAdd }) {
-  const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.length > 0;
+function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, catIdPorNome, onVerDetalhes, onAdd }) {
+  const catId = (catIdPorNome || {})[p.categoria];
+  const adsAplicaveis = (adicionaisDisponiveis || []).filter(a => !a.categoria_id || a.categoria_id === catId);
+  const podePersonalizar = catPermiteAdicionais[p.categoria] && adsAplicaveis.length > 0;
   const cfgPorCat = {
     "Hambúrgueres": { bg: "#5C2A0A", emoji: "🍔" }, "Hamburgueres": { bg: "#5C2A0A", emoji: "🍔" },
     "Beirutes": { bg: "#6B1A1A", emoji: "🥙" }, "Lanches": { bg: "#2A4A18", emoji: "🥪" },
@@ -145,11 +147,14 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
   const updateQtdAd = (ad, delta) => {
     setSelecionados(prev => {
       const existing = prev.find(s => s.id === ad.id);
+      const max = Number(ad.max_quantidade) || 0;
       if (existing) {
         const newQtd = existing.quantidade + delta;
         if (newQtd <= 0) return prev.filter(s => s.id !== ad.id);
+        if (max > 0 && newQtd > max) return prev;
         return prev.map(s => s.id === ad.id ? { ...s, quantidade: newQtd } : s);
       } else if (delta > 0) {
+        if (max > 0 && 1 > max) return prev;
         return [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco, quantidade: 1 }];
       }
       return prev;
@@ -176,14 +181,19 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
           {adicionais.map(ad => {
             const sel = selecionados.find(s => s.id === ad.id);
             const qtd = sel ? sel.quantidade : 0;
+            const max = Number(ad.max_quantidade) || 0;
+            const noLimite = max > 0 && qtd >= max;
             return (
               <div key={ad.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: qtd > 0 ? "var(--brand-light)" : "var(--surface)", border: `1.5px solid ${qtd > 0 ? "var(--brand)" : "var(--border-dark)"}`, borderRadius: 10 }}>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{ad.nome}</span>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{ad.nome}</span>
+                  {max > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)" }}>Máx. {max} por item</span>}
+                </div>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "var(--brand)", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>+ {fmt(ad.preco)}</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0} style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: qtd > 0 ? "pointer" : "default", fontSize: 16, lineHeight: 1, color: qtd > 0 ? "var(--text)" : "var(--text-soft)", fontWeight: 700 }}>−</button>
                   <span style={{ fontSize: 13, fontWeight: 800, minWidth: 22, textAlign: "center", color: "var(--text)" }}>{qtd}</span>
-                  <button onClick={() => updateQtdAd(ad, 1)} style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>+</button>
+                  <button onClick={() => updateQtdAd(ad, 1)} disabled={noLimite} title={noLimite ? `Máximo de ${max}` : ""} style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: noLimite ? "not-allowed" : "pointer", fontSize: 16, lineHeight: 1, color: noLimite ? "var(--text-soft)" : "var(--text)", fontWeight: 700, opacity: noLimite ? 0.5 : 1 }}>+</button>
                 </div>
               </div>
             );
@@ -257,7 +267,16 @@ export default function MesaApp({ mesaNumero }) {
   const adicionaisDisponiveis = dados ? dados.adicionais.filter(a => a.disponivel) : [];
 
   const catPermiteAdicionais = {};
-  categorias.forEach(c => { catPermiteAdicionais[c.nome] = !!c.permite_adicionais; });
+  const catIdPorNome = {};
+  categorias.forEach(c => {
+    catPermiteAdicionais[c.nome] = !!c.permite_adicionais;
+    catIdPorNome[c.nome] = c.id;
+  });
+  const adicionaisParaProduto = (produto) => {
+    if (!produto || !catPermiteAdicionais[produto.categoria]) return [];
+    const catId = catIdPorNome[produto.categoria];
+    return adicionaisDisponiveis.filter(a => !a.categoria_id || a.categoria_id === catId);
+  };
 
   const categoriasComProdutos = [
     ...categorias.map(c => c.nome).filter(nome => produtos.some(p => p.categoria === nome)),
@@ -516,7 +535,7 @@ export default function MesaApp({ mesaNumero }) {
         ) : busca.trim() ? (
           <div className="mesa-grid">
             {produtosFiltrados.map(p => (
-              <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
+              <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis} catIdPorNome={catIdPorNome}
                 onVerDetalhes={(pr) => setModalProduto(pr)} onAdd={handleAddProduto} />
             ))}
           </div>
@@ -534,7 +553,7 @@ export default function MesaApp({ mesaNumero }) {
                 </div>
                 <div className="mesa-grid">
                   {produtos.filter(p => cat === "Outros" ? !p.categoria : p.categoria === cat).map(p => (
-                    <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
+                    <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis} catIdPorNome={catIdPorNome}
                       onVerDetalhes={(pr) => setModalProduto(pr)} onAdd={handleAddProduto} />
                   ))}
                 </div>
@@ -608,14 +627,14 @@ export default function MesaApp({ mesaNumero }) {
 
       {/* Modals */}
       {modalProduto && (
-        <ModalProduto produto={modalProduto} adicionais={adicionaisDisponiveis}
-          permiteAdicionais={!!catPermiteAdicionais[modalProduto.categoria]}
+        <ModalProduto produto={modalProduto} adicionais={adicionaisParaProduto(modalProduto)}
+          permiteAdicionais={!!catPermiteAdicionais[modalProduto.categoria] && adicionaisParaProduto(modalProduto).length > 0}
           onAddSimples={(p, ads) => addCarrinhoSimples(p, ads)}
           onAddComAdicionais={(p) => setModalAdicional(p)}
           onClose={() => setModalProduto(null)} />
       )}
       {modalAdicional && (
-        <ModalAdicionais produto={modalAdicional} adicionais={adicionaisDisponiveis}
+        <ModalAdicionais produto={modalAdicional} adicionais={adicionaisParaProduto(modalAdicional)}
           onConfirm={confirmarAdicionais} onClose={() => setModalAdicional(null)} />
       )}
       {toast && <div className="mesa-toast" style={{ background: toast.cor || "var(--brand)" }}>{toast.msg}</div>}

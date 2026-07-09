@@ -1,0 +1,304 @@
+// ─── NEXUS PDV — Desktop (Electron) ──────────────────────────────────────────
+// Offline-first: sobe o MESMO servidor Express/SQLite localmente (banco na pasta
+// do usuário) e abre a plataforma numa janela. Antes de tudo, passa pelo GATE DE
+// LICENÇA (RS256). Sem licença válida → tela de bloqueio; nunca inicia o servidor.
+import { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeImage } from "electron";
+import { fileURLToPath, pathToFileURL } from "url";
+import { dirname, join } from "path";
+import { readFileSync, writeFileSync, existsSync, appendFileSync, rmSync } from "fs";
+import http from "http";
+
+import { verificarLicenca } from "./licenca/verificar.js";
+import { CHAVE_PUBLICA_NEXUS } from "./licenca/chavePublica.js";
+import { fingerprintMaquina } from "./licenca/fingerprint.js";
+import { lerLicenca, salvarLicenca, removerLicenca } from "./licenca/armazenamento.js";
+import { ativarOnline, heartbeatOnline, lerChave, salvarChave, aplicarConfigSync } from "./licenca/online.js";
+import { criarMotorSync, criarAuthVps } from "./sync/motor.js";
+import { configurarAutoUpdate } from "./atualizacao.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, "..");          // pasta principal (server/, etc.)
+const PORT = 41730;                                // porta local fixa do app
+const APP_NAME = "Nexus PDV";
+const ICONE = nativeImage.createFromPath(join(__dirname, "build", "icon.ico"));
+
+// Nome que aparece na barra de tarefas do Windows (agrupador)
+if (process.platform === "win32") app.setAppUserModelId("com.nexus.pdv");
+
+// Chave pública: em produção (empacotado), SEMPRE a chave real da Nexus. Rodando
+// do código-fonte, se existir chave-dev.pem, usa ela — permite testar sem licença real.
+let PUBKEY = CHAVE_PUBLICA_NEXUS;
+function resolverChave() {
+  const devPem = join(__dirname, "licenca", "chave-dev.pem");
+  if (!app.isPackaged && existsSync(devPem)) {
+    console.log("[licenca] MODO DEV — usando chave-dev.pem (não vai no instalador)");
+    return readFileSync(devPem, "utf8");
+  }
+  return CHAVE_PUBLICA_NEXUS;
+}
+
+let splash = null;    // janela de boas-vindas
+let janela = null;    // janela principal (login/app ou tela de bloqueio)
+
+// ─── Servidor local (reaproveita server/index.js) ────────────────────────────
+async function iniciarServidor() {
+  const dirDados = app.getPath("userData");
+  process.env.PORT = String(PORT);
+  process.env.FLUXO_DB_PATH = join(dirDados, "fluxo-caixa.db");     // banco gravável
+  process.env.FLUXO_DIST_PATH = join(__dirname, "app-dist");        // frontend base "/"
+  process.env.NODE_ENV = "production";
+  process.env.NEXUS_DESKTOP = "1";  // habilita login opcional (acesso direto até ativar)
+  if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "nexus-desktop-" + fingerprintMaquina();
+
+  await import(pathToFileURL(join(REPO_ROOT, "server", "index.js")).href);
+  await esperarPorta(PORT, 15000);
+}
+
+// ─── Sincronização com a nuvem (opcional, config em userData/sync.json) ──────
+let motorSync = null;
+async function iniciarSync(dirDados) {
+  const cfgPath = join(dirDados, "sync.json");
+  if (!existsSync(cfgPath)) { console.log("[sync] sem sync.json — modo 100% local"); return; }
+  let cfg;
+  try { cfg = JSON.parse(readFileSync(cfgPath, "utf8")); } catch { console.log("[sync] sync.json inválido"); return; }
+  if (!cfg.ativo || !cfg.vpsUrl || !cfg.email) { console.log("[sync] desativado na config"); return; }
+
+  const db = await import(pathToFileURL(join(REPO_ROOT, "server", "database.js")).href);
+  const curPath = join(dirDados, "sync-cursor.json");
+  let cur;
+  try { cur = JSON.parse(readFileSync(curPath, "utf8")); } catch { cur = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" }; }
+  const salvar = () => { try { writeFileSync(curPath, JSON.stringify(cur)); } catch {} };
+  const cursor = {
+    getPull() { return cur.pull; }, setPull(v) { cur.pull = v; salvar(); },
+    getPush() { return cur.push; }, setPush(v) { cur.push = v; salvar(); },
+  };
+  motorSync = criarMotorSync({
+    vpsUrl: cfg.vpsUrl,
+    obterToken: criarAuthVps({ vpsUrl: cfg.vpsUrl, email: cfg.email, senha: cfg.senha, syncToken: cfg.syncToken }),
+    local: { pedidosAlteradosDesde: db.pedidosAlteradosDesde, upsertPedidoSync: db.upsertPedidoSync },
+    cursor,
+    log: (m) => console.log("[sync]", m),
+  });
+  motorSync.start(cfg.intervaloMs || 5000);
+  console.log("[sync] iniciado →", cfg.vpsUrl);
+}
+
+function esperarPorta(port, timeoutMs) {
+  const ate = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const tenta = () => {
+      const req = http.get({ host: "127.0.0.1", port, path: "/api/produtos", timeout: 1500 }, (res) => {
+        res.destroy(); resolve();
+      });
+      req.on("error", () => { Date.now() > ate ? reject(new Error("Servidor local não subiu a tempo.")) : setTimeout(tenta, 400); });
+      req.on("timeout", () => { req.destroy(); Date.now() > ate ? reject(new Error("timeout")) : setTimeout(tenta, 400); });
+    };
+    tenta();
+  });
+}
+
+// ─── Janelas ─────────────────────────────────────────────────────────────────
+function janelaBase(extra = {}) {
+  return new BrowserWindow({
+    width: 1280, height: 800, minWidth: 900, minHeight: 600,
+    backgroundColor: "#0d0f14",
+    title: APP_NAME,
+    icon: ICONE,
+    webPreferences: { preload: join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+    ...extra,
+  });
+}
+
+// Splash: janela pequena, sem moldura, com a logo — aparece IMEDIATAMENTE
+// enquanto o servidor local sobe em segundo plano.
+function abrirSplash() {
+  splash = new BrowserWindow({
+    width: 480, height: 420,
+    frame: false, transparent: false, resizable: false, movable: true,
+    alwaysOnTop: true, skipTaskbar: false, center: true,
+    backgroundColor: "#0b1622",
+    title: APP_NAME,
+    icon: ICONE,
+    webPreferences: { preload: join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
+  });
+  splash.loadFile(join(__dirname, "ui", "splash.html"));
+}
+function fecharSplash() {
+  if (splash && !splash.isDestroyed()) { try { splash.close(); } catch {} }
+  splash = null;
+}
+
+function abrirApp(resultado) {
+  janela = janelaBase({ show: false });
+  janela.once("ready-to-show", () => {
+    janela.show();
+    fecharSplash();
+    if (resultado.estado === "tolerancia") {
+      dialog.showMessageBox(janela, {
+        type: "warning", title: "Assinatura vencida",
+        message: "Sua licença venceu.",
+        detail: resultado.motivo + "\n\nO sistema continua funcionando por alguns dias. Regularize com a Nexus para não bloquear.",
+        buttons: ["Entendi"],
+      });
+    }
+  });
+  janela.loadURL(`http://127.0.0.1:${PORT}/`);
+  janela.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
+}
+
+function abrirBloqueio(resultado) {
+  janela = janelaBase({ width: 620, height: 720, resizable: false, show: false });
+  janela._motivo = resultado.motivo;
+  janela.once("ready-to-show", () => { janela.show(); fecharSplash(); });
+  janela.loadFile(join(__dirname, "ui", "bloqueio.html"));
+}
+
+// ─── IPC ─────────────────────────────────────────────────────────────────────
+ipcMain.handle("licenca:info", () => ({
+  fingerprint: fingerprintMaquina(),
+  motivo: (BrowserWindow.getFocusedWindow() || janela)?._motivo || "É necessário ativar a licença.",
+  versao: app.getVersion(),
+}));
+
+ipcMain.handle("licenca:abrirArquivo", async () => {
+  const r = await dialog.showOpenDialog(janela, {
+    title: "Abrir arquivo de licença",
+    filters: [{ name: "Licença Nexus", extensions: ["lic", "txt", "jwt"] }, { name: "Todos", extensions: ["*"] }],
+    properties: ["openFile"],
+  });
+  if (r.canceled || !r.filePaths[0]) return null;
+  try { return readFileSync(r.filePaths[0], "utf8").trim(); } catch { return null; }
+});
+
+ipcMain.handle("licenca:validar", (_e, token) => {
+  const res = verificarLicenca(token, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprintMaquina() });
+  if (res.estado !== "bloqueado") {
+    salvarLicenca(app.getPath("userData"), token);
+    setTimeout(() => { app.relaunch(); app.exit(0); }, 400);
+    return { ok: true, estado: res.estado };
+  }
+  return { ok: false, motivo: res.motivo };
+});
+
+// Ativação ONLINE por chave: fala com a Nexus, recebe o token + config de sync,
+// grava tudo e reinicia. É o caminho recomendado (dispensa enviar .lic à mão).
+ipcMain.handle("licenca:ativarOnline", async (_e, chave) => {
+  chave = String(chave || "").trim();
+  if (!chave) return { ok: false, motivo: "Informe a chave de licença." };
+  const dir = app.getPath("userData");
+  const fingerprint = fingerprintMaquina();
+
+  let resp;
+  try {
+    resp = await ativarOnline({ chave, fingerprint });
+  } catch {
+    return { ok: false, motivo: "Sem conexão com o servidor da Nexus. Verifique a internet." };
+  }
+
+  if (!resp.token) {
+    const motivos = {
+      invalido: "Chave de licença inválida.",
+      revogado: "Licença revogada. Contate a Nexus.",
+      bloqueado: resp.error || "Licença bloqueada.",
+    };
+    return { ok: false, motivo: motivos[resp.estado] || resp.error || "Não foi possível ativar a licença." };
+  }
+
+  // Confere a assinatura localmente antes de aceitar (defesa em profundidade).
+  const check = verificarLicenca(resp.token, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprint });
+  if (check.estado === "bloqueado") return { ok: false, motivo: check.motivo };
+
+  salvarLicenca(dir, resp.token);
+  salvarChave(dir, chave);
+  aplicarConfigSync(dir, resp.config); // liga a cozinha simultânea (sync.json)
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 400);
+  return { ok: true, estado: check.estado };
+});
+
+// Reset: esquece a licença + chave e reinicia → volta para a tela de ativação.
+ipcMain.handle("licenca:reset", async () => {
+  const dir = app.getPath("userData");
+  removerLicenca(dir);
+  try { const { caminhoChave } = await import("./licenca/online.js"); rmSync(caminhoChave(dir), { force: true }); } catch {}
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 300);
+  return { ok: true };
+});
+
+// Splash pergunta a versão
+ipcMain.handle("splash:versao", () => app.getVersion());
+
+// ─── Heartbeat ("ligar em casa") ─────────────────────────────────────────────
+// Renova o token (estende a validade offline), atualiza a config de sync e
+// reporta a versão instalada. Só roda se a ativação foi online (há chave salva).
+async function baterHeartbeat(dir) {
+  const chave = lerChave(dir);
+  if (!chave) return; // ativado por arquivo .lic — sem heartbeat
+  let resp;
+  try {
+    resp = await heartbeatOnline({ chave, fingerprint: fingerprintMaquina(), versao_app: app.getVersion() });
+  } catch { return; } // offline: mantém o token em cache, segue trabalhando
+  if (resp.estado === "ativo" && resp.token) {
+    salvarLicenca(dir, resp.token);      // renova a validade
+    aplicarConfigSync(dir, resp.config); // atualiza a config de sync
+  } else if (resp.estado === "revogado") {
+    removerLicenca(dir);                 // kill switch: bloqueia no próximo boot
+  }
+  // bloqueado/tolerancia: não renova; o token expira naturalmente.
+}
+
+function iniciarHeartbeat(dir) {
+  baterHeartbeat(dir);                                        // no boot
+  setInterval(() => baterHeartbeat(dir), 1 * 60 * 60 * 1000); // a cada 1h
+}
+
+// ─── Boot ────────────────────────────────────────────────────────────────────
+async function main() {
+  // Log de boot em arquivo (app empacotado não mostra console) — %APPDATA%/Nexus PDV/boot.log
+  try {
+    const logPath = join(app.getPath("userData"), "boot.log");
+    const escreve = (tag, args) => { try { appendFileSync(logPath, `${new Date().toISOString()} ${tag} ${args.map(a => a && a.stack ? a.stack : a).join(" ")}\n`); } catch {} };
+    const _l = console.log.bind(console), _e = console.error.bind(console);
+    console.log = (...a) => { _l(...a); escreve("[log]", a); };
+    console.error = (...a) => { _e(...a); escreve("[err]", a); };
+    process.on("uncaughtException", (e) => escreve("[uncaught]", [e]));
+    process.on("unhandledRejection", (e) => escreve("[rejection]", [e]));
+    escreve("[boot]", ["main() iniciou — v" + app.getVersion()]);
+  } catch { /* logging é best-effort */ }
+
+  Menu.setApplicationMenu(null);
+  PUBKEY = resolverChave();
+
+  // 1º — SPLASH imediato (dá feedback antes de qualquer verificação lenta)
+  abrirSplash();
+
+  const dirDados = app.getPath("userData");
+  console.log("[boot] userData =", dirDados);
+  const token = lerLicenca(dirDados);
+  const resultado = verificarLicenca(token, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprintMaquina() });
+
+  if (resultado.estado === "bloqueado") {
+    // Deixa o splash aparecer por um instante antes da tela de ativação
+    setTimeout(() => abrirBloqueio(resultado), 900);
+    return;
+  }
+
+  try {
+    console.log("[boot] licença OK, subindo servidor local…");
+    await iniciarServidor();
+    console.log("[boot] servidor no ar, abrindo janela.");
+    abrirApp(resultado);   // esta chama fecharSplash() no ready-to-show
+    iniciarSync(dirDados).catch(e => console.error("[sync] falha ao iniciar:", e.message));
+    iniciarHeartbeat(dirDados);           // renova licença + config de sync em segundo plano
+    configurarAutoUpdate(() => janela);   // verifica/baixa atualização em segundo plano
+  } catch (err) {
+    console.error("[boot] FALHA ao iniciar servidor local:\n", err && err.stack ? err.stack : err);
+    fecharSplash();
+    dialog.showErrorBox(APP_NAME, "Falha ao iniciar o sistema local:\n" + (err && err.message));
+    app.quit();
+  }
+}
+
+app.whenReady().then(main);
+app.on("before-quit", () => { try { motorSync && motorSync.stop(); } catch {} });
+app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
+app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) main(); });

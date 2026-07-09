@@ -147,7 +147,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
   const [busca, setBusca] = useState("");
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
-  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "" });
+  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "" });
   const [saving, setSaving] = useState(false);
 
   const itensFiltrados = useMemo(() => {
@@ -157,7 +157,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
 
   const abrirNovo = () => {
     setEditando(null);
-    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "" });
+    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "" });
     setModalAberto(true);
   };
 
@@ -166,7 +166,8 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
     setForm({
       codigo: item.codigo, nome: item.nome, unidade: item.unidade,
       categoria_id: item.categoria_id || "", fornecedor_id: item.fornecedor_id || "",
-      estoque_minimo: item.estoque_minimo || "", estoque_maximo: item.estoque_maximo || ""
+      estoque_minimo: item.estoque_minimo || "", estoque_maximo: item.estoque_maximo || "",
+      custo_manual: (item.custo_manual != null && item.custo_manual !== 0) ? item.custo_manual : ""
     });
     setModalAberto(true);
   };
@@ -181,6 +182,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
         fornecedor_id: form.fornecedor_id || null,
         estoque_minimo: parseFloat(form.estoque_minimo) || 0,
         estoque_maximo: parseFloat(form.estoque_maximo) || 0,
+        custo_manual: parseFloat(form.custo_manual) || 0,
       };
       if (editando) {
         await api.estoque.itens.atualizar(editando.id, { ...data, ativo: editando.ativo });
@@ -326,6 +328,13 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>ESTOQUE MÁXIMO</label>
                   <input style={inp} type="number" step="0.001" value={form.estoque_maximo} onChange={e => setForm({ ...form, estoque_maximo: e.target.value })} placeholder="0" />
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>CUSTO DE REFERÊNCIA (R$ / {form.unidade})</label>
+                <input style={inp} type="number" step="0.01" min="0" value={form.custo_manual} onChange={e => setForm({ ...form, custo_manual: e.target.value })} placeholder="0,00" />
+                <div style={{ fontSize: 10.5, color: "#a8a29e", marginTop: 4 }}>
+                  Usado na ficha técnica enquanto não houver entradas. Após registrar entradas, vale o custo médio.
                 </div>
               </div>
             </div>

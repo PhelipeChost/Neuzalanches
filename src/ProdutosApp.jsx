@@ -49,6 +49,15 @@ function CategoriasTab() {
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
+  const salvarMaxAdicionais = async (cat, valor) => {
+    const max = Math.max(0, parseInt(valor, 10) || 0);
+    // atualização otimista
+    setCategorias(cs => cs.map(c => c.id === cat.id ? { ...c, max_adicionais: max } : c));
+    try {
+      await api.categorias.atualizar(cat.id, { nome: cat.nome, max_adicionais: max });
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+
   const mover = async (id, direcao) => {
     const idx = categorias.findIndex(c => c.id === id);
     if (idx < 0) return;
@@ -111,7 +120,15 @@ function CategoriasTab() {
                       <span style={{ background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>Adicionais</span>
                     )}
                   </div>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    {c.permite_adicionais && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#78716c", whiteSpace: "nowrap" }} title="Máximo de adicionais por item. 0 = sem limite.">
+                        Limite:
+                        <input type="number" min="0" step="1" defaultValue={c.max_adicionais || 0}
+                          onBlur={e => salvarMaxAdicionais(c, e.target.value)}
+                          style={{ width: 52, padding: "3px 6px", border: "1px solid #e7e5e4", borderRadius: 6, fontSize: 11, textAlign: "center", fontFamily: "'DM Sans', sans-serif" }} />
+                      </label>
+                    )}
                     <button onClick={() => toggleAdicionais(c)}
                       style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 6, padding: "4px 10px", fontSize: 10, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
                       {c.permite_adicionais ? "Desativar adicionais" : "Ativar adicionais"}
@@ -133,7 +150,8 @@ function CategoriasTab() {
 // ─── ADICIONAIS ──────────────────────────────────────────────────────────────
 function AdicionaisTab() {
   const [adicionais, setAdicionais] = useState([]);
-  const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "" });
+  const [categorias, setCategorias] = useState([]);
+  const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "", categoria: "" });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
@@ -141,7 +159,9 @@ function AdicionaisTab() {
   const fmtPreco = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   useEffect(() => {
-    api.adicionais.listar().then(setAdicionais).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
+    Promise.all([api.adicionais.listar(), api.categorias.listar()])
+      .then(([ads, cats]) => { setAdicionais(ads); setCategorias(cats); })
+      .catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
   }, []);
 
   const adicionar = async () => {
@@ -150,9 +170,9 @@ function AdicionaisTab() {
     const custo = parseFloat(novoAd.custo) || 0;
     if (!nome || isNaN(preco) || preco < 0) return showToast("Preencha nome e preco valido", "#dc2626");
     try {
-      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true });
+      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true, categoria: novoAd.categoria });
       setAdicionais(ads => [...ads, novo]);
-      setNovoAd({ nome: "", preco: "", custo: "" });
+      setNovoAd({ nome: "", preco: "", custo: "", categoria: "" });
       showToast("Adicional criado!");
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
@@ -183,7 +203,7 @@ function AdicionaisTab() {
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-          Itens extras que o cliente pode adicionar aos produtos de categorias com adicionais habilitados. Ex: Cheddar, Bacon, Ovo.
+          Itens extras que o cliente pode adicionar aos produtos. Vincule a uma <b>categoria</b> para que o adicional apareça só nela (ex: adicionais de bebidas), ou deixe em <b>Todas</b> para valer em qualquer produto com adicionais habilitados.
         </div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
           <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
@@ -192,6 +212,11 @@ function AdicionaisTab() {
             placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
           <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
             placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
+          <select value={novoAd.categoria} onChange={e => setNovoAd({ ...novoAd, categoria: e.target.value })}
+            style={{ ...cfgInp, cursor: "pointer", minWidth: 150 }}>
+            <option value="">Todas as categorias</option>
+            {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+          </select>
           <button onClick={adicionar} style={cfgBtn}>+ Criar</button>
         </div>
 
@@ -205,6 +230,9 @@ function AdicionaisTab() {
                   <span style={{ fontSize: 13, fontWeight: 600 }}>{a.nome}</span>
                   <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>{fmtPreco(a.preco)}</span>
                   {a.custo > 0 && <span style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmtPreco(a.custo)}</span>}
+                  <span style={{ background: a.categoria ? "#eff6ff" : "#f5f5f4", color: a.categoria ? "#2563eb" : "#78716c", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
+                    {a.categoria ? `📂 ${a.categoria}` : "Todas"}
+                  </span>
                   <span style={{ background: a.disponivel ? "#dcfce7" : "#fee2e2", color: a.disponivel ? "#15803d" : "#dc2626", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
                     {a.disponivel ? "Ativo" : "Inativo"}
                   </span>
@@ -231,10 +259,15 @@ function AdicionaisTab() {
 // ─── T10: DESEMPENHO DO CARDÁPIO ──────────────────────────────────────────────
 function DesempenhoTab() {
   const [stats, setStats] = useState(null);
+  const [ranking, setRanking] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [catSel, setCatSel] = useState("__todas__");
 
   useEffect(() => {
-    api.cardapio.stats().then(setStats).catch(() => {}).finally(() => setLoading(false));
+    Promise.all([
+      api.cardapio.stats().catch(() => null),
+      api.cardapio.ranking().catch(() => null),
+    ]).then(([s, r]) => { setStats(s); setRanking(r); }).finally(() => setLoading(false));
   }, []);
 
   const fmtR = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -297,6 +330,287 @@ function DesempenhoTab() {
       <div style={{ fontSize: 11, color: "#a8a29e" }}>
         💡 As visitas são contadas uma vez por sessão de cada cliente que abre o cardápio público.
       </div>
+
+      {/* ── Ranking de vendas (item 5) ── */}
+      {ranking && ranking.produtos && ranking.produtos.length > 0 && (() => {
+        const cats = Object.keys(ranking.porCategoria || {});
+        const lista = catSel === "__todas__" ? ranking.produtos : (ranking.porCategoria[catSel] || []);
+        const maxQtd = lista[0]?.qtd || 1;
+        const mais = lista.slice(0, 8);
+        const menos = lista.length > 1 ? lista.slice().reverse().slice(0, 5) : [];
+        const Linha = ({ p, pos, cor }) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid #f5f5f4" }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#a8a29e", minWidth: 24 }}>{pos}º</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#1c1917", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.nome}</div>
+              {catSel === "__todas__" && <div style={{ fontSize: 10, color: "#a8a29e" }}>{p.categoria}</div>}
+              <div style={{ height: 5, background: "#f5f5f4", borderRadius: 3, marginTop: 4, overflow: "hidden" }}>
+                <div style={{ width: `${Math.max(4, (p.qtd / maxQtd) * 100)}%`, height: "100%", background: cor, borderRadius: 3 }} />
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#1c1917" }}>{p.qtd}</div>
+              <div style={{ fontSize: 10, color: "#a8a29e" }}>{fmtR(p.receita)}</div>
+            </div>
+          </div>
+        );
+        return (
+          <div style={{ marginTop: 26 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700 }}>Ranking de vendas</div>
+                <div style={{ fontSize: 12, color: "#a8a29e" }}>{ranking.totalUnidades} unidades vendidas · {ranking.totalProdutosDistintos} produtos diferentes</div>
+              </div>
+              <select value={catSel} onChange={e => setCatSel(e.target.value)} style={{ ...cfgInp, cursor: "pointer", minWidth: 180 }}>
+                <option value="__todas__">Todas as categorias</option>
+                {cats.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+              <div className="card">
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#15803d" }}>🔥 Mais vendidos</div>
+                {mais.map((p, i) => <Linha key={p.produto_id} p={p} pos={i + 1} cor="#15803d" />)}
+              </div>
+              <div className="card">
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#d97706" }}>🐢 Menos vendidos</div>
+                {menos.length === 0 ? <div style={{ fontSize: 12, color: "#a8a29e" }}>Poucos dados ainda.</div>
+                  : menos.map((p, k) => <Linha key={p.produto_id} p={p} pos={lista.length - k} cor="#d97706" />)}
+              </div>
+            </div>
+            {ranking.adicionais && ranking.adicionais.length > 0 && (
+              <div className="card" style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#2563eb" }}>➕ Adicionais mais pedidos</div>
+                {ranking.adicionais.slice(0, 6).map((a, i) => (
+                  <div key={a.nome} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid #f5f5f4" }}>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: "#a8a29e", minWidth: 24 }}>{i + 1}º</span>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#1c1917" }}>{a.nome}</span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: "#1c1917" }}>{a.qtd}</span>
+                    <span style={{ fontSize: 10, color: "#a8a29e", minWidth: 72, textAlign: "right" }}>{fmtR(a.receita)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ─── CARDÁPIOS (multi-menu) ──────────────────────────────────────────────────
+function CardapiosTab() {
+  const [cardapios, setCardapios] = useState([]);
+  const [categorias, setCategorias] = useState([]);
+  const [adicionais, setAdicionais] = useState([]);
+  const [novoNome, setNovoNome] = useState("");
+  const [novoIcone, setNovoIcone] = useState("📋");
+  const [novoCor, setNovoCor] = useState("#15803d");
+  const [editando, setEditando] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState("");
+
+  const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
+
+  const carregar = async () => {
+    try {
+      const [c, cats, ads] = await Promise.all([
+        api.cardapios.listar(),
+        api.categorias.listar(),
+        api.adicionais.listar(),
+      ]);
+      setCardapios(c);
+      setCategorias(cats);
+      setAdicionais(ads || []);
+    } catch (e) { showToast("Erro ao carregar", "#dc2626"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { carregar(); }, []);
+
+  const criar = async () => {
+    if (!novoNome.trim()) return showToast("Digite o nome do cardápio", "#dc2626");
+    try {
+      await api.cardapios.criar({ nome: novoNome.trim(), icone: novoIcone, cor: novoCor });
+      setNovoNome(""); setNovoIcone("📋"); setNovoCor("#15803d");
+      await carregar();
+      showToast("Cardápio criado!");
+    } catch (e) { showToast(e.message, "#dc2626"); }
+  };
+
+  const excluir = async (id) => {
+    if (!confirm("Excluir este cardápio?")) return;
+    try { await api.cardapios.excluir(id); await carregar(); showToast("Excluído"); }
+    catch (e) { showToast(e.message, "#dc2626"); }
+  };
+
+  const salvarEdicao = async () => {
+    if (!editando) return;
+    try {
+      await api.cardapios.atualizar(editando.id, { nome: editando.nome, icone: editando.icone, cor: editando.cor, ativo: editando.ativo, imagem: editando.imagem });
+      await api.cardapios.definirCategorias(editando.id, editando.categorias);
+      await api.cardapios.definirAdicionais(editando.id, editando.adicionais || []);
+      setEditando(null);
+      await carregar();
+      showToast("Salvo!");
+    } catch (e) { showToast(e.message, "#dc2626"); }
+  };
+
+  const toggleCat = (catId) => {
+    if (!editando) return;
+    setEditando(prev => ({
+      ...prev,
+      categorias: prev.categorias.includes(catId)
+        ? prev.categorias.filter(c => c !== catId)
+        : [...prev.categorias, catId],
+    }));
+  };
+
+  const toggleAdicional = (adId) => {
+    if (!editando) return;
+    setEditando(prev => ({
+      ...prev,
+      adicionais: (prev.adicionais || []).includes(adId)
+        ? (prev.adicionais || []).filter(a => a !== adId)
+        : [...(prev.adicionais || []), adId],
+    }));
+  };
+
+  // Upload de imagem (para tela de seleção de cardápio quando >= 2)
+  const escolherImagem = (e) => {
+    const f = e.target.files?.[0];
+    if (!f || !editando) return;
+    if (f.size > 400 * 1024) return showToast("Imagem > 400KB. Reduza a foto.", "#dc2626");
+    const reader = new FileReader();
+    reader.onload = () => setEditando(prev => ({ ...prev, imagem: String(reader.result) }));
+    reader.readAsDataURL(f);
+  };
+
+  const ICONES = ["📋", "🍔", "🍕", "🍣", "🥗", "☕", "🍺", "🌙", "☀️", "🎉", "🏖️", "🛵"];
+
+  if (loading) return <div style={{ textAlign: "center", padding: 40, color: "#78716c" }}>Carregando...</div>;
+
+  return (
+    <div className="card anim">
+      <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 18, fontFamily: "'Inter', sans-serif" }}>Cardápios</h3>
+      <p style={{ fontSize: 12, color: "#78716c", marginBottom: 18, lineHeight: 1.5 }}>
+        Crie múltiplos cardápios (ex: Almoço, Jantar, Delivery) e atribua categorias a cada um.
+        No cardápio digital, o cliente verá abas para alternar entre eles.
+      </p>
+
+      {/* Criar novo */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, alignItems: "center" }}>
+        <input style={{ ...cfgInp, flex: "1 1 180px" }} value={novoNome} onChange={e => setNovoNome(e.target.value)} placeholder="Nome do cardápio" />
+        <select style={{ ...cfgInp, width: 60 }} value={novoIcone} onChange={e => setNovoIcone(e.target.value)}>
+          {ICONES.map(i => <option key={i} value={i}>{i}</option>)}
+        </select>
+        <input type="color" value={novoCor} onChange={e => setNovoCor(e.target.value)} style={{ width: 36, height: 36, border: "1.5px solid #e7e5e4", borderRadius: 8, cursor: "pointer", padding: 2 }} />
+        <button style={cfgBtn} onClick={criar}>+ Criar</button>
+      </div>
+
+      {cardapios.length === 0 && (
+        <div style={{ textAlign: "center", padding: 24, color: "#a8a29e", fontSize: 13 }}>
+          Nenhum cardápio criado. Todas as categorias aparecem juntas no menu online.
+        </div>
+      )}
+
+      {/* Lista */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {cardapios.map(c => (
+          <div key={c.id} style={{ background: "#fafaf9", border: "1.5px solid #e7e5e4", borderRadius: 12, padding: "14px 18px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 24 }}>{c.icone}</span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1c1917" }}>{c.nome}</div>
+                  <div style={{ fontSize: 11, color: "#78716c" }}>
+                    {c.categorias.length} categoria{c.categorias.length !== 1 ? "s" : ""}
+                    {!c.ativo && <span style={{ color: "#dc2626", marginLeft: 8, fontWeight: 600 }}>INATIVO</span>}
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="icon-btn" onClick={() => setEditando({ ...c, categorias: [...(c.categorias || [])], adicionais: [...(c.adicionais || [])] })} title="Editar">✏️</button>
+                <button className="icon-btn del" onClick={() => excluir(c.id)} title="Excluir">🗑️</button>
+              </div>
+            </div>
+
+            {/* Inline editor */}
+            {editando?.id === c.id && (
+              <div style={{ marginTop: 14, padding: "14px 16px", background: "#fff", borderRadius: 10, border: "1px solid #e7e5e4" }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12, alignItems: "center" }}>
+                  <input style={{ ...cfgInp, flex: "1 1 160px" }} value={editando.nome} onChange={e => setEditando(p => ({ ...p, nome: e.target.value }))} />
+                  <select style={{ ...cfgInp, width: 60 }} value={editando.icone} onChange={e => setEditando(p => ({ ...p, icone: e.target.value }))}>
+                    {ICONES.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                  <input type="color" value={editando.cor} onChange={e => setEditando(p => ({ ...p, cor: e.target.value }))} style={{ width: 36, height: 36, border: "1.5px solid #e7e5e4", borderRadius: 8, cursor: "pointer", padding: 2 }} />
+                  <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                    <input type="checkbox" checked={!!editando.ativo} onChange={e => setEditando(p => ({ ...p, ativo: e.target.checked ? 1 : 0 }))} /> Ativo
+                  </label>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 8 }}>Categorias deste cardápio:</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+                  {categorias.map(cat => {
+                    const sel = editando.categorias.includes(cat.id);
+                    return (
+                      <button key={cat.id} onClick={() => toggleCat(cat.id)}
+                        style={{
+                          padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? editando.cor : "#e7e5e4"}`,
+                          background: sel ? editando.cor + "18" : "#fff", color: sel ? editando.cor : "#78716c",
+                          fontSize: 12, fontWeight: sel ? 600 : 400, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                        }}>
+                        {cat.nome}
+                      </button>
+                    );
+                  })}
+                  {categorias.length === 0 && <span style={{ fontSize: 12, color: "#a8a29e" }}>Nenhuma categoria cadastrada — crie na aba "Categorias"</span>}
+                </div>
+
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 8 }}>Adicionais deste cardápio:</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+                  {adicionais.map(ad => {
+                    const sel = (editando.adicionais || []).includes(ad.id);
+                    return (
+                      <button key={ad.id} onClick={() => toggleAdicional(ad.id)}
+                        style={{
+                          padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? editando.cor : "#e7e5e4"}`,
+                          background: sel ? editando.cor + "18" : "#fff", color: sel ? editando.cor : "#78716c",
+                          fontSize: 12, fontWeight: sel ? 600 : 400, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                        }}>
+                        {ad.nome}
+                      </button>
+                    );
+                  })}
+                  {adicionais.length === 0 && <span style={{ fontSize: 12, color: "#a8a29e" }}>Nenhum adicional cadastrado — crie na aba "Adicionais"</span>}
+                </div>
+
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 8 }}>Imagem do cardápio (só aparece quando houver mais de um):</div>
+                <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+                  {editando.imagem ? (
+                    <div style={{ position: "relative" }}>
+                      <img src={editando.imagem} alt="" style={{ width: 72, height: 72, borderRadius: 12, objectFit: "cover", border: "1.5px solid #e7e5e4" }} />
+                      <button type="button" onClick={() => setEditando(p => ({ ...p, imagem: "" }))}
+                        style={{ position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: "50%", background: "#dc2626", color: "#fff", border: "2px solid #fff", cursor: "pointer", fontSize: 12, lineHeight: 1 }}>×</button>
+                    </div>
+                  ) : (
+                    <div style={{ width: 72, height: 72, borderRadius: 12, background: "#fafaf9", border: "1.5px dashed #d6d3d1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, color: "#a8a29e" }}>📷</div>
+                  )}
+                  <label style={{ ...cfgBtn, background: "#fff", border: "1.5px solid #e7e5e4", color: "#57534e", cursor: "pointer", margin: 0 }}>
+                    {editando.imagem ? "Trocar foto" : "Escolher foto"}
+                    <input type="file" accept="image/*" onChange={escolherImagem} style={{ display: "none" }} />
+                  </label>
+                  <div style={{ fontSize: 11, color: "#a8a29e" }}>Recomendado 400×400px, máx 400KB.</div>
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button style={cfgBtn} onClick={salvarEdicao}>Salvar</button>
+                  <button style={{ ...cfgBtn, background: "#fff", color: "#78716c", border: "1.5px solid #e7e5e4" }} onClick={() => setEditando(null)}>Cancelar</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {toast && <div className="toast" style={{ background: toast.cor }}>{toast.msg}</div>}
     </div>
   );
 }
@@ -304,6 +618,7 @@ function DesempenhoTab() {
 const NAV_TABS = [
   { key: "produtos", label: "Produtos", icon: "\u{1F354}" },
   { key: "promocoes", label: "Promoções", icon: "\u{1F525}" },
+  { key: "cardapios", label: "Cardápios", icon: "\u{1F4CB}" },
   { key: "categorias", label: "Categorias", icon: "\u{1F4C2}" },
   { key: "adicionais", label: "Adicionais", icon: "\u{2795}" },
   { key: "desempenho", label: "Desempenho", icon: "\u{1F4CA}" },
@@ -367,6 +682,7 @@ export default function ProdutosApp({ onNavegar }) {
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
         {aba === "produtos" && <Produtos />}
         {aba === "promocoes" && <Promocoes />}
+        {aba === "cardapios" && <CardapiosTab />}
         {aba === "categorias" && <CategoriasTab />}
         {aba === "adicionais" && <AdicionaisTab />}
         {aba === "desempenho" && <DesempenhoTab />}

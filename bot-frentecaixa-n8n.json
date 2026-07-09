@@ -1,0 +1,142 @@
+{
+  "id": "FdCBotWhatsApp01",
+  "name": "Frente de Caixa — Bot WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "frentecaixa-bot",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "f1111111-1111-1111-1111-111111111111",
+      "name": "Webhook Evolution",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        300
+      ],
+      "webhookId": "frentecaixa-bot"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// PARSE + COOLDOWN — Evolution API (v2)\n// Extrai o número REAL do remetente e aplica cooldown de 6h:\n// depois de saudar um cliente, o bot silencia (não atrapalha\n// atendimento humano). Se o DONO responder, renova o cooldown.\n// ============================================================\nconst body = $input.first().json.body || $input.first().json;\nconst event = body.event || '';\nconst data = body.data || {};\nconst key = data.key || {};\n\n// Eventos que não são mensagem: ignorar\nif (event && !/messages\\.upsert|MESSAGES_UPSERT/i.test(event)) return [];\n\n// Ignorar grupos\nif ((key.remoteJid || '').includes('@g.us')) return [];\n\n// Número REAL do remetente (quando remoteJid é @lid, o real vem em outros campos)\nconst candidatos = [key.senderPn, key.participantPn, key.remoteJidAlt, key.participant, data.sender, data.senderPn, data.remoteJidAlt, key.remoteJid].filter(Boolean);\nlet numero = null;\nfor (const cand of candidatos) {\n  if (typeof cand !== 'string') continue;\n  if (cand.includes('@g.us') || cand.endsWith('@lid')) continue;\n  const n = cand.split('@')[0];\n  if (/^\\d{8,15}$/.test(n)) { numero = n; break; }\n}\nif (!numero) return [];\n\n// Cooldown persistido entre execuções\nconst COOLDOWN_MS = 6 * 60 * 60 * 1000;\nconst __sd = $getWorkflowStaticData('global');\nconst cd = __sd.cooldown || {};\n// limpeza de entradas velhas\nfor (const [k, ts] of Object.entries(cd)) { if (Date.now() - ts > COOLDOWN_MS) delete cd[k]; }\n\n// Dono respondeu manualmente → renova cooldown e silencia\nif (key.fromMe) {\n  cd[numero] = Date.now();\n  __sd.cooldown = cd;\n  return [];\n}\n\n// Cliente em cooldown → silencia\nif (cd[numero] && Date.now() - cd[numero] < COOLDOWN_MS) return [];\n\n__sd.cooldown = cd;\nreturn [{ json: { numero } }];"
+      },
+      "id": "f2222222-2222-2222-2222-222222222222",
+      "name": "Parse + Cooldown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://127.0.0.1:3005/api/config/estabelecimento",
+        "options": {}
+      },
+      "id": "f3333333-3333-3333-3333-333333333333",
+      "name": "GET Config Plataforma",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// MONTA A MENSAGEM — tudo vem das CONFIGURAÇÕES da plataforma\n// Prioridade: 1) alerta ativo  2) fechado  3) saudação padrão\n// ============================================================\nconst cfg = $input.first().json;\nconst { numero } = $('Parse + Cooldown').first().json;\n\nconst nome = cfg.nome_estabelecimento || 'nosso estabelecimento';\nconst link = (cfg.link_exibicao || '').trim();\nconst alerta = (cfg.mensagem_alerta || '').trim();\nconst aberto = !!cfg.aberto;\nconst h = cfg.horario || {};\n\nconst blocoLink = link ? `\\n\\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\\n🌐 *${link}*` : '';\n\nlet texto;\nif (alerta) {\n  // Adversidade (ex.: chapa queimou) — saudação + alerta + compreensão\n  texto = `Olá! 👋 Aqui é da *${nome}*.\\n\\n⚠️ *Aviso importante:*\\n${alerta}\\n\\nPedimos desculpas pelo transtorno e agradecemos a sua compreensão. 🙏${blocoLink}`;\n} else if (!aberto) {\n  const DIAS = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];\n  const dias = (h.dias || []).map(d => DIAS[d]);\n  const diasStr = dias.length === 7 ? 'Todos os dias' : dias.join(', ');\n  texto = `🔒 *Olá! No momento a ${nome} está fechada.*\\n\\nNosso horário de funcionamento:\\n📅 *${diasStr}*\\n🕐 *${h.abertura || ''} às ${h.fechamento || ''}*${blocoLink}\\n\\n_Te esperamos em breve!_ 😊`;\n} else {\n  texto = `Olá! 👋 Seja bem-vindo(a) à *${nome}*! 🍔${blocoLink}\\n\\n_Após finalizar o pedido, você receberá as atualizações aqui pelo WhatsApp!_ 📲`;\n}\n\n// Marca cooldown AGORA (envio vem em seguida)\nconst __sd = $getWorkflowStaticData('global');\nconst cd = __sd.cooldown || {};\ncd[numero] = Date.now();\n__sd.cooldown = cd;\n\nreturn [{ json: { numero, texto } }];"
+      },
+      "id": "f4444444-4444-4444-4444-444444444444",
+      "name": "Montar Mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:3005/api/bot/enviar",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $json.numero }}\",\n  \"text\": {{ JSON.stringify($json.texto) }}\n}",
+        "options": {}
+      },
+      "id": "f5555555-5555-5555-5555-555555555555",
+      "name": "Enviar WhatsApp (via plataforma)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Evolution": {
+      "main": [
+        [
+          {
+            "node": "Parse + Cooldown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Cooldown": {
+      "main": [
+        [
+          {
+            "node": "GET Config Plataforma",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Config Plataforma": {
+      "main": [
+        [
+          {
+            "node": "Montar Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Mensagem": {
+      "main": [
+        [
+          {
+            "node": "Enviar WhatsApp (via plataforma)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

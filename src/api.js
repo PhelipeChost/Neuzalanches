@@ -1,4 +1,5 @@
-const API = "/api";
+const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
+const API = `${_base}/api`;
 
 function getToken() {
   return localStorage.getItem("token");
@@ -49,6 +50,57 @@ export const api = {
   config: {
     obter: () => request("/config"),
     salvar: (data) => request("/config", { method: "PUT", body: JSON.stringify(data) }),
+    // Dados do estabelecimento (nome + whatsapp) — leitura pública, usado nas impressões
+    estabelecimento: () => fetch(`${API}/config/estabelecimento`).then(r => r.json()),
+  },
+
+  // Bot WhatsApp — alerta em massa (clientes com pedido em andamento)
+  whatsappBot: {
+    enviarAlerta: (mensagem) => request("/whatsapp/alerta", { method: "POST", body: JSON.stringify({ mensagem }) }),
+  },
+
+  // Fiscal / NFC-e (config + certificado A1)
+  fiscal: {
+    obter: () => request("/fiscal/config"),
+    salvar: (data) => request("/fiscal/config", { method: "PUT", body: JSON.stringify(data) }),
+    // dados: { nome_arquivo, pfx_base64, senha }
+    enviarCertificado: (dados) => request("/fiscal/certificado", { method: "POST", body: JSON.stringify(dados) }),
+    removerCertificado: () => request("/fiscal/certificado", { method: "DELETE" }),
+    // NFC-e (motor de emissão — modo simulado por enquanto)
+    emitirNFCe: (pedido_id, simulado = false) => request("/fiscal/nfce/emitir", { method: "POST", body: JSON.stringify({ pedido_id, simulado }) }),
+    testarNFCe: () => request("/fiscal/nfce/teste", { method: "POST" }),
+    listarNFCe: () => request("/fiscal/nfce"),
+    // NFC-e ANTIGO — motor próprio (regras vigentes), emissão REAL direta na SEFAZ
+    antigoStatus: () => request("/fiscal/antigo/status", { method: "POST" }),
+    antigoEmitir: (pedido_id = null) => request("/fiscal/antigo/emitir", { method: "POST", body: JSON.stringify({ pedido_id }) }),
+    antigoListar: () => request("/fiscal/antigo/nfce"),
+    antigoXml: (id) => request(`/fiscal/antigo/nfce/${id}/xml`),
+  },
+
+  // Perfil / Setup do estabelecimento
+  perfil: {
+    obter: () => request("/perfil"),
+    salvar: (data) => request("/perfil", { method: "PUT", body: JSON.stringify(data) }),
+  },
+
+  // Sessão de caixa (abrir/fechar/sangria/suprimento)
+  caixa: {
+    sessao: () => request("/caixa/sessao"),
+    abrir: (saldo_inicial) => request("/caixa/abrir", { method: "POST", body: JSON.stringify({ saldo_inicial }) }),
+    sangria: (valor, obs) => request("/caixa/sangria", { method: "POST", body: JSON.stringify({ valor, obs }) }),
+    suprimento: (valor, obs) => request("/caixa/suprimento", { method: "POST", body: JSON.stringify({ valor, obs }) }),
+    fechar: (saldo_informado) => request("/caixa/fechar", { method: "POST", body: JSON.stringify({ saldo_informado }) }),
+    movimentos: () => request("/caixa/movimentos"),
+  },
+
+  // Cardápios
+  cardapios: {
+    listar: () => request("/cardapios"),
+    criar: (data) => request("/cardapios", { method: "POST", body: JSON.stringify(data) }),
+    atualizar: (id, data) => request(`/cardapios/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    excluir: (id) => request(`/cardapios/${id}`, { method: "DELETE" }),
+    definirCategorias: (id, categorias) => request(`/cardapios/${id}/categorias`, { method: "PUT", body: JSON.stringify({ categorias }) }),
+    definirAdicionais: (id, adicionais) => request(`/cardapios/${id}/adicionais`, { method: "PUT", body: JSON.stringify({ adicionais }) }),
   },
 
   // Categorias
@@ -82,10 +134,13 @@ export const api = {
     },
   },
 
-  // Admin emails (convites)
+  // Funcionários admin (acesso ao painel)
   adminEmails: {
     listar: () => request("/admin-emails"),
-    adicionar: (email) => request("/admin-emails", { method: "POST", body: JSON.stringify({ email }) }),
+    // dados: { email, nome?, senha?, setores? }
+    adicionar: (dados) => request("/admin-emails", { method: "POST",
+      body: JSON.stringify(typeof dados === "string" ? { email: dados } : dados) }),
+    atualizar: (email, dados) => request(`/admin-emails/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(dados) }),
     remover: (email) => request(`/admin-emails/${encodeURIComponent(email)}`, { method: "DELETE" }),
   },
 
@@ -99,7 +154,7 @@ export const api = {
     excluir: (id) => request(`/pedidos/${id}`, { method: "DELETE" }),
     contarPendentes: () => request("/pedidos/pendentes/count"),
     // Listagem pública pelo telefone (read-only para "Meus Pedidos" do cliente)
-    meusPedidos: (telefone) => fetch(`/api/pedidos/publico/cliente/${encodeURIComponent(String(telefone).replace(/\D/g, ""))}`).then(r => {
+    meusPedidos: (telefone) => fetch(`${API}/pedidos/publico/cliente/${encodeURIComponent(String(telefone).replace(/\D/g, ""))}`).then(r => {
       if (!r.ok) throw new Error("Erro ao buscar pedidos");
       return r.json();
     }),
@@ -121,19 +176,46 @@ export const api = {
     salvar: (data) => request("/config/pix", { method: "PUT", body: JSON.stringify(data) }),
   },
 
+  // Login opcional (PDV desktop)
+  loginStatus: () => fetch(`${API}/config/login-status`).then(r => r.json()),
+  loginConfig: (ativo) => request("/config/login", { method: "PUT", body: JSON.stringify({ ativo }) }),
+
+  // Sync / Conexão remota
+  sync: {
+    config: () => request("/config/sync"),
+    salvar: (data) => request("/config/sync", { method: "PUT", body: JSON.stringify(data) }),
+    testar: () => request("/sync/test", { method: "POST" }),
+    enviarProdutos: () => request("/sync/produtos", { method: "POST" }),
+    meuToken: () => request("/config/sync-token"),
+    regenerarMeuToken: () => request("/config/sync-token/regenerar", { method: "POST" }),
+  },
+
   // Horário de funcionamento
   horario: {
-    obter: () => fetch("/api/config/horario").then(r => r.json()),
+    obter: () => fetch(`${API}/config/horario`).then(r => r.json()),
     salvar: (data) => request("/config/horario", { method: "PUT", body: JSON.stringify(data) }),
   },
 
-  // Custos Fixos Mensais
+  // Custos Fixos Mensais (com suporte a tipo variável: diaria × qtd)
   custosFixos: {
     listar: () => request("/custos-fixos"),
     criar: (data) => request("/custos-fixos", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/custos-fixos/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     excluir: (id) => request(`/custos-fixos/${id}`, { method: "DELETE" }),
     gerar: (mes) => request(`/custos-fixos/gerar/${mes}`, { method: "POST" }),
+  },
+
+  // Categorias do financeiro (separadas das categorias de produto)
+  categoriasFinanceiro: {
+    listar: () => request("/categorias-financeiro"),
+    criar: (data) => request("/categorias-financeiro", { method: "POST", body: JSON.stringify(data) }),
+    atualizar: (id, data) => request(`/categorias-financeiro/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    excluir: (id) => request(`/categorias-financeiro/${id}`, { method: "DELETE" }),
+  },
+
+  // Empréstimo inteligente: gera entrada + N parcelas previstas
+  emprestimo: {
+    criar: (data) => request("/lancamentos/emprestimo", { method: "POST", body: JSON.stringify(data) }),
   },
 
   // Insumos (ficha técnica)
@@ -229,8 +311,8 @@ export const api = {
 
   // Mesa pública (QR code — sem auth)
   mesaPublica: {
-    info: (numero) => fetch(`/api/mesa/${numero}/info`).then(r => { if (!r.ok) throw new Error("Mesa não encontrada"); return r.json(); }),
-    pedido: (numero, data) => fetch(`/api/mesa/${numero}/pedido`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }).then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || "Erro ao enviar pedido"); }); return r.json(); }),
+    info: (numero) => fetch(`${API}/mesa/${numero}/info`).then(r => { if (!r.ok) throw new Error("Mesa não encontrada"); return r.json(); }),
+    pedido: (numero, data) => fetch(`${API}/mesa/${numero}/pedido`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }).then(r => { if (!r.ok) return r.json().then(d => { throw new Error(d.error || "Erro ao enviar pedido"); }); return r.json(); }),
   },
 
   // Lixeira
@@ -244,5 +326,10 @@ export const api = {
   cardapio: {
     registrarVisita: () => fetch(`${API}/public/visita`, { method: "POST" }).catch(() => {}),
     stats: () => request("/cardapio/stats"),
+  },
+
+  // Relatórios — ranking de vendas (produtos e adicionais)
+  relatorios: {
+    ranking: () => request("/relatorios/ranking"),
   },
 };

@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import QRCode from "qrcode";
+import { agenteStatus, imprimirBytesViaAgente, gerarQRMesaBytes } from "./cozinhaImpressoraUSB";
 
 const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // ─── CUPOM TÉRMICO DO QR CODE DA MESA (XP-80, 80mm) ──────────────────────────
-function gerarCupomQRMesa(mesa, qrDataUrl, marca = "NEUZA LANCHES") {
+function gerarCupomQRMesa(mesa, qrDataUrl, marca = "MEU ESTABELECIMENTO") {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>QR Mesa ${mesa.numero}</title><style>
     @page { size: 72mm auto; margin: 0; }
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -22,7 +23,7 @@ function gerarCupomQRMesa(mesa, qrDataUrl, marca = "NEUZA LANCHES") {
     .sub { font-size: 11px; line-height: 1.4; margin-bottom: 2px; }
     .pago { font-size: 10px; font-weight: bold; margin-top: 2px; letter-spacing: 0.5px; }
   </style></head><body>
-    <div class="marca">${escHtml(marca)}</div>
+    <div class="marca">${escHtml((marca || "MEU ESTABELECIMENTO").toUpperCase())}</div>
     <div class="submarca">CARDÁPIO DIGITAL</div>
     <div class="hr"></div>
     <div class="mesa-label">MESA</div>
@@ -51,7 +52,7 @@ const tempoDesde = (iso) => {
   return `${h}h ${m}min`;
 };
 
-export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
+export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesas" }) {
   const [tema, setTema] = useState(() => localStorage.getItem("caixa-tema") || "light");
   const [mesas, setMesas] = useState([]);
   const [mesaSel, setMesaSel] = useState(null);
@@ -63,6 +64,26 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
   const [clock, setClock] = useState("");
   const [produtos, setProdutos] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Sessão de caixa (abrir/fechar/sangria/suprimento)
+  const [sessao, setSessao] = useState(null);
+  const [modalCaixa, setModalCaixa] = useState(null); // "abrir" | "sangria" | "suprimento" | "fechar" | "resultado" | null
+  const [caixaValor, setCaixaValor] = useState("");
+  const [caixaObs, setCaixaObs] = useState("");
+  const [caixaResultado, setCaixaResultado] = useState(null);
+
+  // Balcão: pedido rápido
+  const [balcaoItens, setBalcaoItens] = useState([]);
+  const [balcaoCliente, setBalcaoCliente] = useState("");
+  const [modalPagamento, setModalPagamento] = useState(null); // comanda/pedido que será pago
+  const [pgtoMetodo, setPgtoMetodo] = useState("");
+  const [pgtoValores, setPgtoValores] = useState([]);
+  const [pgtoTroco, setPgtoTroco] = useState("");
+
+  // Balcão: pedidos ativos, seleção, busca
+  const [balcaoPedidos, setBalcaoPedidos] = useState([]);
+  const [balcaoSel, setBalcaoSel] = useState(null);
+  const [balcaoBusca, setBalcaoBusca] = useState("");
 
   // Modal abrir comanda
   const [modalAbrir, setModalAbrir] = useState(null);
@@ -85,6 +106,16 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
   const qrQueueRef = useRef([]);
   const qrPrintingRef = useRef(false);
   const [qrUrls, setQrUrls] = useState({});
+  // Agente local de impressão (mesmo da Cozinha) — imprime QR sem diálogo
+  const agenteQRRef = useRef(null);
+  const [agenteQROnline, setAgenteQROnline] = useState(false);
+  // Nome do estabelecimento (vai no topo do cupom do QR). Cache local p/ uso imediato.
+  const marcaRef = useRef((() => { try { return localStorage.getItem("nl_nome_estab") || ""; } catch { return ""; } })());
+  useEffect(() => {
+    api.config.estabelecimento()
+      .then(r => { const n = (r && r.nome_estabelecimento) || ""; if (n) { marcaRef.current = n; try { localStorage.setItem("nl_nome_estab", n); } catch {} } })
+      .catch(() => {});
+  }, []);
 
   // Gerenciar mesas modal
   const [modalMesas, setModalMesas] = useState(false);
@@ -107,30 +138,62 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
   // Carregar dados
   const carregarTudo = useCallback(async () => {
     try {
-      const [m, f, s, p] = await Promise.all([
-        api.mesas.listar(),
+      const promessas = [
         api.cozinha.filaUnificada(),
         api.caixaStats(),
         api.produtos.listar(),
-      ]);
-      setMesas(m);
-      setFila(f);
-      setStats(s);
-      setProdutos(p.filter(pr => pr.disponivel));
+      ];
+      if (modoPerfil === "mesas") promessas.push(api.mesas.listar());
+      if (modoPerfil === "balcao") promessas.push(api.pedidos.listar());
+      const r = await Promise.all(promessas);
+      setFila(r[0]);
+      setStats(r[1]);
+      setProdutos(r[2].filter(pr => pr.disponivel));
+      if (modoPerfil === "mesas") setMesas(r[3]);
+      if (modoPerfil === "balcao") {
+        const hoje = new Date().toISOString().slice(0, 10);
+        setBalcaoPedidos((r[3] || []).filter(p => p.created_at && p.created_at.slice(0, 10) === hoje));
+      }
     } catch (err) {
       showToast("Erro ao carregar: " + err.message, "var(--danger)");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [modoPerfil]);
 
   useEffect(() => { carregarTudo(); }, [carregarTudo]);
 
+  // Sessão de caixa
+  const carregarSessao = useCallback(async () => {
+    try { const s = await api.caixa.sessao(); setSessao(s && s.aberta ? s : null); } catch {}
+  }, []);
+  useEffect(() => { carregarSessao(); }, [carregarSessao]);
+
+  const acaoCaixa = async (tipo) => {
+    const v = parseFloat(caixaValor);
+    if (isNaN(v) || v < 0) { showToast("Valor inválido", "var(--danger)"); return; }
+    try {
+      if (tipo === "abrir") { await api.caixa.abrir(v); showToast("Caixa aberto!"); }
+      else if (tipo === "sangria") { await api.caixa.sangria(v, caixaObs); showToast("Sangria registrada"); }
+      else if (tipo === "suprimento") { await api.caixa.suprimento(v, caixaObs); showToast("Suprimento registrado"); }
+      else if (tipo === "fechar") {
+        const r = await api.caixa.fechar(v);
+        setCaixaResultado(r);
+        setModalCaixa("resultado");
+        await carregarSessao();
+        return;
+      }
+      await carregarSessao();
+      setModalCaixa(null);
+    } catch (e) { showToast(e.message, "var(--danger)"); }
+    setCaixaValor(""); setCaixaObs("");
+  };
+
   // Polling a cada 10s
   useEffect(() => {
-    const iv = setInterval(carregarTudo, 10000);
+    const iv = setInterval(() => { carregarTudo(); carregarSessao(); }, 10000);
     return () => clearInterval(iv);
-  }, [carregarTudo]);
+  }, [carregarTudo, carregarSessao]);
 
   // Gerar QR codes quando o modal abre
   useEffect(() => {
@@ -147,24 +210,52 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
     })();
   }, [modalQR, mesas]);
 
-  // ─── Impressão XP-80 (térmica 80mm) ──────────────────────────────────────
-  const imprimirQRTermicaAgora = useCallback((mesa) => {
+  // Detecta o agente local de impressão (a cada 15s enquanto o modal QR está aberto)
+  useEffect(() => {
+    if (!modalQR) return;
+    let vivo = true;
+    const checar = async () => {
+      const imp = await agenteStatus();
+      if (!vivo) return;
+      agenteQRRef.current = imp;        // nome da impressora ou null
+      setAgenteQROnline(!!imp);
+    };
+    checar();
+    const iv = setInterval(checar, 15000);
+    return () => { vivo = false; clearInterval(iv); };
+  }, [modalQR]);
+
+  // ─── Impressão térmica 80mm ──────────────────────────────────────────────
+  const imprimirQRTermicaAgora = useCallback(async (mesa) => {
+    // 1º) Agente local (recomendado): imprime o QR como raster, sem diálogo.
+    if (agenteQRRef.current) {
+      try {
+        const url = `${window.location.origin}/mesa/${mesa.numero}`;
+        const matrix = QRCode.create(url, { errorCorrectionLevel: "M" }).modules;
+        await imprimirBytesViaAgente(gerarQRMesaBytes(mesa, matrix, marcaRef.current));
+        return "agente";
+      } catch (e) { console.warn("Agente QR falhou, caindo no navegador:", e); }
+    }
+    // 2º) Fallback: iframe + window.print() (pode abrir o diálogo do navegador).
     try {
       const frame = printQRFrameRef.current;
-      if (!frame || !frame.contentWindow || !qrUrls[mesa.numero]) return;
+      if (!frame || !frame.contentWindow || !qrUrls[mesa.numero]) return "iframe";
       const doc = frame.contentWindow.document;
-      doc.open(); doc.write(gerarCupomQRMesa(mesa, qrUrls[mesa.numero])); doc.close();
+      doc.open(); doc.write(gerarCupomQRMesa(mesa, qrUrls[mesa.numero], marcaRef.current)); doc.close();
       setTimeout(() => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch {} }, 320);
     } catch {}
+    return "iframe";
   }, [qrUrls]);
 
-  const processarFilaQR = useCallback(() => {
+  const processarFilaQR = useCallback(async () => {
     if (qrPrintingRef.current) return;
     const prox = qrQueueRef.current.shift();
     if (!prox) return;
     qrPrintingRef.current = true;
-    imprimirQRTermicaAgora(prox);
-    setTimeout(() => { qrPrintingRef.current = false; processarFilaQR(); }, 2000);
+    let modo = "iframe";
+    try { modo = await imprimirQRTermicaAgora(prox); } catch {}
+    const delay = modo === "agente" ? 400 : 2000;
+    setTimeout(() => { qrPrintingRef.current = false; processarFilaQR(); }, delay);
   }, [imprimirQRTermicaAgora]);
 
   const imprimirQRTermica = (mesa) => {
@@ -266,16 +357,11 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
   };
 
   // Fechar comanda (cobrar)
-  const handleFechar = async () => {
+  const handleFechar = () => {
     if (!comanda) return;
-    try {
-      await api.comandas.fechar(comanda.id);
-      setComanda(null);
-      setItens([]);
-      setMesaSel(null);
-      await carregarTudo();
-      showToast("Comanda fechada com sucesso!");
-    } catch (err) { showToast(err.message, "var(--danger)"); }
+    setModalPagamento({ id: comanda.id, total: comanda.total, _tipo: "comanda", label: `Comanda #${String(comanda.numero).padStart(4, "0")}` });
+    setPgtoMetodo("");
+    setPgtoTroco("");
   };
 
   // Cancelar comanda
@@ -291,15 +377,49 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
     } catch (err) { showToast(err.message, "var(--danger)"); }
   };
 
-  // Pedir conta
-  const handlePedirConta = async () => {
-    if (!mesaSel) return;
+  // Balcão: criar pedido
+  const handleCriarPedidoBalcao = async () => {
+    if (balcaoItens.length === 0) return showToast("Adicione pelo menos um item", "var(--danger)");
     try {
-      await api.mesas.pedirConta(mesaSel.id);
+      const pedido = await api.pedidos.criar({
+        cliente_nome: balcaoCliente || "Balcão",
+        itens: balcaoItens.map(it => ({
+          produto_id: it.produto_id,
+          produto_nome: it.nome,
+          quantidade: it.qtd,
+          preco_unitario: it.preco,
+          adicionais: [],
+        })),
+        tipo: "presencial",
+        tipo_entrega: "retirada",
+        metodo_pagamento: "",
+      });
+      setBalcaoItens([]);
+      setBalcaoCliente("");
       await carregarTudo();
-      showToast("Conta solicitada!");
+      showToast(`Pedido #${pedido.id.slice(0, 6)} criado!`);
     } catch (err) { showToast(err.message, "var(--danger)"); }
   };
+
+  const handleCobrarPedido = (pedido) => {
+    setModalPagamento({ id: pedido.id, total: pedido.total, _tipo: "pedido", label: `Pedido #${pedido.id.slice(0, 6)}` });
+    setPgtoMetodo("");
+    setPgtoTroco("");
+  };
+
+  const handleAddBalcaoItem = (prod) => {
+    setBalcaoItens(prev => {
+      const existing = prev.find(it => it.produto_id === prod.id);
+      if (existing) return prev.map(it => it.produto_id === prod.id ? { ...it, qtd: it.qtd + 1 } : it);
+      return [...prev, { produto_id: prod.id, nome: prod.nome, preco: prod.preco, qtd: 1 }];
+    });
+  };
+
+  const handleRemoveBalcaoItem = (produtoId) => {
+    setBalcaoItens(prev => prev.filter(it => it.produto_id !== produtoId));
+  };
+
+  const balcaoTotal = balcaoItens.reduce((s, it) => s + it.preco * it.qtd, 0);
 
   // Marcar item da fila como pronto
   const handleItemPronto = async (itemId) => {
@@ -465,16 +585,34 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
       {/* ─── HEADER ─── */}
       <header className="fc-topbar">
         <div className="fc-brand">
-          <div className="fc-brand-logo">🍽️</div>
+          <div className="fc-brand-logo">{modoPerfil === "balcao" ? "🏪" : "🍽️"}</div>
           <div>
             <div style={{ fontSize: 17, fontWeight: 700, color: "var(--text)", letterSpacing: -0.2 }}>Frente de Caixa</div>
-            <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500 }}>Salão & Comandas</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500 }}>{modoPerfil === "balcao" ? "Balcão & Pedidos" : "Salão & Comandas"}</div>
           </div>
         </div>
         <div style={{ width: 1, height: 26, background: "var(--border)" }} />
-        <nav className="fc-nav-tabs">
-          <button className="fc-nav-tab" onClick={() => setModalQR(true)}>📱 QR Codes</button>
-        </nav>
+        {/* Sessão de caixa: status compacto */}
+        {sessao ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--success)", flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>Caixa: {fmtBRL(sessao.saldo_atual)}</span>
+            <button className="fc-chip" onClick={() => { setCaixaValor(""); setCaixaObs(""); setModalCaixa("sangria"); }}>Sangria</button>
+            <button className="fc-chip" onClick={() => { setCaixaValor(""); setCaixaObs(""); setModalCaixa("suprimento"); }}>Suprimento</button>
+            <button className="fc-chip" style={{ color: "var(--danger)" }} onClick={() => { setCaixaValor(""); setModalCaixa("fechar"); }}>Fechar</button>
+          </div>
+        ) : (
+          <button className="fc-chip" style={{ background: "var(--success-bg)", color: "var(--success)", borderColor: "var(--success)" }}
+            onClick={() => { setCaixaValor(""); setModalCaixa("abrir"); }}>
+            Abrir Caixa
+          </button>
+        )}
+        <div style={{ width: 1, height: 26, background: "var(--border)" }} />
+        {modoPerfil === "mesas" && (
+          <nav className="fc-nav-tabs">
+            <button className="fc-nav-tab" onClick={() => setModalQR(true)}>QR Codes</button>
+          </nav>
+        )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: "var(--text-muted)", fontWeight: 500 }}>{clock}</span>
           <button className="fc-theme-toggle" onClick={() => setTema(t => t === "dark" ? "light" : "dark")} title="Alternar tema">
@@ -486,6 +624,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
         </div>
       </header>
 
+      {modoPerfil === "mesas" && (
       <div className="fc-layout">
         {/* ─── COLUNA ESQUERDA ─── */}
         <main>
@@ -686,9 +825,8 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
                 </div>
 
                 <div style={{ padding: "14px 18px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                  <button className="fc-btn fc-btn-primary" onClick={handleFechar}>💳 Cobrar {fmtBRL(comanda.total)}</button>
+                  <button className="fc-btn fc-btn-primary" style={{ gridColumn: "1 / -1" }} onClick={handleFechar}>💳 Cobrar {fmtBRL(comanda.total)}</button>
                   <button className="fc-btn fc-btn-secondary" onClick={() => setModalItem(true)}>+ Adicionar item</button>
-                  <button className="fc-btn fc-btn-secondary" onClick={handlePedirConta}>⚠ Pedir conta</button>
                   <button className="fc-btn fc-btn-danger" onClick={handleCancelar}>Cancelar comanda</button>
                 </div>
               </>
@@ -736,6 +874,251 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
           </div>
         </aside>
       </div>
+      )}
+
+      {/* ─── BALCÃO MODE ─── */}
+      {modoPerfil === "balcao" && (
+      <div className="fc-layout" style={{ gridTemplateColumns: "1fr 360px" }}>
+        <main>
+          <div style={{ marginBottom: 18 }}>
+            <h1 style={{ fontFamily: "'Inter', sans-serif", fontSize: 26, fontWeight: 700, letterSpacing: -0.4, marginBottom: 4 }}>🏪 Balcão</h1>
+            <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
+              {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
+              {` · ${balcaoPedidos.length} pedido${balcaoPedidos.length !== 1 ? "s" : ""} hoje`}
+            </p>
+          </div>
+
+          <div className="fc-stats-row">
+            <div className="fc-stat">
+              <div className="fc-stat-icon" style={{ background: "var(--warning-bg)" }}>📋</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Ativos</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>
+                {balcaoPedidos.filter(p => !["entregue","cancelado"].includes(p.status)).length}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>pedidos abertos</div>
+            </div>
+            <div className="fc-stat">
+              <div className="fc-stat-icon" style={{ background: "var(--warning-bg)" }}>⏱️</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Em preparo</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>
+                {balcaoPedidos.filter(p => p.status === "preparando").length}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>na cozinha</div>
+            </div>
+            <div className="fc-stat">
+              <div className="fc-stat-icon" style={{ background: "var(--success-bg)" }}>✅</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Prontos</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>
+                {balcaoPedidos.filter(p => p.status === "pronto").length}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>para retirar</div>
+            </div>
+            <div className="fc-stat">
+              <div className="fc-stat-icon" style={{ background: "var(--info-bg)" }}>💰</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Faturamento</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>
+                {stats ? fmtBRL(stats.faturamento.total) : "..."}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{balcaoPedidos.filter(p => p.status === "entregue").length} entregues</div>
+            </div>
+          </div>
+
+          {/* PEDIDOS ATIVOS */}
+          {(() => {
+            const ativos = balcaoPedidos.filter(p => !["entregue","cancelado"].includes(p.status));
+            return ativos.length > 0 && (
+              <div className="fc-map-card" style={{ marginBottom: 20 }}>
+                <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: -0.2 }}>Pedidos Ativos</div>
+                  <span className="fc-pill">{ativos.length}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, padding: 16 }}>
+                  {ativos.map(ped => {
+                    const isSel = balcaoSel?.id === ped.id;
+                    const statusCor = { pendente: "var(--info)", confirmado: "var(--info)", preparando: "var(--warning)", pronto: "var(--success)" }[ped.status] || "var(--text-muted)";
+                    const statusLabel = { pendente: "Pendente", confirmado: "Confirmado", preparando: "Preparando", pronto: "Pronto" }[ped.status] || ped.status;
+                    return (
+                      <div key={ped.id} onClick={() => setBalcaoSel(ped)}
+                        style={{
+                          background: "var(--surface)", border: `2px solid ${isSel ? "var(--gold-deep)" : "var(--border)"}`,
+                          borderRadius: 14, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s",
+                        }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 700 }}>#{ped.id.slice(0, 6)}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", padding: "2px 8px", borderRadius: 6, letterSpacing: 0.5,
+                            background: statusCor === "var(--info)" ? "var(--info-bg)" : statusCor === "var(--warning)" ? "var(--warning-bg)" : "var(--success-bg)",
+                            color: statusCor }}>{statusLabel}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{ped.cliente_nome || "Balcão"}</div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700 }}>{fmtBRL(ped.total)}</span>
+                          <span style={{ fontSize: 10, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{fmtHora(ped.created_at)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* CATÁLOGO DE PRODUTOS */}
+          <div className="fc-map-card">
+            <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: -0.2, flex: 1 }}>Produtos</div>
+              <input className="fc-input" value={balcaoBusca} onChange={e => setBalcaoBusca(e.target.value)} placeholder="Buscar produto..." style={{ width: 220, fontSize: 12 }} />
+            </div>
+            <div style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10, maxHeight: 420, overflowY: "auto" }}>
+              {produtos.filter(p => !balcaoBusca || p.nome.toLowerCase().includes(balcaoBusca.toLowerCase())).map(prod => (
+                <div key={prod.id} className="fc-prod-item" onClick={() => handleAddBalcaoItem(prod)}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>{prod.nome}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(prod.preco)}</div>
+                  {prod.categoria && <div style={{ fontSize: 10, color: "var(--text-soft)", marginTop: 2 }}>{prod.categoria}</div>}
+                </div>
+              ))}
+              {produtos.filter(p => !balcaoBusca || p.nome.toLowerCase().includes(balcaoBusca.toLowerCase())).length === 0 && (
+                <div style={{ gridColumn: "1/-1", textAlign: "center", padding: 20, color: "var(--text-soft)", fontSize: 13 }}>Nenhum produto encontrado</div>
+              )}
+            </div>
+          </div>
+        </main>
+
+        <aside style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* PEDIDO ATUAL OU SELECIONADO */}
+          <div className="fc-side-card">
+            <div className="fc-side-head">
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6 }}>
+                {balcaoSel ? `Pedido #${balcaoSel.id.slice(0, 6)}` : "Novo Pedido"}
+              </div>
+              {balcaoSel && (
+                <button className="fc-chip" style={{ fontSize: 10, padding: "3px 8px" }} onClick={() => setBalcaoSel(null)}>+ Novo</button>
+              )}
+            </div>
+
+            {!balcaoSel ? (
+              <>
+                <div style={{ padding: "10px 18px", borderBottom: "1px solid var(--border)" }}>
+                  <input className="fc-input" value={balcaoCliente} onChange={e => setBalcaoCliente(e.target.value)} placeholder="Nome do cliente (opcional)" style={{ fontSize: 12 }} />
+                </div>
+                <div className="fc-comanda-itens" style={{ maxHeight: 300 }}>
+                  {balcaoItens.length === 0 ? (
+                    <div style={{ padding: "30px 18px", textAlign: "center", color: "var(--text-soft)", fontSize: 13 }}>
+                      <div style={{ fontSize: 32, marginBottom: 8 }}>🛒</div>
+                      Clique nos produtos ao lado para montar o pedido
+                    </div>
+                  ) : balcaoItens.map(it => (
+                    <div key={it.produto_id} className="fc-comanda-item" style={{ alignItems: "center" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                        {it.qtd > 1 && <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{it.qtd}×</span>}
+                        {it.nome}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(it.preco * it.qtd)}</span>
+                        <button onClick={() => handleRemoveBalcaoItem(it.produto_id)}
+                          style={{ width: 20, height: 20, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {balcaoItens.length > 0 && (
+                  <>
+                    <div style={{ padding: "12px 18px", borderTop: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 600 }}>Total</div>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, letterSpacing: -0.4 }}>{fmtBRL(balcaoTotal)}</div>
+                    </div>
+                    <div style={{ padding: "12px 18px", display: "flex", gap: 8 }}>
+                      <button className="fc-btn fc-btn-secondary" style={{ flex: 1 }} onClick={() => setBalcaoItens([])}>Limpar</button>
+                      <button className="fc-btn fc-btn-primary" style={{ flex: 2, gridColumn: "auto" }} onClick={handleCriarPedidoBalcao}>Criar Pedido</button>
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                <div style={{ padding: "14px 18px", background: `linear-gradient(135deg, var(--cream) 0%, var(--cream-soft) 100%)`, borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{balcaoSel.cliente_nome || "Balcão"} · {fmtHora(balcaoSel.created_at)}</div>
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, textTransform: "uppercase", padding: "2px 8px", borderRadius: 6, letterSpacing: 0.5,
+                    background: ({ pendente: "var(--info-bg)", confirmado: "var(--info-bg)", preparando: "var(--warning-bg)", pronto: "var(--success-bg)" })[balcaoSel.status] || "var(--surface-2)",
+                    color: ({ pendente: "var(--info)", confirmado: "var(--info)", preparando: "var(--warning)", pronto: "var(--success)" })[balcaoSel.status] || "var(--text-muted)",
+                  }}>{({ pendente: "Pendente", confirmado: "Confirmado", preparando: "Preparando", pronto: "Pronto", entregue: "Entregue" })[balcaoSel.status] || balcaoSel.status}</span>
+                </div>
+                <div className="fc-comanda-itens">
+                  {(balcaoSel.itens || []).length === 0 ? (
+                    <div style={{ padding: "20px 18px", textAlign: "center", color: "var(--text-soft)", fontSize: 13 }}>Sem itens</div>
+                  ) : (balcaoSel.itens || []).map((item, idx) => (
+                    <div key={item.id || idx} className="fc-comanda-item">
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                        {item.quantidade > 1 && <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{item.quantidade}×</span>}
+                        {item.produto_nome}
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(item.quantidade * item.preco_unitario)}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: "12px 18px", borderTop: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 600 }}>Total</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, letterSpacing: -0.4 }}>{fmtBRL(balcaoSel.total)}</div>
+                </div>
+                <div style={{ padding: "12px 18px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {!["entregue","cancelado"].includes(balcaoSel.status) && (
+                    <button className="fc-btn fc-btn-primary" style={{ gridColumn: "1 / -1" }} onClick={() => handleCobrarPedido(balcaoSel)}>
+                      💳 Cobrar {fmtBRL(balcaoSel.total)}
+                    </button>
+                  )}
+                  {balcaoSel.status === "pendente" && (
+                    <button className="fc-btn fc-btn-secondary" onClick={async () => {
+                      try { await api.pedidos.atualizarStatus(balcaoSel.id, "preparando"); showToast("Enviado para preparo"); await carregarTudo(); setBalcaoSel(null); } catch(e) { showToast(e.message, "var(--danger)"); }
+                    }}>Preparar</button>
+                  )}
+                  {balcaoSel.status === "preparando" && (
+                    <button className="fc-btn fc-btn-secondary" onClick={async () => {
+                      try { await api.pedidos.atualizarStatus(balcaoSel.id, "pronto"); showToast("Marcado como pronto!"); await carregarTudo(); setBalcaoSel(null); } catch(e) { showToast(e.message, "var(--danger)"); }
+                    }}>Pronto</button>
+                  )}
+                  {!["entregue","cancelado"].includes(balcaoSel.status) && (
+                    <button className="fc-btn fc-btn-danger" style={{ gridColumn: "auto" }} onClick={async () => {
+                      if (!confirm("Cancelar este pedido?")) return;
+                      try { await api.pedidos.atualizarStatus(balcaoSel.id, "cancelado"); showToast("Pedido cancelado", "var(--warning)"); await carregarTudo(); setBalcaoSel(null); } catch(e) { showToast(e.message, "var(--danger)"); }
+                    }}>Cancelar</button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* FILA DA COZINHA */}
+          <div className="fc-side-card">
+            <div className="fc-side-head">
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6 }}>🔔 Fila da cozinha</div>
+              <span className="fc-pill" style={{ background: "var(--success)" }}>{fila.reduce((s, g) => s + (g.itens?.length || 0), 0)} ativos</span>
+            </div>
+            <div style={{ padding: "8px 0" }}>
+              {fila.length === 0 ? (
+                <div style={{ padding: "20px 18px", textAlign: "center", color: "var(--text-soft)", fontSize: 13 }}>Nenhum item na fila</div>
+              ) : fila.map(grupo => {
+                const tipoIcon = grupo.tipo === "mesa" ? "🪑" : grupo.tipo_entrega === "retirada" ? "🏪" : grupo.tipo_entrega === "casa" ? "🍽️" : "🛵";
+                const tipoColor = grupo.tipo === "mesa" ? "var(--gold-deep)" : grupo.tipo_entrega === "retirada" ? "#16a34a" : grupo.tipo_entrega === "casa" ? "#9333ea" : "#2563eb";
+                return (
+                  <div key={grupo.grupo_id} style={{ borderBottom: "1px solid var(--border)", padding: "8px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: tipoColor }}>{tipoIcon} {grupo.label}</span>
+                      {grupo.cliente_nome && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>· {grupo.cliente_nome}</span>}
+                      <span style={{ fontSize: 10, color: "var(--text-muted)", marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{fmtHora(grupo.created_at)}</span>
+                    </div>
+                    {grupo.itens.map((item, idx) => (
+                      <div key={item.id || idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 12 }}>
+                        <span style={{ flex: 1, lineHeight: 1.4 }}>{item.quantidade > 1 ? `${item.quantidade}× ` : ""}{item.produto_nome}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </aside>
+      </div>
+      )}
 
       {/* ─── MODAL: ABRIR COMANDA ─── */}
       {modalAbrir && (
@@ -801,6 +1184,12 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
               <div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>📱 QR Codes das Mesas</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Imprima e cole nas mesas para pedidos pelo celular</div>
+                <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, color: agenteQROnline ? "var(--success)" : "var(--text-soft)" }}
+                  title={agenteQROnline
+                    ? "Agente de impressão conectado: a térmica sai direto, sem caixa de diálogo."
+                    : "Agente offline: a impressão térmica vai abrir a janela do navegador. Inicie o agente de impressão na máquina da cozinha."}>
+                  {agenteQROnline ? "🖨️ Impressora pronta (sem diálogo)" : "🖨️ Agente offline — usará a janela do navegador"}
+                </div>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="fc-btn fc-btn-secondary" style={{ padding: "10px 16px" }} onClick={imprimirTodosQRTermica} disabled={Object.keys(qrUrls).length === 0} title="Imprime um QR Code por mesa na impressora térmica XP-80 (80mm)">
@@ -874,6 +1263,152 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario }) {
             {/* iframe oculto para impressão térmica dos QR Codes (XP-80) */}
             <iframe ref={printQRFrameRef} title="impressao-qr-mesas" aria-hidden="true" tabIndex={-1}
               style={{ position: "absolute", width: 0, height: 0, border: 0, left: -9999, top: -9999, visibility: "hidden" }} />
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: SESSÃO DE CAIXA ─── */}
+      {modalCaixa && modalCaixa !== "resultado" && (
+        <div className="fc-modal-overlay" onClick={() => setModalCaixa(null)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 380 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 16 }}>
+              {modalCaixa === "abrir" && "Abrir Caixa"}
+              {modalCaixa === "sangria" && "Registrar Sangria"}
+              {modalCaixa === "suprimento" && "Registrar Suprimento"}
+              {modalCaixa === "fechar" && "Fechar Caixa"}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
+              {modalCaixa === "abrir" && "Informe o saldo inicial no caixa (contagem de abertura)."}
+              {modalCaixa === "sangria" && "Retirada de dinheiro do caixa (ex.: pagamento de fornecedor)."}
+              {modalCaixa === "suprimento" && "Entrada de dinheiro no caixa (ex.: troco adicional)."}
+              {modalCaixa === "fechar" && "Informe o valor total que você contou no caixa agora."}
+            </div>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Valor (R$)</label>
+            <input className="fc-input" type="number" step="0.01" min="0" value={caixaValor} onChange={e => setCaixaValor(e.target.value)}
+              autoFocus placeholder="0,00" style={{ fontSize: 20, textAlign: "center", fontWeight: 700, marginBottom: 12 }} />
+            {(modalCaixa === "sangria" || modalCaixa === "suprimento") && (<>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Observação</label>
+              <input className="fc-input" value={caixaObs} onChange={e => setCaixaObs(e.target.value)} placeholder="Opcional" style={{ marginBottom: 12 }} />
+            </>)}
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button className="fc-btn fc-btn-secondary" style={{ flex: 1 }} onClick={() => setModalCaixa(null)}>Cancelar</button>
+              <button className="fc-btn fc-btn-primary" style={{ flex: 1, gridColumn: "auto" }} onClick={() => acaoCaixa(modalCaixa)}>
+                {modalCaixa === "abrir" ? "Abrir" : modalCaixa === "fechar" ? "Fechar Caixa" : "Confirmar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: RESULTADO FECHAMENTO ─── */}
+      {modalCaixa === "resultado" && caixaResultado && (
+        <div className="fc-modal-overlay" onClick={() => { setModalCaixa(null); setCaixaResultado(null); }}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 420 }}>
+            <div style={{ textAlign: "center", marginBottom: 18 }}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>{caixaResultado.diferenca === 0 ? "✅" : Math.abs(caixaResultado.diferenca) < 5 ? "⚠️" : "❌"}</div>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>Caixa Fechado</div>
+            </div>
+            <div style={{ background: "var(--surface-2)", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, fontSize: 13 }}>
+                <span style={{ color: "var(--text-muted)" }}>Saldo inicial</span>
+                <span style={{ fontWeight: 600 }}>{fmtBRL(caixaResultado.saldo_inicial)}</span>
+              </div>
+              {caixaResultado.totais && Object.entries(caixaResultado.totais).map(([tipo, val]) => (
+                <div key={tipo} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
+                  <span style={{ color: "var(--text-muted)", textTransform: "capitalize" }}>{tipo}</span>
+                  <span style={{ fontWeight: 600, color: tipo === "sangria" || tipo === "cancelamento" ? "var(--danger)" : "var(--success)" }}>
+                    {tipo === "sangria" || tipo === "cancelamento" ? "-" : "+"}{fmtBRL(val)}
+                  </span>
+                </div>
+              ))}
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10, marginTop: 10, display: "flex", justifyContent: "space-between", fontSize: 14 }}>
+                <span style={{ fontWeight: 700 }}>Sistema esperava</span>
+                <span style={{ fontWeight: 700 }}>{fmtBRL(caixaResultado.saldo_sistema)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, marginTop: 6 }}>
+                <span style={{ fontWeight: 700 }}>Você contou</span>
+                <span style={{ fontWeight: 700 }}>{fmtBRL(caixaResultado.saldo_informado)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, marginTop: 12, paddingTop: 10, borderTop: "2px solid var(--border)" }}>
+                <span style={{ fontWeight: 800 }}>Diferença</span>
+                <span style={{ fontWeight: 800, color: caixaResultado.diferenca === 0 ? "var(--success)" : "var(--danger)" }}>
+                  {caixaResultado.diferenca > 0 ? "+" : ""}{fmtBRL(caixaResultado.diferenca)}
+                </span>
+              </div>
+            </div>
+            <button className="fc-btn fc-btn-primary" style={{ width: "100%", gridColumn: "auto" }} onClick={() => { setModalCaixa(null); setCaixaResultado(null); }}>
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: PAGAMENTO ─── */}
+      {modalPagamento && (
+        <div className="fc-modal-overlay" onClick={() => setModalPagamento(null)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 440 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Pagamento</div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 18 }}>
+              {modalPagamento.label && <span style={{ marginRight: 8 }}>{modalPagamento.label}</span>}
+              Total: <strong style={{ color: "var(--text)", fontSize: 18 }}>{fmtBRL(modalPagamento.total)}</strong>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+              {[
+                { id: "dinheiro", icon: "💵", label: "Dinheiro" },
+                { id: "pix", icon: "📱", label: "Pix" },
+                { id: "debito", icon: "💳", label: "Débito" },
+                { id: "credito", icon: "💳", label: "Crédito" },
+                { id: "vale", icon: "🎫", label: "Vale" },
+                { id: "multiplo", icon: "➕", label: "Múltiplo" },
+              ].map(m => (
+                <div key={m.id} onClick={() => { setPgtoMetodo(m.id); setPgtoTroco(""); }}
+                  style={{
+                    padding: "14px 10px", borderRadius: 12, cursor: "pointer", textAlign: "center",
+                    border: `2px solid ${pgtoMetodo === m.id ? "var(--gold-deep)" : "var(--border)"}`,
+                    background: pgtoMetodo === m.id ? "var(--gold-soft)" : "var(--surface-2)",
+                    transition: "all 0.15s",
+                  }}>
+                  <div style={{ fontSize: 22 }}>{m.icon}</div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: pgtoMetodo === m.id ? "var(--gold-deep)" : "var(--text-muted)", marginTop: 4 }}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+            {pgtoMetodo === "dinheiro" && (
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>Recebido (R$)</label>
+                <input className="fc-input" type="number" step="0.01" value={pgtoTroco} onChange={e => setPgtoTroco(e.target.value)}
+                  placeholder="Valor recebido" style={{ fontSize: 18, textAlign: "center", fontWeight: 700 }} />
+                {pgtoTroco && parseFloat(pgtoTroco) >= modalPagamento.total && (
+                  <div style={{ textAlign: "center", marginTop: 8, fontSize: 14, fontWeight: 700, color: "var(--success)" }}>
+                    Troco: {fmtBRL(parseFloat(pgtoTroco) - modalPagamento.total)}
+                  </div>
+                )}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button className="fc-btn fc-btn-secondary" style={{ flex: 1 }} onClick={() => setModalPagamento(null)}>Cancelar</button>
+              <button className="fc-btn fc-btn-primary" style={{ flex: 1, gridColumn: "auto" }} disabled={!pgtoMetodo}
+                onClick={async () => {
+                  try {
+                    if (modalPagamento._tipo === "comanda") {
+                      await api.comandas.fechar(modalPagamento.id);
+                      setComanda(null);
+                      setItens([]);
+                      setMesaSel(null);
+                    } else if (modalPagamento._tipo === "pedido") {
+                      await api.pedidos.atualizarStatus(modalPagamento.id, "entregue");
+                      setBalcaoSel(null);
+                    }
+                    showToast("Pagamento registrado!");
+                    setModalPagamento(null);
+                    setPgtoMetodo("");
+                    setPgtoTroco("");
+                    carregarTudo();
+                  } catch (e) { showToast(e.message, "var(--danger)"); }
+                }}>
+                Confirmar pagamento
+              </button>
+            </div>
           </div>
         </div>
       )}

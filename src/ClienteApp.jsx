@@ -410,10 +410,18 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
 }
 
 // ─── MODAL ADICIONAIS ──────────────────────────────────────────────────────────
-function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
+function ModalAdicionais({ produto, adicionais, maxAdicionais = 0, onConfirm, onClose }) {
   const [selecionados, setSelecionados] = useState([]);
 
+  // Item 2: só adicionais "Todas" ou da categoria do produto
+  const adicionaisFiltrados = adicionais.filter(a => !a.categoria || a.categoria === produto.categoria);
+
+  // Item 3: limite de quantidade total por categoria (0 = sem limite)
+  const totalQtd = selecionados.reduce((s, a) => s + a.quantidade, 0);
+  const atingiuLimite = maxAdicionais > 0 && totalQtd >= maxAdicionais;
+
   const updateQtdAd = (ad, delta) => {
+    if (delta > 0 && atingiuLimite) return;
     setSelecionados(prev => {
       const existing = prev.find(s => s.id === ad.id);
       if (existing) {
@@ -446,13 +454,20 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
           </div>
         </div>
 
-        <div style={{ ...labelStyle, marginBottom: 10 }}>Escolha seus adicionais</div>
+        <div style={{ ...labelStyle, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+          <span>Escolha seus adicionais</span>
+          {maxAdicionais > 0 && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: atingiuLimite ? "#dc2626" : "var(--text-soft)" }}>
+              {totalQtd}/{maxAdicionais}
+            </span>
+          )}
+        </div>
 
-        {adicionais.length === 0 ? (
+        {adicionaisFiltrados.length === 0 ? (
           <div style={{ padding: 18, textAlign: "center", color: "var(--text-soft)", fontSize: 13, background: "var(--surface-warm)", borderRadius: 10 }}>Nenhum adicional disponível.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 18 }}>
-            {adicionais.map(ad => {
+            {adicionaisFiltrados.map(ad => {
               const sel = selecionados.find(s => s.id === ad.id);
               const qtd = sel ? sel.quantidade : 0;
               return (
@@ -468,8 +483,8 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
                     <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0}
                       style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: qtd > 0 ? "pointer" : "default", fontSize: 16, lineHeight: 1, color: qtd > 0 ? "var(--text)" : "var(--text-soft)", fontWeight: 700 }}>−</button>
                     <span style={{ fontSize: 13, fontWeight: 800, minWidth: 22, textAlign: "center", color: "var(--text)" }}>{qtd}</span>
-                    <button onClick={() => updateQtdAd(ad, 1)}
-                      style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>+</button>
+                    <button onClick={() => updateQtdAd(ad, 1)} disabled={atingiuLimite}
+                      style={{ width: 28, height: 28, border: "1.5px solid var(--border-dark)", borderRadius: 6, background: "var(--surface)", cursor: atingiuLimite ? "not-allowed" : "pointer", fontSize: 16, lineHeight: 1, color: atingiuLimite ? "var(--text-soft)" : "var(--text)", fontWeight: 700, opacity: atingiuLimite ? 0.5 : 1 }}>+</button>
                   </div>
                 </div>
               );
@@ -785,7 +800,7 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
 
 // ─── CARD DE PRODUTO ──────────────────────────────────────────────────────────
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDetalhes, onAdd }) {
-  const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.length > 0;
+  const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.some(a => !a.categoria || a.categoria === p.categoria);
 
   // Cor de fundo + emoji por categoria (palette quente)
   const cfgPorCat = {
@@ -1063,6 +1078,18 @@ function MeusPedidosView({ ativo }) {
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState("");
   const [expandido, setExpandido] = useState(null);
+  const [pixInfo, setPixInfo] = useState({ pix_key: "", pix_nome: "" });
+  const [copiouPix, setCopiouPix] = useState(false);
+
+  useEffect(() => { api.pix.obter().then(setPixInfo).catch(() => {}); }, []);
+
+  const copiarChavePix = () => {
+    if (!pixInfo.pix_key) return;
+    navigator.clipboard?.writeText(pixInfo.pix_key).then(() => {
+      setCopiouPix(true);
+      setTimeout(() => setCopiouPix(false), 2000);
+    }).catch(() => {});
+  };
 
   const fmtBR = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
   const fmtData = (iso) => {
@@ -1393,6 +1420,35 @@ function MeusPedidosView({ ativo }) {
                               ? <> — Troco para {fmtBR(trocoNum)} <span style={{ color: "#15803d", fontWeight: 700 }}>(devolver {fmtBR(trocoNum - totalNum)})</span></>
                               : <> — Sem troco</>
                           )}
+                          {/* Chave Pix para pagamento (pedidos não cancelados) */}
+                          {p.metodo_pagamento === "pix" && pixInfo.pix_key && p.status !== "cancelado" && (
+                            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border)" }}>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: "var(--brand)", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                                Pague com Pix
+                              </div>
+                              {pixInfo.pix_nome && (
+                                <div style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 700, marginBottom: 4 }}>
+                                  Favorecido: {pixInfo.pix_nome}
+                                </div>
+                              )}
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span style={{
+                                  flex: "1 1 auto", minWidth: 0, fontWeight: 800, color: "var(--text)",
+                                  background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 8,
+                                  padding: "8px 12px", wordBreak: "break-all", fontSize: 13,
+                                }}>
+                                  {pixInfo.pix_key}
+                                </span>
+                                <button onClick={copiarChavePix} style={{
+                                  flexShrink: 0, background: copiouPix ? "#16a34a" : "var(--brand)", color: "#fff", border: "none",
+                                  borderRadius: 8, padding: "9px 16px", fontSize: 12, fontWeight: 800, cursor: "pointer",
+                                  fontFamily: "'Nunito', sans-serif",
+                                }}>
+                                  {copiouPix ? "✓ Copiado" : "Copiar chave"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
@@ -1421,6 +1477,8 @@ export default function ClienteApp() {
   const [enviando, setEnviando] = useState(false);
   const [modalAdicional, setModalAdicional] = useState(null);
   const [modalCheckout, setModalCheckout] = useState(false);
+  const [cardapios, setCardapios] = useState([]);
+  const [cardapioAtivo, setCardapioAtivo] = useState(null);
   const [pedidoEnviado, setPedidoEnviado] = useState(null);
   const [modalProduto, setModalProduto] = useState(null);
 
@@ -1450,21 +1508,30 @@ export default function ClienteApp() {
   }, []);
 
   const catPermiteAdicionais = {};
-  categorias.forEach(c => { catPermiteAdicionais[c.nome] = !!c.permite_adicionais; });
+  const catMaxAdicionais = {};
+  categorias.forEach(c => { catPermiteAdicionais[c.nome] = !!c.permite_adicionais; catMaxAdicionais[c.nome] = c.max_adicionais || 0; });
 
   const carregar = useCallback(async () => {
     try {
-      const [prods, cats, adds, promos] = await Promise.all([
+      const [prods, cats, adds, promos, menus] = await Promise.all([
         api.produtos.listar(),
         api.categorias.listar(),
         api.adicionais.listar(),
-        api.promocoes.ativas().catch(() => []),  // tolerante: se falhar, segue sem promos
+        api.promocoes.ativas().catch(() => []),
+        api.cardapios.listar().catch(() => []),
       ]);
-      // Não mostra promoções na lista de produtos normal — elas têm seção própria
       setProdutos(prods.filter(p => p.disponivel && !p.eh_promocao));
       setCategorias(cats);
       setAdicionaisDisponiveis(adds.filter(a => a.disponivel));
       setPromocoes(promos);
+      const ativos = (menus || []).filter(m => m.ativo);
+      setCardapios(ativos);
+      // 0 ou 1 cardápio → acessa direto (auto-seleciona). ≥ 2 → mostra tela de seleção.
+      if (ativos.length === 1 && !cardapioAtivo) setCardapioAtivo(ativos[0].id);
+      // Se ficou com apenas 1 depois de uma alteração, e o ativo não existe mais, cai no único
+      if (ativos.length > 0 && cardapioAtivo && !ativos.find(m => m.id === cardapioAtivo)) {
+        setCardapioAtivo(ativos.length === 1 ? ativos[0].id : null);
+      }
     } catch (err) {
       showToast("Erro: " + err.message, "var(--hot)");
     } finally {
@@ -1488,7 +1555,7 @@ export default function ClienteApp() {
       showToast("🔒 Estabelecimento fechado no momento. Volte de Ter–Dom, das 19h às 01h.", "var(--hot)");
       return;
     }
-    if (catPermiteAdicionais[produto.categoria] && adicionaisDisponiveis.length > 0) {
+    if (catPermiteAdicionais[produto.categoria] && adicionaisDoMenu.length > 0) {
       setModalAdicional(produto);
     } else {
       addCarrinhoSimples(produto, []);
@@ -1534,21 +1601,6 @@ export default function ClienteApp() {
 
   const totalCarrinho = carrinho.reduce((s, i) => s + calcItemTotal(i), 0);
 
-  // T12 — sugestões de upsell no carrinho (prioriza bebida se não houver, depois sobremesa/acompanhamento)
-  const sugestoesUpsell = (() => {
-    if (carrinho.length === 0) return [];
-    const idsNoCarrinho = new Set(carrinho.map(i => i.produto_id));
-    const catsNoCarrinho = new Set(carrinho.map(i => (produtos.find(p => p.id === i.produto_id) || {}).categoria).filter(Boolean));
-    const isBebida = (cat) => /bebida|drink|suco|refri/i.test(cat || "");
-    const isExtra = (cat) => /sobremesa|acompanha|porç|porc|adicional|doce|combo|batata/i.test(cat || "");
-    const base = produtos.filter(p => p.disponivel && !p.eh_promocao && !idsNoCarrinho.has(p.id));
-    const temBebida = [...catsNoCarrinho].some(isBebida);
-    let lista = temBebida ? [] : base.filter(p => isBebida(p.categoria));
-    lista = [...lista, ...base.filter(p => !lista.includes(p) && isExtra(p.categoria))];
-    if (lista.length < 4) lista = [...lista, ...base.filter(p => !lista.includes(p))];
-    return lista.slice(0, 4);
-  })();
-
   const abrirCheckout = () => {
     if (carrinho.length === 0) return;
     setModalCheckout(true);
@@ -1586,18 +1638,37 @@ export default function ClienteApp() {
   const [busca, setBusca] = useState("");
   const [catAtiva, setCatAtiva] = useState(null);
 
-  const categoriasComProdutos = categorias
-    .map(c => c.nome)
-    .filter(nome => produtos.some(p => p.categoria === nome));
+  const menuAtivo = cardapios.find(m => m.id === cardapioAtivo);
+  const catIdsDoMenu = menuAtivo ? menuAtivo.categorias : null;
+  const adIdsDoMenu = menuAtivo ? (menuAtivo.adicionais || null) : null;
 
-  const semCategoria = produtos.filter(p => !p.categoria);
+  const categoriasVisiveis = catIdsDoMenu && catIdsDoMenu.length > 0
+    ? categorias.filter(c => catIdsDoMenu.includes(c.id))
+    : categorias;
+
+  const nomesVisiveis = new Set(categoriasVisiveis.map(c => c.nome));
+
+  const produtosDoMenu = catIdsDoMenu && catIdsDoMenu.length > 0
+    ? produtos.filter(p => nomesVisiveis.has(p.categoria))
+    : produtos;
+
+  // Adicionais filtrados pelo cardápio ativo (se o cardápio tem lista definida)
+  const adicionaisDoMenu = adIdsDoMenu && adIdsDoMenu.length > 0
+    ? adicionaisDisponiveis.filter(a => adIdsDoMenu.includes(a.id))
+    : adicionaisDisponiveis;
+
+  const categoriasComProdutos = categoriasVisiveis
+    .map(c => c.nome)
+    .filter(nome => produtosDoMenu.some(p => p.categoria === nome));
+
+  const semCategoria = produtosDoMenu.filter(p => !p.categoria);
 
   const produtosFiltrados = busca.trim()
-    ? produtos.filter(p =>
+    ? produtosDoMenu.filter(p =>
         p.nome.toLowerCase().includes(busca.toLowerCase()) ||
         (p.descricao || "").toLowerCase().includes(busca.toLowerCase())
       )
-    : produtos;
+    : produtosDoMenu;
 
   const scrollParaCategoria = (cat) => {
     setCatAtiva(cat);
@@ -1737,6 +1808,77 @@ export default function ClienteApp() {
         <style>{themeStyles}</style>
         <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ color: "var(--text-soft)", fontSize: 14, fontWeight: 700 }}>Carregando…</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Seleção de cardápio (quando há 2+ cardápios ativos e nenhum foi escolhido) ──
+  if (cardapios.length >= 2 && !cardapioAtivo) {
+    return (
+      <div className="nl-app" data-theme={tema}>
+        <style>{themeStyles}</style>
+        <div style={{
+          minHeight: "100vh", display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", padding: "40px 20px",
+          background: "var(--bg)",
+        }}>
+          <div style={{ maxWidth: 720, width: "100%", textAlign: "center" }}>
+            <div style={{ marginBottom: 32 }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: 16, background: "var(--brand)",
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                marginBottom: 16, overflow: "hidden",
+              }}>
+                <img src="/logo.png" alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = "🍔"; }} />
+              </div>
+              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.5px" }}>
+                Escolha seu cardápio
+              </h1>
+              <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                Temos {cardapios.length} cardápios disponíveis. Selecione um para começar.
+              </p>
+            </div>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: `repeat(auto-fit, minmax(${cardapios.length === 2 ? "260px" : "220px"}, 1fr))`,
+              gap: 16, justifyItems: "center",
+            }}>
+              {cardapios.map(m => (
+                <button key={m.id} onClick={() => setCardapioAtivo(m.id)}
+                  style={{
+                    width: "100%", maxWidth: 320, padding: 0, cursor: "pointer",
+                    background: "var(--card, #fff)", border: `2.5px solid ${m.cor || "var(--brand)"}`,
+                    borderRadius: 18, overflow: "hidden",
+                    display: "flex", flexDirection: "column",
+                    transition: "transform 0.15s, box-shadow 0.15s",
+                    fontFamily: "inherit",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = "0 12px 32px rgba(0,0,0,0.12)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = ""; e.currentTarget.style.boxShadow = ""; }}>
+                  <div style={{
+                    width: "100%", aspectRatio: "16/10",
+                    background: m.imagem ? `url(${m.imagem}) center/cover no-repeat` : `linear-gradient(135deg, ${m.cor || "#15803d"}22, ${m.cor || "#15803d"}55)`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 68,
+                  }}>
+                    {!m.imagem && <span>{m.icone || "📋"}</span>}
+                  </div>
+                  <div style={{ padding: "18px 20px", textAlign: "center" }}>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 4, letterSpacing: "-0.3px" }}>
+                      {m.nome}
+                    </div>
+                    {m.descricao && (
+                      <div style={{ fontSize: 12.5, color: "var(--text-muted)", lineHeight: 1.4 }}>
+                        {m.descricao}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1888,6 +2030,40 @@ export default function ClienteApp() {
               )}
             </div>
 
+            {/* Abas de cardápio (multi-menu) */}
+            {cardapios.length > 1 && !busca.trim() && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{
+                  flex: 1, minWidth: 240, display: "flex", gap: 0,
+                  background: "var(--surface)", borderRadius: 14,
+                  padding: 4, border: "1.5px solid var(--border)",
+                }}>
+                  {cardapios.map(m => (
+                    <button key={m.id} onClick={() => setCardapioAtivo(m.id)}
+                      style={{
+                        flex: 1, padding: "10px 12px", borderRadius: 10,
+                        border: "none", cursor: "pointer",
+                        background: cardapioAtivo === m.id ? m.cor : "transparent",
+                        color: cardapioAtivo === m.id ? "#fff" : "var(--text-muted)",
+                        fontFamily: "'Nunito', sans-serif", fontSize: 13.5, fontWeight: 700,
+                        transition: "all 0.2s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                      }}>
+                      <span>{m.icone}</span> {m.nome}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setCardapioAtivo(null)}
+                  title="Voltar à tela de escolha de cardápio"
+                  style={{
+                    padding: "8px 14px", borderRadius: 10, border: "1.5px solid var(--border)",
+                    background: "transparent", color: "var(--text-muted)", cursor: "pointer",
+                    fontFamily: "'Nunito', sans-serif", fontSize: 12.5, fontWeight: 700,
+                  }}>
+                  ↺ Trocar
+                </button>
+              </div>
+            )}
+
             {/* Filtros (pills de categorias) */}
             {!busca.trim() && categoriasComProdutos.length > 1 && (
               <div className="nl-cat-nav" style={{
@@ -1931,7 +2107,7 @@ export default function ClienteApp() {
               /* Resultado da busca — lista plana */
               <div className="nl-product-grid">
                 {produtosFiltrados.map(p => (
-                  <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
+                  <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
                     onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
                 ))}
               </div>
@@ -1966,13 +2142,13 @@ export default function ClienteApp() {
                       <span style={{
                         fontSize: 12, color: "var(--text-soft)", fontWeight: 700, whiteSpace: "nowrap",
                       }}>
-                        {produtos.filter(p => p.categoria === cat).length} {produtos.filter(p => p.categoria === cat).length === 1 ? "item" : "itens"}
+                        {produtosDoMenu.filter(p => p.categoria === cat).length} {produtosDoMenu.filter(p => p.categoria === cat).length === 1 ? "item" : "itens"}
                       </span>
                     </div>
 
                     <div className="nl-product-grid">
-                      {produtos.filter(p => p.categoria === cat).map(p => (
-                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
+                      {produtosDoMenu.filter(p => p.categoria === cat).map(p => (
+                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
                           onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
                       ))}
                     </div>
@@ -1988,7 +2164,7 @@ export default function ClienteApp() {
                     </div>
                     <div className="nl-product-grid">
                       {semCategoria.map(p => (
-                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDisponiveis}
+                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
                           onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
                       ))}
                     </div>
@@ -2049,22 +2225,6 @@ export default function ClienteApp() {
                     </div>
                   );
                 })}
-
-                {/* T12 — Sugestões de upsell */}
-                {sugestoesUpsell.length > 0 && (
-                  <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)", background: "var(--brand-light)" }}>
-                    <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--text)", marginBottom: 12, fontFamily: "'Syne', sans-serif" }}>Que tal adicionar? 🍟🥤</div>
-                    <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
-                      {sugestoesUpsell.map(p => (
-                        <div key={p.id} style={{ flex: "0 0 auto", width: 132, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 12, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--text)", lineHeight: 1.2 }}>{p.nome}</div>
-                          <div style={{ fontSize: 13.5, fontWeight: 800, color: "var(--brand)", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{fmt(p.preco)}</div>
-                          <button onClick={() => handleAddProduto(p)} style={{ marginTop: "auto", background: "var(--brand)", color: "#fff", border: "none", borderRadius: 8, padding: "7px 0", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>+ Adicionar</button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {/* Observação */}
                 <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)" }}>
@@ -2137,7 +2297,7 @@ export default function ClienteApp() {
       {modalProduto && (
         <ModalProduto
           produto={modalProduto}
-          adicionais={adicionaisDisponiveis}
+          adicionais={adicionaisDoMenu}
           permiteAdicionais={!!catPermiteAdicionais[modalProduto.categoria]}
           aberto={aberto}
           onAddSimples={(p, ads) => { addCarrinhoSimples(p, ads); }}
@@ -2150,7 +2310,8 @@ export default function ClienteApp() {
       {modalAdicional && (
         <ModalAdicionais
           produto={modalAdicional}
-          adicionais={adicionaisDisponiveis}
+          adicionais={adicionaisDoMenu}
+          maxAdicionais={catMaxAdicionais[modalAdicional.categoria] || 0}
           onConfirm={confirmarAdicionais}
           onClose={() => setModalAdicional(null)}
         />

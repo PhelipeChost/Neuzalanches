@@ -1,15 +1,16 @@
 import "dotenv/config";
 import fs from "fs";
 import { join } from "path";
+import { randomBytes } from "crypto";
 import express from "express";
 import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { reportarReceitaNexo } from "./services/nexo.js";
-import { notificarPedidoConfirmado, notificarStatusPedido } from "./services/whatsapp.js";
+import { notificarPedidoConfirmado, notificarStatusPedido, enviarMensagem } from "./services/whatsapp.js";
 import {
   criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
-  isEmailAdmin, listarAdminEmails, adicionarAdminEmail, removerAdminEmail,
+  isEmailAdmin, buscarAdminEmail, listarAdminEmails, adicionarAdminEmail, atualizarAdminEmail, removerAdminEmail, isAdminPrincipal,
   listarLancamentos, buscarLancamento, criarLancamento, atualizarLancamento, excluirLancamento,
   listarLixeira, restaurarItemLixeira, excluirDefinitivoLixeira,
   obterConfig, salvarConfig,
@@ -18,10 +19,13 @@ import {
   listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
   listarPromocoes, listarPromocoesAtivas, criarPromocao, atualizarPromocao,
   listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
+  pedidosAlteradosDesde, upsertPedidoSync, upsertCatalogoSync,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
   listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
   listarComposicaoProduto, salvarComposicaoProduto,
   listarCustosFixos, buscarCustoFixo, criarCustoFixo, atualizarCustoFixo, excluirCustoFixo, gerarLancamentosCustosFixos,
+  listarCategoriasFinanceiro, criarCategoriaFinanceiro, atualizarCategoriaFinanceiro, excluirCategoriaFinanceiro,
+  criarEmprestimo,
   listarEstoqueCategorias, criarEstoqueCategoria, excluirEstoqueCategoria,
   listarFornecedores, buscarFornecedor, criarFornecedor, atualizarFornecedor, excluirFornecedor,
   listarEstoqueItens, buscarEstoqueItem, criarEstoqueItem, atualizarEstoqueItem, excluirEstoqueItem,
@@ -34,7 +38,14 @@ import {
   abrirComanda, buscarComanda, buscarComandaPorMesa, fecharComanda, cancelarComanda, pedirConta,
   listarItensComanda, adicionarItemComanda, atualizarStatusItemComanda, removerItemComanda,
   listarFilaCozinha, listarFilaCozinhaUnificada, estatisticasCaixa,
-  registrarVisita, getCardapioStats,
+  registrarVisita, getCardapioStats, getRankingVendas,
+  obterFiscalConfig, salvarFiscalConfig, salvarCertificadoA1, removerCertificadoA1,
+  emitirNFCe, listarNFCe,
+  consultarStatusSefazAntigo, emitirNFCeAntigo, listarNFCeAntigo, obterXmlNFCeAntigo,
+  obterSessaoAberta, abrirCaixa, registrarMovimentoCaixa, fecharCaixa, listarMovimentosCaixa,
+  listarCardapios, criarCardapio, atualizarCardapio, excluirCardapio,
+  definirCategoriasCardapio, definirAdicionaisCardapio, garantirCardapioPrincipal,
+  listarCardapiosPorCategoria, listarCardapiosPorAdicional,
 } from "./database.js";
 
 const app = express();
@@ -46,18 +57,30 @@ app.use(express.json({ limit: "5mb" }));
 
 // ─── AUTH MIDDLEWARE ─────────────────────────────────────────────────────────
 
+// PDV desktop (Electron seta NEXUS_DESKTOP=1): login é OPCIONAL — desligado por
+// padrão, o operador entra direto como admin. A ativação fica em Configurações.
+// No servidor online essa env nunca existe, então login é sempre obrigatório.
+const IS_DESKTOP_APP = process.env.NEXUS_DESKTOP === "1";
+function loginNecessario() {
+  return !IS_DESKTOP_APP || obterConfig("login_ativo") === "1";
+}
+
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  if (header && header.startsWith("Bearer ")) {
+    try {
+      req.user = jwt.verify(header.split(" ")[1], JWT_SECRET);
+      return next();
+    } catch {
+      if (loginNecessario()) return res.status(401).json({ error: "Token inválido" });
+    }
+  } else if (loginNecessario()) {
     return res.status(401).json({ error: "Token não fornecido" });
   }
-  try {
-    const decoded = jwt.verify(header.split(" ")[1], JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch {
-    return res.status(401).json({ error: "Token inválido" });
-  }
+  // Desktop com login desativado: operador local age como admin (sem email —
+  // ações restritas ao suporte Nexus continuam bloqueadas).
+  req.user = { id: "local", nome: "Operador", email: null, tipo: "admin", setores: null };
+  next();
 }
 
 function adminOnly(req, res, next) {
@@ -65,6 +88,37 @@ function adminOnly(req, res, next) {
     return res.status(403).json({ error: "Acesso restrito a administradores" });
   }
   next();
+}
+
+// Token fixo de sincronização (não expira, diferente do JWT de login que vence em
+// 7 dias). É o que uma outra instalação deve colar em "Conexão remota" para enviar
+// catálogo pra cá — evita ter que copiar um JWT de sessão do DevTools do admin.
+function garantirTokenSincronizacao() {
+  let tok = obterConfig("sync_receive_token");
+  if (!tok) {
+    tok = randomBytes(24).toString("hex");
+    salvarConfig("sync_receive_token", tok);
+  }
+  return tok;
+}
+
+function syncTokenOrAdmin(req, res, next) {
+  const header = req.headers.authorization;
+  const bearer = header && header.startsWith("Bearer ") ? header.split(" ")[1] : null;
+  const tokenSincronizacao = obterConfig("sync_receive_token");
+  if (bearer && tokenSincronizacao && bearer === tokenSincronizacao) {
+    req.user = { tipo: "admin", viaSyncToken: true };
+    return next();
+  }
+  return authMiddleware(req, res, () => adminOnly(req, res, next));
+}
+
+// Setores válidos do sistema (cada um corresponde a uma "função" no hub).
+const SETORES_VALIDOS = ["caixa", "cozinha", "produtos", "estoque", "financeiro", "config"];
+function normalizarSetores(setores) {
+  if (!Array.isArray(setores)) return null;  // null = todos os setores (acesso completo)
+  const filtrados = setores.filter(s => SETORES_VALIDOS.includes(s));
+  return filtrados.length > 0 ? filtrados : null;
 }
 
 // ─── AUTH ROUTES ────────────────────────────────────────────────────────────
@@ -82,11 +136,13 @@ app.post("/api/auth/registro", async (req, res) => {
   if (email && buscarUsuarioPorEmail(email)) {
     return res.status(409).json({ error: "Email já cadastrado" });
   }
-  const tipo = email && isEmailAdmin(email) ? "admin" : "cliente";
+  const adminEntry = email ? buscarAdminEmail(email) : null;
+  const tipo = adminEntry ? "admin" : "cliente";
   const hash = await bcrypt.hash(senha, 10);
   const usuario = criarUsuario({ nome, email: email || null, senha: hash, tipo, telefone });
-  const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo }, JWT_SECRET, { expiresIn: "7d" });
-  res.status(201).json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, telefone: usuario.telefone }, token });
+  const setores = adminEntry ? adminEntry.setores : null;
+  const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, setores }, JWT_SECRET, { expiresIn: "7d" });
+  res.status(201).json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, telefone: usuario.telefone, setores }, token });
 });
 
 app.post("/api/auth/login", async (req, res) => {
@@ -99,6 +155,26 @@ app.post("/api/auth/login", async (req, res) => {
   // Try phone first, then email
   let usuario = telefone ? buscarUsuarioPorTelefone(telefone) : null;
   if (!usuario && email) usuario = buscarUsuarioPorEmail(email);
+
+  // Funcionário pré-cadastrado pelo dono (admin_emails com senha): cria a conta no 1º login
+  if (!usuario && email) {
+    const adminEntry = buscarAdminEmail(email);
+    if (adminEntry && adminEntry.senha_hash) {
+      const valid = await bcrypt.compare(senha, adminEntry.senha_hash);
+      if (!valid) return res.status(401).json({ error: "Credenciais inválidas" });
+      usuario = criarUsuario({
+        nome: adminEntry.nome || email.split("@")[0],
+        email,
+        senha: adminEntry.senha_hash,
+        tipo: "admin",
+        telefone: null,
+      });
+      const setores = adminEntry.setores;
+      const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: "admin", setores }, JWT_SECRET, { expiresIn: "7d" });
+      return res.json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: "admin", telefone: usuario.telefone, setores }, token });
+    }
+  }
+
   if (!usuario) {
     return res.status(401).json({ error: "Credenciais inválidas" });
   }
@@ -106,14 +182,17 @@ app.post("/api/auth/login", async (req, res) => {
   if (!valid) {
     return res.status(401).json({ error: "Credenciais inválidas" });
   }
-  const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo }, JWT_SECRET, { expiresIn: "7d" });
-  res.json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, telefone: usuario.telefone }, token });
+  const adminEntry = usuario.email ? buscarAdminEmail(usuario.email) : null;
+  const setores = adminEntry ? adminEntry.setores : null;
+  const token = jwt.sign({ id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, setores }, JWT_SECRET, { expiresIn: "7d" });
+  res.json({ usuario: { id: usuario.id, nome: usuario.nome, email: usuario.email, tipo: usuario.tipo, telefone: usuario.telefone, setores }, token });
 });
 
 app.get("/api/auth/me", authMiddleware, (req, res) => {
   const usuario = buscarUsuarioPorId(req.user.id);
   if (!usuario) return res.status(404).json({ error: "Usuário não encontrado" });
-  res.json(usuario);
+  const adminEntry = usuario.email ? buscarAdminEmail(usuario.email) : null;
+  res.json({ ...usuario, setores: adminEntry ? adminEntry.setores : null });
 });
 
 // ─── LANCAMENTOS (admin only) ───────────────────────────────────────────────
@@ -157,16 +236,175 @@ app.delete("/api/lancamentos/:id", authMiddleware, adminOnly, (req, res) => {
 // ─── CONFIG (admin only) ────────────────────────────────────────────────────
 
 app.get("/api/config", authMiddleware, adminOnly, (req, res) => {
-  res.json({ saldo_inicial: parseFloat(obterConfig("saldo_inicial") || "0") });
+  res.json({
+    saldo_inicial: parseFloat(obterConfig("saldo_inicial") || "0"),
+    nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
+    whatsapp: obterConfig("whatsapp") || "",
+    logo: obterConfig("logo") || "",
+    link_exibicao: obterConfig("link_exibicao") || "",
+    mensagem_alerta: obterConfig("mensagem_alerta") || "",
+  });
 });
 
 app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
-  const { saldo_inicial } = req.body;
-  if (saldo_inicial === undefined || typeof saldo_inicial !== "number") {
-    return res.status(400).json({ error: "saldo_inicial deve ser um número" });
+  const { saldo_inicial, nome_estabelecimento, whatsapp, logo, link_exibicao, mensagem_alerta } = req.body;
+  if (saldo_inicial !== undefined) {
+    if (typeof saldo_inicial !== "number") {
+      return res.status(400).json({ error: "saldo_inicial deve ser um número" });
+    }
+    salvarConfig("saldo_inicial", saldo_inicial);
   }
-  salvarConfig("saldo_inicial", saldo_inicial);
-  res.json({ saldo_inicial });
+  if (nome_estabelecimento !== undefined) {
+    salvarConfig("nome_estabelecimento", String(nome_estabelecimento).trim().slice(0, 60));
+  }
+  if (whatsapp !== undefined) {
+    salvarConfig("whatsapp", String(whatsapp).trim().slice(0, 30));
+  }
+  if (logo !== undefined) {
+    // Logotipo em base64 (data URL). Limite de segurança ~3MB.
+    salvarConfig("logo", String(logo).slice(0, 3_500_000));
+  }
+  if (link_exibicao !== undefined) {
+    // Link de exibição (bot WhatsApp): usado na saudação e nas notificações
+    salvarConfig("link_exibicao", String(link_exibicao).trim().slice(0, 200));
+  }
+  if (mensagem_alerta !== undefined) {
+    // Mensagem de alerta (adversidade): vazia = sem alerta ativo
+    salvarConfig("mensagem_alerta", String(mensagem_alerta).trim().slice(0, 600));
+  }
+  res.json({
+    saldo_inicial: parseFloat(obterConfig("saldo_inicial") || "0"),
+    nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
+    whatsapp: obterConfig("whatsapp") || "",
+    logo: obterConfig("logo") || "",
+    link_exibicao: obterConfig("link_exibicao") || "",
+    mensagem_alerta: obterConfig("mensagem_alerta") || "",
+  });
+});
+
+// Dados públicos do estabelecimento (usado nas impressões, telas do cliente e
+// pelo bot do WhatsApp no n8n — inclui link de exibição, alerta e status aberto)
+app.get("/api/config/estabelecimento", (req, res) => {
+  const hCfg = getHorarioConfig();
+  res.json({
+    nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
+    whatsapp: obterConfig("whatsapp") || "",
+    logo: obterConfig("logo") || "",
+    link_exibicao: obterConfig("link_exibicao") || "",
+    mensagem_alerta: obterConfig("mensagem_alerta") || "",
+    aberto: isAbertoAgora(hCfg),
+    horario: { dias: hCfg.dias, abertura: hCfg.abertura, fechamento: hCfg.fechamento },
+  });
+});
+
+// ─── LOGIN OPCIONAL (PDV desktop) ────────────────────────────────────────────
+
+// Público: o frontend consulta antes de decidir se mostra a tela de login.
+app.get("/api/config/login-status", (req, res) => {
+  res.json({
+    login_necessario: loginNecessario(),
+    desktop: IS_DESKTOP_APP,
+    login_ativo: obterConfig("login_ativo") === "1",
+  });
+});
+
+// Liga/desliga a exigência de login no PDV (aba "Login" das Configurações).
+app.put("/api/config/login", authMiddleware, adminOnly, (req, res) => {
+  salvarConfig("login_ativo", req.body?.ativo ? "1" : "0");
+  res.json({
+    login_ativo: obterConfig("login_ativo") === "1",
+    login_necessario: loginNecessario(),
+  });
+});
+
+// ─── PERFIL / SETUP DO ESTABELECIMENTO ──────────────────────────────────────
+// Persiste a escolha de modo (mesas/balcão), módulos opcionais e nome.
+// Usado pelo Setup Wizard no primeiro acesso e pela adaptação do Hub.
+
+app.get("/api/perfil", authMiddleware, adminOnly, (req, res) => {
+  let modulos = [];
+  try { modulos = JSON.parse(obterConfig("perfil_modulos") || "[]"); } catch {}
+  res.json({
+    modo: obterConfig("perfil_modo") || "",
+    modulos,
+    configurado: obterConfig("perfil_configurado") === "1",
+    nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
+  });
+});
+
+app.put("/api/perfil", authMiddleware, adminOnly, (req, res) => {
+  const { modo, modulos, nome_estabelecimento } = req.body;
+  if (modo && ["mesas", "balcao"].includes(modo)) {
+    // Depois de configurado, o modo de operação é estrutural: só o suporte
+    // Nexus (conta principal) pode alterar.
+    const jaConfigurado = obterConfig("perfil_configurado") === "1";
+    const modoAtual = obterConfig("perfil_modo") || "";
+    if (jaConfigurado && modoAtual && modo !== modoAtual && !isAdminPrincipal(req.user.email)) {
+      return res.status(403).json({ error: "O modo de operação (mesas/balcão) só pode ser alterado pelo suporte Nexus." });
+    }
+    salvarConfig("perfil_modo", modo);
+  }
+  if (Array.isArray(modulos)) salvarConfig("perfil_modulos", JSON.stringify(modulos));
+  if (nome_estabelecimento !== undefined) salvarConfig("nome_estabelecimento", String(nome_estabelecimento).trim().slice(0, 60));
+  salvarConfig("perfil_configurado", "1");
+  // Cria o "Cardápio Principal" default (idempotente — só cria se não houver nenhum).
+  try { garantirCardapioPrincipal(); } catch { /* não bloqueia o wizard */ }
+  let mods = [];
+  try { mods = JSON.parse(obterConfig("perfil_modulos") || "[]"); } catch {}
+  res.json({
+    modo: obterConfig("perfil_modo") || "",
+    modulos: mods,
+    configurado: true,
+    nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
+  });
+});
+
+// ─── SESSÃO DE CAIXA ────────────────────────────────────────────────────────
+// Abrir caixa (saldo inicial), sangria, suprimento, fechamento cego.
+
+app.get("/api/caixa/sessao", authMiddleware, adminOnly, (req, res) => {
+  const sessao = obterSessaoAberta();
+  res.json(sessao || { aberta: false });
+});
+
+app.post("/api/caixa/abrir", authMiddleware, adminOnly, (req, res) => {
+  const aberta = obterSessaoAberta();
+  if (aberta) return res.status(400).json({ error: "Já existe um caixa aberto." });
+  const { saldo_inicial } = req.body;
+  const sessao = abrirCaixa(req.user.email || req.user.nome, Number(saldo_inicial) || 0);
+  res.json(sessao);
+});
+
+app.post("/api/caixa/sangria", authMiddleware, adminOnly, (req, res) => {
+  const aberta = obterSessaoAberta();
+  if (!aberta) return res.status(400).json({ error: "Abra o caixa primeiro." });
+  const { valor, obs } = req.body;
+  if (!valor || valor <= 0) return res.status(400).json({ error: "Valor inválido." });
+  registrarMovimentoCaixa(aberta.id, "sangria", Number(valor), obs || "");
+  res.json({ ok: true });
+});
+
+app.post("/api/caixa/suprimento", authMiddleware, adminOnly, (req, res) => {
+  const aberta = obterSessaoAberta();
+  if (!aberta) return res.status(400).json({ error: "Abra o caixa primeiro." });
+  const { valor, obs } = req.body;
+  if (!valor || valor <= 0) return res.status(400).json({ error: "Valor inválido." });
+  registrarMovimentoCaixa(aberta.id, "suprimento", Number(valor), obs || "");
+  res.json({ ok: true });
+});
+
+app.post("/api/caixa/fechar", authMiddleware, adminOnly, (req, res) => {
+  const aberta = obterSessaoAberta();
+  if (!aberta) return res.status(400).json({ error: "Não há caixa aberto." });
+  const { saldo_informado } = req.body;
+  const resultado = fecharCaixa(aberta.id, Number(saldo_informado) || 0);
+  res.json(resultado);
+});
+
+app.get("/api/caixa/movimentos", authMiddleware, adminOnly, (req, res) => {
+  const aberta = obterSessaoAberta();
+  if (!aberta) return res.json([]);
+  res.json(listarMovimentosCaixa(aberta.id));
 });
 
 // ─── ADMIN EMAILS (convites) ────────────────────────────────────────────────
@@ -175,16 +413,81 @@ app.get("/api/admin-emails", authMiddleware, adminOnly, (req, res) => {
   res.json(listarAdminEmails());
 });
 
-app.post("/api/admin-emails", authMiddleware, adminOnly, (req, res) => {
-  const { email } = req.body;
+app.post("/api/admin-emails", authMiddleware, adminOnly, async (req, res) => {
+  const { email, nome, senha, setores } = req.body;
   if (!email) return res.status(400).json({ error: "Email é obrigatório" });
-  adicionarAdminEmail(email, req.user.email);
-  res.status(201).json({ success: true, email });
+  const setoresNorm = normalizarSetores(setores);
+  const senhaHash = senha ? await bcrypt.hash(String(senha), 10) : undefined;
+  adicionarAdminEmail(email, req.user.email, { nome, senhaHash, setores: setoresNorm });
+  res.status(201).json({ success: true, email, nome: nome || "", setores: setoresNorm, tem_senha: !!senhaHash });
+});
+
+app.put("/api/admin-emails/:email", authMiddleware, adminOnly, async (req, res) => {
+  const email = decodeURIComponent(req.params.email);
+  // Protege contra auto-trancamento: admin não pode editar a própria conta
+  // (a não ser que o pedido venha sem alterar setores).
+  if (email && req.user.email && email.toLowerCase() === req.user.email.toLowerCase()) {
+    return res.status(403).json({ error: "Não é possível editar a própria conta pelo painel — você poderia se trancar fora." });
+  }
+  const { nome, senha, setores } = req.body;
+  // Conta principal Nexus: sempre tem acesso completo — bloqueia limitar setores
+  if (isAdminPrincipal(email) && Array.isArray(setores) && setores.length > 0) {
+    return res.status(403).json({ error: "A conta principal Nexus sempre tem acesso completo." });
+  }
+  const setoresNorm = setores === undefined ? undefined : normalizarSetores(setores);
+  const senhaHash = senha ? await bcrypt.hash(String(senha), 10) : undefined;
+  atualizarAdminEmail(email, { nome, senhaHash, setores: setoresNorm });
+  res.json({ success: true, email });
 });
 
 app.delete("/api/admin-emails/:email", authMiddleware, adminOnly, (req, res) => {
-  removerAdminEmail(decodeURIComponent(req.params.email));
+  const email = decodeURIComponent(req.params.email);
+  if (isAdminPrincipal(email)) {
+    return res.status(403).json({ error: "A conta principal Nexus não pode ser removida." });
+  }
+  if (email && req.user.email && email.toLowerCase() === req.user.email.toLowerCase()) {
+    return res.status(403).json({ error: "Não é possível remover a própria conta." });
+  }
+  removerAdminEmail(email);
   res.json({ success: true });
+});
+
+// ─── CARDÁPIOS ──────────────────────────────────────────────────────────────
+
+app.get("/api/cardapios", (req, res) => {
+  try { res.json(listarCardapios()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/cardapios", authMiddleware, adminOnly, (req, res) => {
+  const { nome, descricao, icone, cor, imagem } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
+  try { res.json(criarCardapio({ nome, descricao, icone, cor, imagem })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
+  try { atualizarCardapio(req.params.id, req.body); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
+  try { excluirCardapio(req.params.id); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/cardapios/:id/categorias", authMiddleware, adminOnly, (req, res) => {
+  const { categorias } = req.body;
+  if (!Array.isArray(categorias)) return res.status(400).json({ error: "categorias deve ser um array" });
+  try { definirCategoriasCardapio(req.params.id, categorias); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/cardapios/:id/adicionais", authMiddleware, adminOnly, (req, res) => {
+  const { adicionais } = req.body;
+  if (!Array.isArray(adicionais)) return res.status(400).json({ error: "adicionais deve ser um array" });
+  try { definirAdicionaisCardapio(req.params.id, adicionais); res.json({ ok: true }); }
+  catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ─── CATEGORIAS ─────────────────────────────────────────────────────────────
@@ -241,16 +544,16 @@ app.get("/api/adicionais", (req, res) => {
 });
 
 app.post("/api/adicionais", authMiddleware, adminOnly, (req, res) => {
-  const { nome, preco, custo, disponivel } = req.body;
+  const { nome, preco, custo, disponivel, max_quantidade, categoria_id } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  res.status(201).json(criarAdicional({ nome, preco, custo: custo || 0, disponivel }));
+  res.status(201).json(criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id }));
 });
 
 app.put("/api/adicionais/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, preco, custo, disponivel } = req.body;
+  const { nome, preco, custo, disponivel, max_quantidade, categoria_id } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
-  const a = atualizarAdicional(req.params.id, { nome, preco, custo: custo || 0, disponivel });
+  const a = atualizarAdicional(req.params.id, { nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id });
   if (!a) return res.status(404).json({ error: "Não encontrado" });
   res.json(a);
 });
@@ -563,7 +866,15 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       return d.toISOString().slice(0, 10);
     })();
 
-    // Lançamento de RECEITA (entrada)
+    // CMV (custo de produção) — embutido na venda como atributo, NÃO como
+    // lançamento separado. O feed mostra venda + custo + margem em 1 linha.
+    // O CMV continua no DRE (calculado a partir dos pedidos), só sai do feed.
+    const itens = buscarItensPedido(pedido.id);
+    const cmvTotal = itens.reduce((s, item) => {
+      return s + (item.custo_unitario * item.quantidade);
+    }, 0);
+
+    // Lançamento de RECEITA (entrada) — carrega o custo (CMV) da venda
     criarLancamento({
       tipo: "entrada",
       descricao: `Pedido #${pedido.id.slice(0, 6)} — ${pedido.cliente_nome || "Cliente"}`,
@@ -572,6 +883,7 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       cat: "Vendas",
       status: "realizado",
       obs: `Pedido ${pedido.tipo} entregue automaticamente`,
+      custo: cmvTotal > 0 ? cmvTotal : null,
     });
 
     // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
@@ -580,25 +892,6 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       description: `Pedido #${pedido.id.slice(0, 6)}`,
       source: pedido.tipo === 'online' ? 'online' : 'presencial',
     });
-
-    // Lançamento de CMV (saída) — custo de produção
-    const itens = buscarItensPedido(pedido.id);
-    const cmvTotal = itens.reduce((s, item) => {
-      const custoAdicionais = (item.adicionais || []).reduce((a, ad) => a + (ad.custo || 0), 0);
-      return s + (item.custo_unitario * item.quantidade);
-    }, 0);
-
-    if (cmvTotal > 0) {
-      criarLancamento({
-        tipo: "saida",
-        descricao: `CMV — Pedido #${pedido.id.slice(0, 6)} — ${pedido.cliente_nome || "Cliente"}`,
-        valor: cmvTotal,
-        data: dataPedidoBRT,
-        cat: "CMV",
-        status: "realizado",
-        obs: `Custo de produção do pedido ${pedido.tipo}`,
-      });
-    }
   }
 
   res.json({ ...pedido, itens: buscarItensPedido(pedido.id) });
@@ -608,6 +901,132 @@ app.delete("/api/pedidos/:id", authMiddleware, adminOnly, (req, res) => {
   const ok = excluirPedido(req.params.id);
   if (!ok) return res.status(404).json({ error: "Pedido não encontrado" });
   res.json({ success: true });
+});
+
+// ─── SINCRONIZAÇÃO (cozinha simultânea local ↔ nuvem) ────────────────────────
+// PULL: quem chama recebe os pedidos alterados desde um cursor (ISO). Serve tanto
+// pro desktop puxar da VPS quanto pra VPS puxar do desktop (mesmo código).
+app.get("/api/sync/pull", syncTokenOrAdmin, (req, res) => {
+  try {
+    const desde = req.query.desde || "1970-01-01T00:00:00";
+    const pedidos = pedidosAlteradosDesde(desde);
+    // cursor = maior updated_at retornado (ou o próprio 'desde' se vazio)
+    const cursor = pedidos.reduce((m, p) => {
+      const t = p.updated_at || p.created_at || "";
+      return t > m ? t : m;
+    }, desde);
+    res.json({ pedidos, cursor, servidor_agora: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUSH: recebe um lote de pedidos e faz upsert (last-write-wins), sem efeitos
+// colaterais. Idempotente por id.
+app.post("/api/sync/push", syncTokenOrAdmin, (req, res) => {
+  try {
+    const lote = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
+    const resultado = { inserido: 0, atualizado: 0, ignorado: 0 };
+    for (const p of lote) {
+      const r = upsertPedidoSync(p);
+      resultado[r] = (resultado[r] || 0) + 1;
+    }
+    res.json({ ok: true, ...resultado, recebidos: lote.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── SYNC CONFIG + CATÁLOGO ─────────────────────────────────────────────────
+
+app.get("/api/config/sync", authMiddleware, adminOnly, (req, res) => {
+  res.json({
+    url: obterConfig("sync_url") || "",
+    token: obterConfig("sync_token") || "",
+    enabled: obterConfig("sync_enabled") === "1",
+    last_sync: obterConfig("sync_last") || null,
+    last_sync_result: obterConfig("sync_last_result") || null,
+  });
+});
+
+app.put("/api/config/sync", authMiddleware, adminOnly, (req, res) => {
+  const { url, token, enabled } = req.body;
+  if (url !== undefined) salvarConfig("sync_url", String(url).trim());
+  if (token !== undefined) salvarConfig("sync_token", String(token).trim());
+  if (enabled !== undefined) salvarConfig("sync_enabled", enabled ? "1" : "0");
+  // Re-inicia (ou para) o motor de sync de pedidos com a nova config
+  try { iniciarSyncPedidos(); } catch {}
+  res.json({
+    url: obterConfig("sync_url") || "",
+    token: obterConfig("sync_token") || "",
+    enabled: obterConfig("sync_enabled") === "1",
+  });
+});
+
+// Token que ESTA instalação expõe para que OUTRAS instalações se conectem a ela
+// (o campo "TOKEN DE AUTENTICAÇÃO" que o outro lado cola). Não expira.
+app.get("/api/config/sync-token", authMiddleware, adminOnly, (req, res) => {
+  res.json({ token: garantirTokenSincronizacao() });
+});
+
+app.post("/api/config/sync-token/regenerar", authMiddleware, adminOnly, (req, res) => {
+  const tok = randomBytes(24).toString("hex");
+  salvarConfig("sync_receive_token", tok);
+  res.json({ token: tok });
+});
+
+app.post("/api/sync/test", authMiddleware, adminOnly, async (req, res) => {
+  const url = obterConfig("sync_url");
+  if (!url) return res.status(400).json({ error: "URL do servidor não configurada" });
+  try {
+    const r = await fetch(`${url.replace(/\/+$/, "")}/api/config/estabelecimento`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    res.json({ ok: true, nome: data.nome_estabelecimento || "(sem nome)" });
+  } catch (err) {
+    res.status(502).json({ error: `Falha: ${err.message}` });
+  }
+});
+
+app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
+  const url = obterConfig("sync_url");
+  const token = obterConfig("sync_token");
+  if (!url || !token) return res.status(400).json({ error: "Conexão não configurada" });
+  try {
+    const produtos = listarProdutos();
+    const categorias = listarCategorias();
+    const adicionais = listarAdicionais();
+    const baseUrl = url.replace(/\/+$/, "");
+    const r = await fetch(`${baseUrl}/api/sync/push-catalogo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ produtos, categorias, adicionais }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${r.status}`);
+    }
+    const result = await r.json();
+    const agora = new Date().toISOString();
+    salvarConfig("sync_last", agora);
+    salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
+    res.json({ ok: true, ...result, sincronizado_em: agora });
+  } catch (err) {
+    salvarConfig("sync_last", new Date().toISOString());
+    salvarConfig("sync_last_result", `Erro: ${err.message}`);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post("/api/sync/push-catalogo", syncTokenOrAdmin, (req, res) => {
+  try {
+    const { categorias = [], adicionais = [], produtos = [] } = req.body;
+    const resultado = upsertCatalogoSync({ categorias, adicionais, produtos });
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── LIXEIRA (admin only) ────────────────────────────────────────────────────
@@ -643,17 +1062,22 @@ app.get("/api/custos-fixos", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.post("/api/custos-fixos", authMiddleware, adminOnly, (req, res) => {
-  const { nome, valor, categoria, ativo } = req.body;
+  const { nome, valor, categoria, ativo, tipo, diaria, qtd } = req.body;
   if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
-  if (typeof valor !== "number" || valor < 0) return res.status(400).json({ error: "Valor inválido" });
-  res.status(201).json(criarCustoFixo({ nome, valor, categoria, ativo }));
+  // Custo variável: validar diaria/qtd no lugar de valor
+  if (tipo === "variavel") {
+    if (typeof diaria !== "number" || diaria < 0) return res.status(400).json({ error: "Valor da diária inválido" });
+    if (typeof qtd !== "number" || qtd < 0)       return res.status(400).json({ error: "Quantidade inválida" });
+  } else {
+    if (typeof valor !== "number" || valor < 0) return res.status(400).json({ error: "Valor inválido" });
+  }
+  res.status(201).json(criarCustoFixo({ nome, valor: valor || 0, categoria, ativo, tipo, diaria, qtd }));
 });
 
 app.put("/api/custos-fixos/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, valor, categoria, ativo } = req.body;
-  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
-  if (typeof valor !== "number" || valor < 0) return res.status(400).json({ error: "Valor inválido" });
-  const cf = atualizarCustoFixo(req.params.id, { nome, valor, categoria, ativo });
+  const { nome, valor, categoria, ativo, tipo, diaria, qtd } = req.body;
+  if (!nome && nome !== undefined) return res.status(400).json({ error: "Nome é obrigatório" });
+  const cf = atualizarCustoFixo(req.params.id, { nome, valor, categoria, ativo, tipo, diaria, qtd });
   if (!cf) return res.status(404).json({ error: "Custo fixo não encontrado" });
   res.json(cf);
 });
@@ -669,6 +1093,45 @@ app.post("/api/custos-fixos/gerar/:mes", authMiddleware, adminOnly, (req, res) =
   if (!/^\d{4}-\d{2}$/.test(mes)) return res.status(400).json({ error: "Mês inválido (use YYYY-MM)" });
   const gerados = gerarLancamentosCustosFixos(mes);
   res.json({ gerados: gerados.length, lancamentos: gerados });
+});
+
+// ─── CATEGORIAS FINANCEIRO (admin only) ──────────────────────────────────────
+app.get("/api/categorias-financeiro", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarCategoriasFinanceiro({ incluirArquivadas: req.query.incluir_arquivadas === "1" }));
+});
+
+app.post("/api/categorias-financeiro", authMiddleware, adminOnly, (req, res) => {
+  const { nome, cor, tipo } = req.body;
+  if (!nome || !String(nome).trim()) return res.status(400).json({ error: "Nome é obrigatório" });
+  try {
+    res.status(201).json(criarCategoriaFinanceiro({ nome, cor, tipo }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put("/api/categorias-financeiro/:id", authMiddleware, adminOnly, (req, res) => {
+  const { nome, cor, tipo, arquivada } = req.body;
+  const cat = atualizarCategoriaFinanceiro(req.params.id, { nome, cor, tipo, arquivada });
+  if (!cat) return res.status(404).json({ error: "Categoria não encontrada" });
+  res.json(cat);
+});
+
+app.delete("/api/categorias-financeiro/:id", authMiddleware, adminOnly, (req, res) => {
+  if (!excluirCategoriaFinanceiro(req.params.id)) return res.status(404).json({ error: "Categoria não encontrada" });
+  res.json({ success: true });
+});
+
+// ─── EMPRÉSTIMO INTELIGENTE ──────────────────────────────────────────────────
+// POST recebe { descricao, valor, data, cat, juros_pct, n_parcelas, dia_pagamento }
+// Cria 1 entrada (recebimento) + N saídas previstas (parcelas)
+app.post("/api/lancamentos/emprestimo", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const pai = criarEmprestimo(req.body || {});
+    res.status(201).json(pai);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ─── INSUMOS (admin only) ────────────────────────────────────────────────────
@@ -776,10 +1239,10 @@ app.get("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual } = req.body;
   if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
   try {
-    res.status(201).json(criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo }));
+    res.status(201).json(criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual }));
   } catch (err) {
     if (err.message.includes("UNIQUE")) return res.status(409).json({ error: "Código já existe" });
     throw err;
@@ -787,9 +1250,9 @@ app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.put("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual } = req.body;
   if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
-  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo });
+  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual });
   if (!item) return res.status(404).json({ error: "Não encontrado" });
   res.json(item);
 });
@@ -941,6 +1404,94 @@ app.post('/api/public/visita', (req, res) => {
 // GET autenticado — estatísticas do cardápio para o admin
 app.get('/api/cardapio/stats', authMiddleware, (req, res) => {
   res.json(getCardapioStats());
+});
+
+// GET autenticado — ranking de vendas (produtos e adicionais) para o admin
+app.get('/api/relatorios/ranking', authMiddleware, (req, res) => {
+  res.json(getRankingVendas());
+});
+
+// ─── FISCAL / NFC-e (admin only) ─────────────────────────────────────────────
+app.get("/api/fiscal/config", authMiddleware, adminOnly, (req, res) => {
+  res.json(obterFiscalConfig());
+});
+
+app.put("/api/fiscal/config", authMiddleware, adminOnly, (req, res) => {
+  try {
+    res.json(salvarFiscalConfig(req.body || {}));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Upload do certificado A1: { nome_arquivo, pfx_base64, senha }
+app.post("/api/fiscal/certificado", authMiddleware, adminOnly, (req, res) => {
+  const { nome_arquivo, pfx_base64, senha } = req.body || {};
+  if (!pfx_base64) return res.status(400).json({ error: "Envie o arquivo do certificado (.pfx)." });
+  try {
+    res.json(salvarCertificadoA1({ nome_arquivo, pfx_base64, senha }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete("/api/fiscal/certificado", authMiddleware, adminOnly, (req, res) => {
+  res.json(removerCertificadoA1());
+});
+
+// NFC-e: emitir a partir de um pedido (ou teste sem pedido) + listar
+app.post("/api/fiscal/nfce/emitir", authMiddleware, adminOnly, (req, res) => {
+  const { pedido_id, simulado } = req.body || {};
+  try {
+    res.status(201).json(emitirNFCe(pedido_id || null, { simulado: !!simulado }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Teste rápido de emissão simulada (sem pedido real)
+app.post("/api/fiscal/nfce/teste", authMiddleware, adminOnly, (req, res) => {
+  try {
+    res.status(201).json(emitirNFCe(null, { simulado: true }));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get("/api/fiscal/nfce", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarNFCe(Number(req.query.limit) || 20));
+});
+
+// ─── NFC-e ANTIGO (motor próprio — regras vigentes, emissão direta na SEFAZ) ─
+
+// Testa conectividade + certificado contra o serviço de status da SEFAZ
+app.post("/api/fiscal/antigo/status", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    res.json(await consultarStatusSefazAntigo());
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Emissão REAL (homologação ou produção conforme o ambiente configurado).
+// Sem pedido_id emite nota de teste de R$ 1,00.
+app.post("/api/fiscal/antigo/emitir", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    res.status(201).json(await emitirNFCeAntigo(req.body?.pedido_id || null));
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get("/api/fiscal/antigo/nfce", authMiddleware, adminOnly, (req, res) => {
+  res.json(listarNFCeAntigo(Number(req.query.limit) || 20));
+});
+
+// XML assinado/autorizado da nota (p/ conferência e guarda fiscal)
+app.get("/api/fiscal/antigo/nfce/:id/xml", authMiddleware, adminOnly, (req, res) => {
+  const r = obterXmlNFCeAntigo(req.params.id);
+  if (!r) return res.status(404).json({ error: "XML não encontrado" });
+  res.json({ numero: r.numero, serie: r.serie, chave: r.chave, xml: r.xml_assinado });
 });
 
 // PUT autenticado — admin salva configuração
@@ -1123,6 +1674,61 @@ setInterval(() => {
   }
 }, 60 * 60 * 1000);
 
+// ── Saudações do bot — 100% a partir das CONFIGURAÇÕES da plataforma ─────────
+const DIAS_BOT = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+
+function montarSaudacaoBot() {
+  const nome = obterConfig('nome_estabelecimento') || 'nosso estabelecimento';
+  const link = (obterConfig('link_exibicao') || '').trim();
+  const alerta = (obterConfig('mensagem_alerta') || '').trim();
+  const hCfg = getHorarioConfig();
+  const aberto = isAbertoAgora(hCfg);
+
+  const blocoLink = link ? `\n\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\n🌐 *${link}*` : '';
+
+  // 1) Alerta ativo (adversidade: chapa queimou, falta de energia, etc.)
+  if (alerta) {
+    return `Olá! 👋 Aqui é da *${nome}*.\n\n⚠️ *Aviso importante:*\n${alerta}\n\nPedimos desculpas pelo transtorno e agradecemos a sua compreensão. 🙏${blocoLink}`;
+  }
+
+  // 2) Fechado — horário vem da config
+  if (!aberto) {
+    const dias = (hCfg.dias || []).map(d => DIAS_BOT[d]);
+    const diasStr = dias.length === 7 ? 'Todos os dias' : dias.join(', ');
+    return `🔒 *Olá! No momento a ${nome} está fechada.*\n\nNosso horário de funcionamento:\n📅 *${diasStr}*\n🕐 *${hCfg.abertura} às ${hCfg.fechamento}*${blocoLink}\n\n_Te esperamos em breve!_ 😊`;
+  }
+
+  // 3) Aberto — saudação padrão + apresentação + link
+  return `Olá! 👋 Seja bem-vindo(a) à *${nome}*! 🍔${blocoLink}\n\n_Após finalizar o pedido, você receberá as atualizações aqui pelo WhatsApp!_ 📲`;
+}
+
+// Mensagem de alerta em massa: envia para todos os clientes com pedido EM
+// ANDAMENTO (pendente/confirmado/preparando/pronto). Quem mandar mensagem nova
+// também recebe o alerta, pois montarSaudacaoBot() prioriza o alerta ativo.
+app.post('/api/whatsapp/alerta', authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const mensagem = String(req.body?.mensagem ?? obterConfig('mensagem_alerta') ?? '').trim();
+    if (!mensagem) return res.status(400).json({ error: 'Escreva a mensagem de alerta antes de enviar.' });
+    // Se veio mensagem nova no corpo, salva na config (o bot passa a respondê-la também)
+    if (req.body?.mensagem !== undefined) salvarConfig('mensagem_alerta', mensagem.slice(0, 600));
+
+    const nome = obterConfig('nome_estabelecimento') || 'nosso estabelecimento';
+    const texto = `Olá! 👋 Aqui é da *${nome}*.\n\n⚠️ *Aviso importante:*\n${mensagem}\n\nPedimos desculpas pelo transtorno e agradecemos a sua compreensão. 🙏`;
+
+    const ATIVOS = ['pendente', 'confirmado', 'preparando', 'pronto'];
+    const pedidos = listarPedidos().filter(p => ATIVOS.includes(p.status) && p.cliente_telefone);
+    const numeros = [...new Set(pedidos.map(p => String(p.cliente_telefone).replace(/\D/g, '')).filter(n => n.length >= 10))];
+
+    let enviados = 0;
+    for (const n of numeros) {
+      if (await enviarMensagem(n, texto)) enviados++;
+    }
+    res.json({ enviados, total: numeros.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/bot/qr', async (req, res) => {
   // Busca QR direto da Evolution (mais confiável que o cache do webhook)
   let qrFromApi = null;
@@ -1240,23 +1846,9 @@ app.post('/api/bot/webhook', async (req, res) => {
 
     console.log('[bot/webhook] enviando saudação para:', numero, '(remoteJid:', remoteJid, ')');
 
-    // ── Verificar horário de funcionamento (Ter–Dom, 19h–01h, Brasília) ────────
-    function isAberto() {
-      const now  = new Date();
-      const utc  = now.getTime() + now.getTimezoneOffset() * 60000;
-      const sp   = new Date(utc + (-3 * 3600000));
-      const day  = sp.getDay();
-      const hour = sp.getHours();
-      const diasAbertos = [0, 2, 3, 4, 5, 6];
-      if (hour >= 19) return diasAbertos.includes(day);
-      if (hour < 1)  return diasAbertos.includes(day === 0 ? 6 : day - 1);
-      return false;
-    }
-
-    const aberto = isAberto();
-    const texto = aberto
-      ? 'Olá! 👋 Seja bem-vindo(a) à *Neuza Lanches*! 🍔\n\nAcesse nosso cardápio e faça seu pedido pelo link abaixo:\n\n🌐 *neuzalanches.com.br*\n\n_Após finalizar o pedido no site, você receberá as atualizações aqui pelo WhatsApp!_ 📲'
-      : '🔒 *Olá! No momento estamos fechados.*\n\nNosso horário de funcionamento é:\n📅 *Terça a Domingo*\n🕕 *18h30 às 01h30*\n\nQuando estivermos abertos, acesse nosso cardápio em:\n🌐 *neuzalanches.com.br*\n\n_Te esperamos em breve!_ 😊';
+    // ── Mensagens montadas a partir das CONFIGURAÇÕES da plataforma ────────────
+    // (nome do estabelecimento, link de exibição, horário e mensagem de alerta)
+    const texto = montarSaudacaoBot();
 
     const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
     const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
@@ -1509,7 +2101,9 @@ app.post('/api/mesa/:numero/pedido', (req, res) => {
 
 // ─── SERVIR FRONTEND (SPA fallback para produção) ──────────────────────────
 
-const distPath = join(process.cwd(), "dist");
+// Pasta do frontend buildado: configurável por env (o app desktop aponta para
+// o build com base "/"). Default = ./dist relativo ao CWD (servidor web).
+const distPath = process.env.FLUXO_DIST_PATH || join(process.cwd(), "dist");
 const distIndex = join(distPath, "index.html");
 if (fs.existsSync(distIndex)) {
   app.use(express.static(distPath));
@@ -1523,6 +2117,64 @@ if (fs.existsSync(distIndex)) {
   });
 }
 
+// ─── MOTOR DE SYNC DE PEDIDOS (cozinha simultânea) ──────────────────────────
+// Quando a conexão remota está configurada (URL + token + enabled), faz pull/push
+// de pedidos a cada 5s — cozinha simultânea entre duas instalações via HTTP.
+// Mesma lógica do desktop/sync/motor.js, mas rodando inline no Express.
+let syncPedidosCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
+let syncPedidosTimer = null;
+
+function iniciarSyncPedidos() {
+  if (syncPedidosTimer) clearInterval(syncPedidosTimer);
+  syncPedidosTimer = null;
+
+  const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
+  const token = obterConfig("sync_token") || "";
+  const enabled = obterConfig("sync_enabled") === "1";
+  if (!url || !token || !enabled) return;
+
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+
+  async function tick() {
+    try {
+      // PULL — baixa pedidos novos/alterados do remoto
+      const pullUrl = `${url}/api/sync/pull?desde=${encodeURIComponent(syncPedidosCursor.pull)}`;
+      const pullR = await fetch(pullUrl, { headers, signal: AbortSignal.timeout(8000) });
+      if (pullR.ok) {
+        const { pedidos = [], cursor } = await pullR.json();
+        for (const p of pedidos) upsertPedidoSync(p);
+        if (cursor && cursor > syncPedidosCursor.pull) syncPedidosCursor.pull = cursor;
+      }
+
+      // PUSH — envia pedidos locais novos/alterados para o remoto
+      const locais = pedidosAlteradosDesde(syncPedidosCursor.push);
+      if (locais.length > 0) {
+        const pushR = await fetch(`${url}/api/sync/push`, {
+          method: "POST", headers, body: JSON.stringify({ pedidos: locais }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (pushR.ok) {
+          const novo = locais.reduce((m, p) => {
+            const t = p.updated_at || p.created_at || "";
+            return t > m ? t : m;
+          }, syncPedidosCursor.push);
+          if (novo > syncPedidosCursor.push) syncPedidosCursor.push = novo;
+        }
+      }
+    } catch { /* offline — tenta de novo no próximo tick */ }
+  }
+
+  syncPedidosTimer = setInterval(tick, 5000);
+  tick();
+  console.log(`[sync-pedidos] iniciado → ${url}`);
+}
+
+// Re-inicia o motor quando a config de sync muda
+app.post("/api/sync/reiniciar", authMiddleware, adminOnly, (_req, res) => {
+  iniciarSyncPedidos();
+  res.json({ ok: true });
+});
+
 // ─── START ──────────────────────────────────────────────────────────────────
 
 app.listen(PORT, '0.0.0.0', () => {
@@ -1535,4 +2187,7 @@ app.listen(PORT, '0.0.0.0', () => {
   } else {
     console.log(`Frontend: rode "npm run dev" ou "npm run build" para servir a interface`);
   }
+
+  // Inicia sync de pedidos automaticamente se configurado
+  try { iniciarSyncPedidos(); } catch (e) { console.error("[sync-pedidos] falha ao iniciar:", e.message); }
 });

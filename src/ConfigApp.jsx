@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { api } from "./api";
 import Lixeira from "./Lixeira";
 
+const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
+
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
 const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
 const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" };
@@ -19,8 +21,193 @@ const DIAS_SEMANA = [
 
 const NAV_TABS = [
   { key: "geral", icon: "⚙️", label: "Geral" },
+  { key: "conexao", icon: "🔗", label: "Conexão" },
   { key: "lixeira", icon: "🗑️", label: "Lixeira" },
 ];
+
+// ─── FUNCIONÁRIOS + PERMISSÕES ───────────────────────────────────────────────
+const SETORES_FUNC = [
+  { key: "produtos", icon: "🍔", label: "Produtos e Promoções" },
+  { key: "cozinha", icon: "🔥", label: "Cozinha" },
+  { key: "caixa", icon: "🍽️", label: "Frente de Caixa" },
+  { key: "estoque", icon: "📦", label: "Estoque e Insumos" },
+  { key: "financeiro", icon: "💰", label: "Financeiro" },
+  { key: "config", icon: "⚙️", label: "Configurações" },
+];
+const labelSetor = (k) => (SETORES_FUNC.find(s => s.key === k) || {}).label || k;
+
+// ─── LOGIN E ACESSO (PDV) ────────────────────────────────────────────────────
+// No PDV desktop o login nasce DESLIGADO (acesso direto). Aqui o dono ativa a
+// exigência de login e passa a controlar o acesso por funcionário. A conta da
+// Nexus continua existindo sempre (irremovível) para o suporte.
+function LoginAcessoCard({ showToast }) {
+  const [status, setStatus] = useState(null); // { login_necessario, desktop, login_ativo }
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    api.loginStatus().then(setStatus).catch(() => {});
+  }, []);
+
+  if (!status || !status.desktop) return null; // toggle só faz sentido no PDV
+
+  const alternar = async () => {
+    const novo = !status.login_ativo;
+    if (novo && !confirm("Ativar o login? A partir do próximo acesso, cada funcionário precisará entrar com email e senha. Cadastre os funcionários abaixo antes de ativar.")) return;
+    if (!novo && !confirm("Desativar o login? Qualquer pessoa com acesso ao computador poderá usar todas as seções do PDV.")) return;
+    setSalvando(true);
+    try {
+      const r = await api.loginConfig(novo);
+      setStatus(s => ({ ...s, login_ativo: r.login_ativo, login_necessario: r.login_necessario }));
+      showToast(r.login_ativo ? "Login ativado! Será exigido no próximo acesso." : "Login desativado — acesso direto liberado.");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Login e acesso ao PDV</div>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+          background: status.login_ativo ? "#dcfce7" : "#fef3c7", color: status.login_ativo ? "#16a34a" : "#92400e" }}>
+          {status.login_ativo ? "🔒 Login exigido" : "🔓 Acesso direto"}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14 }}>
+        Com o login desativado, o PDV abre direto em todas as seções. Ative para exigir email e senha
+        por funcionário (cadastre-os abaixo). A conta da Nexus permanece sempre disponível para o suporte.
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "4px 0" }}>
+        <div onClick={salvando ? undefined : alternar}
+          style={{ width: 44, height: 24, borderRadius: 12, background: status.login_ativo ? "#15803d" : "#d6d3d1",
+            position: "relative", transition: "background 0.2s", cursor: "pointer", opacity: salvando ? 0.6 : 1 }}>
+          <div style={{ position: "absolute", top: 2, left: status.login_ativo ? 22 : 2, width: 20, height: 20,
+            borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+        </div>
+        <span style={{ fontSize: 13, fontWeight: 500, color: "#1c1917" }}>
+          {salvando ? "Salvando..." : "Exigir login com email e senha"}
+        </span>
+      </label>
+    </div>
+  );
+}
+
+function FuncionariosCard({ showToast }) {
+  const meuId = (() => { try { return JSON.parse(localStorage.getItem("usuario") || "{}").id; } catch { return null; } })();
+  const [lista, setLista] = useState([]);
+  const vazia = { nome: "", email: "", senha: "", funcoes: [] };
+  const [form, setForm] = useState(vazia);
+  const [editId, setEditId] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+
+  const carregar = () => (api.funcionarios?.listar?.() || Promise.resolve([])).then(setLista).catch(() => {});
+  useEffect(() => { carregar(); }, []);
+
+  const toggleFunc = (key) => setForm(f => ({ ...f, funcoes: f.funcoes.includes(key) ? f.funcoes.filter(k => k !== key) : [...f.funcoes, key] }));
+  const cancelar = () => { setForm(vazia); setEditId(null); };
+
+  const editar = (u) => {
+    setEditId(u.id);
+    setForm({ nome: u.nome || "", email: u.email || "", senha: "", funcoes: Array.isArray(u.funcoes) ? u.funcoes : [] });
+  };
+
+  const salvar = async () => {
+    if (!form.nome.trim()) { showToast("Informe o nome", "#dc2626"); return; }
+    if (!editId && (!form.email.trim() || !form.senha)) { showToast("Email e senha são obrigatórios", "#dc2626"); return; }
+    if (form.funcoes.length === 0) { showToast("Selecione ao menos uma função", "#dc2626"); return; }
+    setSalvando(true);
+    try {
+      if (editId) {
+        const patch = { nome: form.nome.trim(), funcoes: form.funcoes };
+        if (form.senha) patch.senha = form.senha;
+        await api.funcionarios.atualizar(editId, patch);
+        showToast("Funcionário atualizado!");
+      } else {
+        await api.funcionarios.criar({ nome: form.nome.trim(), email: form.email.trim(), senha: form.senha, funcoes: form.funcoes });
+        showToast("Funcionário criado!");
+      }
+      cancelar();
+      await carregar();
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  const excluir = async (u) => {
+    if (u.id === meuId) { showToast("Você não pode remover a si mesmo", "#dc2626"); return; }
+    if (!window.confirm(`Remover o acesso de ${u.nome}?`)) return;
+    try { await api.funcionarios.excluir(u.id); await carregar(); showToast("Funcionário removido", "#7c3aed"); }
+    catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+  };
+
+  const chkBox = (ativo) => ({
+    display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, cursor: "pointer",
+    border: `1.5px solid ${ativo ? "#15803d" : "#e7e5e4"}`, background: ativo ? "#f0fdf4" : "#fff",
+    fontSize: 12.5, fontWeight: ativo ? 600 : 500, color: ativo ? "#15803d" : "#57534e",
+  });
+
+  return (
+    <div className="card">
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Funcionários e permissões</div>
+      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+        Crie acessos para a equipe definindo a senha e <b>quais setores</b> cada um pode usar.
+      </div>
+
+      {/* Formulário */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, background: "#fafaf9", border: "1px solid #e7e5e4", borderRadius: 10, padding: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#57534e" }}>{editId ? "✎ Editar funcionário" : "+ Novo funcionário"}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <input value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} placeholder="Nome" style={{ ...cfgInp, width: "100%" }} />
+          <input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="Email (login)" type="email" disabled={!!editId} style={{ ...cfgInp, width: "100%", opacity: editId ? 0.6 : 1 }} />
+        </div>
+        <input value={form.senha} onChange={e => setForm(f => ({ ...f, senha: e.target.value }))} placeholder={editId ? "Nova senha (deixe vazio para manter)" : "Senha do funcionário"} type="text" style={{ ...cfgInp, width: "100%" }} />
+
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginTop: 4 }}>FUNÇÕES QUE PODE ACESSAR</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+          {SETORES_FUNC.map(s => {
+            const ativo = form.funcoes.includes(s.key);
+            return (
+              <label key={s.key} style={chkBox(ativo)}>
+                <input type="checkbox" checked={ativo} onChange={() => toggleFunc(s.key)} style={{ accentColor: "#15803d" }} />
+                <span>{s.icon} {s.label}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button onClick={salvar} disabled={salvando} style={{ ...cfgBtn, flex: 1, opacity: salvando ? 0.6 : 1 }}>
+            {salvando ? "Salvando..." : editId ? "💾 Salvar alterações" : "+ Criar funcionário"}
+          </button>
+          {editId && <button onClick={cancelar} style={{ ...cfgInp, cursor: "pointer", fontWeight: 600, color: "#78716c", background: "#fff" }}>Cancelar</button>}
+        </div>
+      </div>
+
+      {/* Lista */}
+      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        {lista.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#a8a29e", textAlign: "center", padding: 12 }}>Nenhum funcionário cadastrado.</div>
+        ) : lista.map(u => (
+          <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", border: "1px solid #e7e5e4", borderRadius: 10, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 160 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600 }}>{u.nome} {u.id === meuId && <span style={{ fontSize: 10, color: "#15803d", fontWeight: 700 }}>(você)</span>}</div>
+              <div style={{ fontSize: 11, color: "#a8a29e" }}>{u.email}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 5 }}>
+                {u.funcoes === null ? (
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#fef3c7", color: "#92400e" }}>👑 Acesso total</span>
+                ) : (u.funcoes || []).map(k => (
+                  <span key={k} style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: "#f0fdf4", color: "#15803d" }}>{labelSetor(k)}</span>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button className="icon-btn" onClick={() => editar(u)}>✎ Editar</button>
+              {u.id !== meuId && <button className="icon-btn del" onClick={() => excluir(u)}>✕ Remover</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ─── CONFIGURAÇÕES GERAIS ────────────────────────────────────────────────────
 function GeralTab() {
@@ -34,19 +221,34 @@ function GeralTab() {
   const [horarioAberto, setHorarioAberto] = useState(false);
   const [salvandoHorario, setSalvandoHorario] = useState(false);
 
+  // Chave Pix
+  const [pixCfg, setPixCfg] = useState({ pix_key: "", pix_nome: "" });
+  const [salvandoPix, setSalvandoPix] = useState(false);
+
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
   useEffect(() => {
-    Promise.all([
-      api.adminEmails.listar(),
-      api.horario.obter(),
-    ]).then(([em, hor]) => {
-      setEmails(em);
-      const { aberto, ...cfg } = hor;
-      setHorario(cfg);
-      setHorarioAberto(aberto);
+    const promises = [api.pix.obter().catch(() => ({ pix_key: "", pix_nome: "" }))];
+    if (IS_ONLINE) promises.push(api.horario.obter());
+    else promises.push(api.adminEmails.listar());
+    Promise.all(promises).then(([pix, extra]) => {
+      setPixCfg({ pix_key: pix?.pix_key || "", pix_nome: pix?.pix_nome || "" });
+      if (IS_ONLINE) { const { aberto, ...cfg } = extra; setHorario(cfg); setHorarioAberto(aberto); }
+      else setEmails(extra);
     }).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
   }, []);
+
+  const salvarPix = async () => {
+    setSalvandoPix(true);
+    try {
+      await api.pix.salvar({ pix_key: pixCfg.pix_key.trim(), pix_nome: pixCfg.pix_nome.trim() });
+      showToast("Chave Pix salva!");
+    } catch (err) {
+      showToast("Erro: " + err.message, "#dc2626");
+    } finally {
+      setSalvandoPix(false);
+    }
+  };
 
   const salvarHorario = async (novoHorario) => {
     setSalvandoHorario(true);
@@ -97,8 +299,8 @@ function GeralTab() {
     <div className="anim">
       <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
 
-        {/* ── HORÁRIO DE FUNCIONAMENTO ───────────────────────────────── */}
-        <div className="card">
+        {/* ── HORÁRIO DE FUNCIONAMENTO (só online — PDV não controla isso) ── */}
+        {IS_ONLINE && <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
             <div style={{ fontSize: 15, fontWeight: 600 }}>Horário de Funcionamento</div>
             <span style={{
@@ -188,10 +390,45 @@ function GeralTab() {
             style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvandoHorario ? 0.6 : 1 }}>
             {salvandoHorario ? "Salvando..." : "💾 Salvar configuração"}
           </button>
+        </div>}
+
+        {/* ── DADOS DO ESTABELECIMENTO (só online) ──────────────────── */}
+        {IS_ONLINE && <EstabelecimentoCard showToast={showToast} />}
+
+        {/* ── CHAVE PIX ──────────────────────────────────────────────── */}
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Chave Pix</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+            Aparece para o cliente nos detalhes do pedido (pagamento Pix), para que ele possa pagar após finalizar.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>CHAVE PIX</label>
+              <input value={pixCfg.pix_key} onChange={e => setPixCfg(c => ({ ...c, pix_key: e.target.value }))}
+                placeholder="CPF/CNPJ, telefone, e-mail ou chave aleatória"
+                style={{ ...cfgInp, width: "100%" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>NOME DO FAVORECIDO (opcional)</label>
+              <input value={pixCfg.pix_nome} onChange={e => setPixCfg(c => ({ ...c, pix_nome: e.target.value }))}
+                placeholder="Ex: Neuza Lanches LTDA"
+                style={{ ...cfgInp, width: "100%" }} />
+            </div>
+            <button onClick={salvarPix} disabled={salvandoPix}
+              style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvandoPix ? 0.6 : 1 }}>
+              {salvandoPix ? "Salvando..." : "💾 Salvar chave Pix"}
+            </button>
+          </div>
         </div>
 
-        {/* ── ADMIN EMAILS ───────────────────────────────────────────── */}
-        <div className="card">
+        {/* ── LOGIN E ACESSO (só PDV desktop) ────────────────────────── */}
+        <LoginAcessoCard showToast={showToast} />
+
+        {/* ── FUNCIONÁRIOS + PERMISSÕES (só PDV) ─────────────────────── */}
+        {!IS_ONLINE && <FuncionariosCard showToast={showToast} />}
+
+        {/* ── ADMIN EMAILS (só PDV) ──────────────────────────────────── */}
+        {!IS_ONLINE && <div className="card">
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Convite de Administradores</div>
           <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
             Adicione emails que terao acesso admin ao se registrarem.
@@ -218,6 +455,295 @@ function GeralTab() {
                   <button onClick={() => removerEmail(e.email)} style={cfgDel}>Remover</button>
                 </div>
               ))}
+            </div>
+          )}
+        </div>}
+      </div>
+
+      {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
+    </div>
+  );
+}
+
+// ─── DADOS DO ESTABELECIMENTO (online) ──────────────────────────────────────
+function EstabelecimentoCard({ showToast }) {
+  const [cfg, setCfg] = useState({ nome_estabelecimento: "", whatsapp: "", logo: "", mensagem_alerta: "" });
+  const [salvando, setSalvando] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.config.obter()
+      .then(c => setCfg({ nome_estabelecimento: c.nome_estabelecimento || "", whatsapp: c.whatsapp || "", logo: c.logo || "", mensagem_alerta: c.mensagem_alerta || "" }))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      await api.config.salvar(cfg);
+      showToast("Dados salvos!");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  const handleFoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 3_000_000) { showToast("Imagem muito grande (máx 3 MB)", "#dc2626"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setCfg(c => ({ ...c, logo: reader.result }));
+    reader.readAsDataURL(file);
+  };
+
+  if (loading) return null;
+
+  return (
+    <div className="card">
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Dados do Estabelecimento</div>
+      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+        Nome, foto e WhatsApp aparecem no cardápio digital para o cliente.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>NOME DO ESTABELECIMENTO</label>
+          <input value={cfg.nome_estabelecimento} onChange={e => setCfg(c => ({ ...c, nome_estabelecimento: e.target.value }))}
+            placeholder="Ex: Marcos Lojo Lanches" maxLength={60} style={{ ...cfgInp, width: "100%" }} />
+        </div>
+
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>FOTO / LOGO</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {cfg.logo && <img src={cfg.logo} alt="logo" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid #e7e5e4" }} />}
+            <label style={{ ...cfgBtn, background: "#1c1917", cursor: "pointer", display: "inline-block" }}>
+              {cfg.logo ? "Trocar foto" : "Enviar foto"}
+              <input type="file" accept="image/*" onChange={handleFoto} style={{ display: "none" }} />
+            </label>
+            {cfg.logo && <button onClick={() => setCfg(c => ({ ...c, logo: "" }))} style={{ ...cfgDel }}>Remover</button>}
+          </div>
+        </div>
+
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>WHATSAPP</label>
+          <input value={cfg.whatsapp} onChange={e => setCfg(c => ({ ...c, whatsapp: e.target.value }))}
+            placeholder="(11) 99999-9999" maxLength={30} style={{ ...cfgInp, width: "100%" }} />
+          <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Aparece como ícone clicável no cardápio digital.</div>
+        </div>
+
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>MENSAGEM DE ALERTA (bot WhatsApp)</label>
+          <textarea value={cfg.mensagem_alerta} onChange={e => setCfg(c => ({ ...c, mensagem_alerta: e.target.value }))}
+            placeholder="Ex: Estamos sem troco hoje, por favor pague no Pix." maxLength={600} rows={3}
+            style={{ ...cfgInp, width: "100%", resize: "vertical", minHeight: 60 }} />
+          <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
+            Quando preenchida, o bot envia esta mensagem junto à saudação. Deixe vazio para desativar.
+          </div>
+        </div>
+
+        <button onClick={salvar} disabled={salvando}
+          style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvando ? 0.6 : 1 }}>
+          {salvando ? "Salvando..." : "💾 Salvar dados"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── CONEXÃO / SYNC ─────────────────────────────────────────────────────────
+function ConexaoTab() {
+  const [cfg, setCfg] = useState({ url: "", token: "", enabled: false, last_sync: null, last_sync_result: null });
+  const [loading, setLoading] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+  const [testando, setTestando] = useState(false);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [toast, setToast] = useState("");
+  const [testResult, setTestResult] = useState(null);
+  const [meuToken, setMeuToken] = useState("");
+  const [gerandoToken, setGerandoToken] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+
+  const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 3000); };
+
+  useEffect(() => {
+    api.sync.config().then(c => setCfg(c)).catch(() => {}).finally(() => setLoading(false));
+    api.sync.meuToken().then(r => setMeuToken(r.token)).catch(() => {});
+  }, []);
+
+  const copiarMeuToken = async () => {
+    try {
+      await navigator.clipboard.writeText(meuToken);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    } catch { showToast("Não foi possível copiar", "#dc2626"); }
+  };
+
+  const gerarNovoToken = async () => {
+    if (!confirm("Gerar um novo token invalida o token anterior — qualquer PDV conectado a este vai precisar colar o novo token. Continuar?")) return;
+    setGerandoToken(true);
+    try {
+      const r = await api.sync.regenerarMeuToken();
+      setMeuToken(r.token);
+      showToast("Novo token gerado!");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setGerandoToken(false); }
+  };
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      const r = await api.sync.salvar({ url: cfg.url, token: cfg.token, enabled: cfg.enabled });
+      setCfg(c => ({ ...c, ...r }));
+      showToast("Configuração salva!");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  const testar = async () => {
+    setTestando(true);
+    setTestResult(null);
+    try {
+      const r = await api.sync.testar();
+      setTestResult({ ok: true, nome: r.nome });
+      showToast("Conexão OK!");
+    } catch (e) {
+      setTestResult({ ok: false, erro: e.message });
+      showToast("Falha na conexão", "#dc2626");
+    }
+    finally { setTestando(false); }
+  };
+
+  const sincronizar = async () => {
+    setSincronizando(true);
+    try {
+      const r = await api.sync.enviarProdutos();
+      const agora = new Date().toISOString();
+      setCfg(c => ({ ...c, last_sync: agora, last_sync_result: `${r.produtos?.inserido || 0}+${r.produtos?.atualizado || 0} prod, ${r.categorias?.inserido || 0}+${r.categorias?.atualizado || 0} cat, ${r.adicionais?.inserido || 0}+${r.adicionais?.atualizado || 0} adic` }));
+      showToast("Catálogo sincronizado!");
+    } catch (e) {
+      showToast("Erro: " + e.message, "#dc2626");
+    }
+    finally { setSincronizando(false); }
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
+
+  const statusBadge = (ok, label) => (
+    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+      background: ok ? "#dcfce7" : "#fee2e2", color: ok ? "#16a34a" : "#dc2626" }}>{label}</span>
+  );
+
+  return (
+    <div className="anim">
+      <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
+
+        {/* Token que esta instalação expõe para outros PDVs se conectarem a ela */}
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Token desta plataforma</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14 }}>
+            Cole este token no campo "Token de autenticação" de outro PDV para que ele consiga enviar o catálogo pra cá.
+            Diferente do login, este token não expira — só muda se você gerar um novo.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input readOnly value={meuToken} onFocus={e => e.target.select()}
+              style={{ ...cfgInp, flex: 1, fontFamily: "monospace", fontSize: 12, background: "#fafaf9" }} />
+            <button onClick={copiarMeuToken} disabled={!meuToken}
+              style={{ ...cfgBtn, background: copiado ? "#15803d" : "#1c1917", opacity: meuToken ? 1 : 0.5, whiteSpace: "nowrap" }}>
+              {copiado ? "✅ Copiado" : "📋 Copiar"}
+            </button>
+            <button onClick={gerarNovoToken} disabled={gerandoToken}
+              style={{ ...cfgBtn, background: "#b91c1c", opacity: gerandoToken ? 0.6 : 1, whiteSpace: "nowrap" }}>
+              {gerandoToken ? "Gerando..." : "🔁 Gerar novo"}
+            </button>
+          </div>
+        </div>
+
+        {/* Formulário de conexão */}
+        <div className="card">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>Conexão com servidor remoto</div>
+            {statusBadge(cfg.enabled, cfg.enabled ? "🟢 Ativo" : "🔴 Desativado")}
+          </div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 18 }}>
+            Configure a URL e o token de autenticação do servidor online para sincronizar produtos, categorias e adicionais.
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>URL DO SERVIDOR</label>
+              <input value={cfg.url} onChange={e => setCfg(c => ({ ...c, url: e.target.value }))}
+                placeholder="https://meu-servidor.com" style={{ ...cfgInp, width: "100%" }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>TOKEN DE AUTENTICAÇÃO</label>
+              <input value={cfg.token} onChange={e => setCfg(c => ({ ...c, token: e.target.value }))}
+                placeholder="Cole aqui o 'Token desta plataforma' copiado do servidor remoto" type="password" style={{ ...cfgInp, width: "100%" }} />
+            </div>
+
+            {/* Toggle ativar */}
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "8px 0" }}>
+              <div onClick={() => setCfg(c => ({ ...c, enabled: !c.enabled }))}
+                style={{ width: 44, height: 24, borderRadius: 12, background: cfg.enabled ? "#15803d" : "#d6d3d1",
+                  position: "relative", transition: "background 0.2s", cursor: "pointer" }}>
+                <div style={{ position: "absolute", top: 2, left: cfg.enabled ? 22 : 2, width: 20, height: 20,
+                  borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 500, color: "#1c1917" }}>Sincronização ativada</span>
+            </label>
+
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={salvar} disabled={salvando}
+                style={{ ...cfgBtn, flex: 1, opacity: salvando ? 0.6 : 1 }}>
+                {salvando ? "Salvando..." : "💾 Salvar"}
+              </button>
+              <button onClick={testar} disabled={testando || !cfg.url}
+                style={{ ...cfgBtn, flex: 1, background: "#1c1917", opacity: (testando || !cfg.url) ? 0.5 : 1 }}>
+                {testando ? "Testando..." : "🔌 Testar conexão"}
+              </button>
+            </div>
+          </div>
+
+          {/* Resultado do teste */}
+          {testResult && (
+            <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 8,
+              background: testResult.ok ? "#f0fdf4" : "#fef2f2",
+              border: `1px solid ${testResult.ok ? "#bbf7d0" : "#fecaca"}` }}>
+              {testResult.ok ? (
+                <div style={{ fontSize: 12.5, color: "#15803d" }}>
+                  ✅ Conectado com sucesso — <b>{testResult.nome}</b>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12.5, color: "#dc2626" }}>
+                  ❌ {testResult.erro}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Sincronização manual */}
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Sincronizar catálogo</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+            Envia todos os produtos, categorias e adicionais do PDV local para o servidor remoto (sobrescreve por ID).
+          </div>
+
+          {cfg.last_sync && (
+            <div style={{ fontSize: 12, color: "#78716c", marginBottom: 12, padding: "8px 12px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" }}>
+              <div><b>Última sync:</b> {new Date(cfg.last_sync).toLocaleString("pt-BR")}</div>
+              {cfg.last_sync_result && <div style={{ marginTop: 4 }}>{cfg.last_sync_result}</div>}
+            </div>
+          )}
+
+          <button onClick={sincronizar} disabled={sincronizando || !cfg.url || !cfg.token}
+            style={{ ...cfgBtn, width: "100%", padding: 11, background: "#15803d",
+              opacity: (sincronizando || !cfg.url || !cfg.token) ? 0.5 : 1 }}>
+            {sincronizando ? "Sincronizando..." : "🔄 Sincronizar agora"}
+          </button>
+
+          {(!cfg.url || !cfg.token) && (
+            <div style={{ fontSize: 11, color: "#a8a29e", textAlign: "center", marginTop: 8 }}>
+              Configure a URL e o token acima antes de sincronizar.
             </div>
           )}
         </div>
@@ -282,6 +808,7 @@ export default function ConfigApp({ onNavegar }) {
       {/* Content */}
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
         {aba === "geral" && <GeralTab />}
+        {aba === "conexao" && <ConexaoTab />}
         {aba === "lixeira" && <Lixeira />}
       </div>
     </div>

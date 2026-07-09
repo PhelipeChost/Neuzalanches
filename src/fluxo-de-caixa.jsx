@@ -9,6 +9,56 @@ const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "O
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
+// CMV legado: vendas antigas geravam um lançamento de SAÍDA "CMV". O CMV agora
+// vive embutido na venda (campo custo) e no DRE — fora do feed/caixa.
+const ehCMVLegado = (l) => l.tipo === "saida" && l.cat === "CMV";
+
+// Ícone do feed por natureza do lançamento
+function iconeLanc(l) {
+  if (l.tipo === "entrada") return l.cat === "Vendas" ? "🧾" : "⬇️";
+  const c = (l.cat || "").toLowerCase();
+  if (c.includes("folha")) return "👤";
+  if (c.includes("fornecedor")) return "📦";
+  if (c.includes("aluguel")) return "🏠";
+  if (c.includes("imposto")) return "🧾";
+  if (c.includes("marketing")) return "📣";
+  if (c.includes("empréstimo") || c.includes("emprestimo")) return "🏦";
+  return "💸";
+}
+
+// Determina a "categoria visual" do ícone (cores do modelo)
+function classeIconeLanc(l) {
+  if (l.tipo === "entrada") return l.cat === "Vendas" ? "ns-ic-venda" : "ns-ic-prev";
+  const c = (l.cat || "").toLowerCase();
+  if (c.includes("folha"))      return "ns-ic-folha";
+  if (c.includes("fornecedor")) return "ns-ic-forn";
+  if (c.includes("empréstimo") || c.includes("emprestimo")) return "ns-ic-emp";
+  return "ns-ic-saida";
+}
+
+// Linha do feed: venda + custo + margem em UMA linha (item 1 do briefing)
+function LancRow({ l, onClick }) {
+  const pos = l.tipo === "entrada";
+  const margem = (l.custo != null && l.valor > 0) ? ((l.valor - l.custo) / l.valor) * 100 : null;
+  return (
+    <div className="ns-lanc" onClick={onClick} style={{ cursor: onClick ? "pointer" : "default" }}>
+      <div className={`ic ${classeIconeLanc(l)}`}>{iconeLanc(l)}</div>
+      <div className="mid">
+        <div className="nm" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.descricao}</div>
+        <div className="meta">
+          <span className="mtag">{l.cat}</span>
+          <span>{l.data.split("-").reverse().join("/")}</span>
+          {l.status === "previsto" && <span className="ns-chip warn" style={{ fontSize: 10 }}>previsto</span>}
+        </div>
+      </div>
+      <div className="right">
+        <div className={`vv ${pos ? "pos" : "neg"}`}>{pos ? "+" : "−"}{fmt(l.valor)}</div>
+        {margem != null && <div className="marg">custo {fmt(l.custo)} · margem {margem.toFixed(0)}%</div>}
+      </div>
+    </div>
+  );
+}
+
 // ─── COMPONENTES AUXILIARES ────────────────────────────────────────────────────
 function Badge({ tipo }) {
   if (tipo === "entrada") return <span style={{ background: "#dcfce7", color: "#15803d", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>Entrada</span>;
@@ -30,19 +80,23 @@ function MiniBar({ pct, cor }) {
 
 function GraficoBarras({ dados }) {
   const max = Math.max(...dados.map(d => Math.max(d.entrada, d.saida)), 1);
-  const W = 520, H = 140, barW = 28, gap = 52;
+  const W = 520, H = 140, barW = 26, margin = 24;
+  const n = dados.length;
+  const colW = barW * 2 + 4;
+  const step = n > 1 ? (W - margin * 2 - colW) / (n - 1) : 0;
 
   return (
     <svg viewBox={`0 0 ${W} ${H + 30}`} style={{ width: "100%", maxWidth: W }}>
       {dados.map((d, i) => {
-        const x = 20 + i * gap;
+        const x = margin + i * step;
         const hE = (d.entrada / max) * H;
         const hS = (d.saida / max) * H;
         return (
           <g key={d.mes}>
-            <rect x={x} y={H - hE} width={barW * 0.9} height={hE} rx={3} fill="#16a34a" opacity={0.85} />
-            <rect x={x + barW} y={H - hS} width={barW * 0.9} height={hS} rx={3} fill="#dc2626" opacity={0.75} />
-            <text x={x + barW * 0.9} y={H + 18} textAnchor="middle" fontSize={10} fill="#a8a29e" fontFamily="DM Sans, sans-serif">{d.mes}</text>
+            {d.atual && <rect x={x - 9} y={0} width={colW + 18} height={H + 6} rx={9} fill="#f5f5f4" />}
+            <rect x={x} y={H - hE} width={barW} height={hE} rx={4} fill="#16a34a" opacity={0.9} />
+            <rect x={x + barW + 4} y={H - hS} width={barW} height={hS} rx={4} fill="#dc2626" opacity={0.8} />
+            <text x={x + barW + 2} y={H + 19} textAnchor="middle" fontSize={11} fill={d.atual ? "#1c1917" : "#a8a29e"} fontWeight={d.atual ? 700 : 500} fontFamily="Inter, sans-serif">{d.mes}</text>
           </g>
         );
       })}
@@ -118,59 +172,132 @@ function GraficoDonut({ valor1, valor2, label1, label2, cor1 = "#2563eb", cor2 =
 }
 
 // ─── MODAL DE LANÇAMENTO ───────────────────────────────────────────────────────
-function ModalLancamento({ onSave, onClose, editando }) {
+function ModalLancamento({ onSave, onCreateEmprestimo, onClose, editando, categoriasFin = [] }) {
+  // Modo: simples (entrada/saída) ou emprestimo (gera parcelas previstas)
+  const [modo, setModo] = useState("simples");
   const [form, setForm] = useState(editando || { tipo: "entrada", descricao: "", valor: "", data: new Date().toISOString().split("T")[0], cat: "Vendas", status: "realizado", obs: "" });
+  // Campos extras do empréstimo
+  const [emp, setEmp] = useState({ n_parcelas: 6, juros_pct: 3, dia_pagamento: new Date().getDate() });
   const [salvando, setSalvando] = useState(false);
-  const cats = form.tipo === "entrada" ? CATEGORIAS_ENTRADA : CATEGORIAS_SAIDA;
+
+  // Categorias: prioriza as do CRUD (filtradas por tipo). Se vazio, cai nas constantes legadas.
+  const cats = (() => {
+    const cruDoTipo = categoriasFin.filter(c => !c.arquivada && (c.tipo === "ambos" || c.tipo === form.tipo)).map(c => c.nome);
+    if (cruDoTipo.length > 0) {
+      // Garante que a categoria atual (mesmo legada) ainda aparece na lista
+      if (form.cat && !cruDoTipo.includes(form.cat)) return [form.cat, ...cruDoTipo];
+      return cruDoTipo;
+    }
+    return form.tipo === "entrada" ? CATEGORIAS_ENTRADA : CATEGORIAS_SAIDA;
+  })();
+
+  // Preview ao vivo das parcelas
+  const previewParcelas = (() => {
+    const v = parseFloat(form.valor) || 0;
+    const n = Math.max(1, Math.min(360, parseInt(emp.n_parcelas, 10) || 1));
+    const j = (parseFloat(emp.juros_pct) || 0) / 100;
+    const total = j > 0 ? v * Math.pow(1 + j, n) : v;
+    const parcela = total / n;
+    return { v, n, j, total, parcela };
+  })();
 
   const salvar = async () => {
+    if (modo === "emprestimo") {
+      const v = parseFloat(form.valor);
+      if (!form.descricao || !v || v <= 0) return;
+      setSalvando(true);
+      try {
+        await onCreateEmprestimo({
+          descricao: form.descricao,
+          valor: v,
+          data: form.data,
+          cat: form.cat,
+          juros_pct: parseFloat(emp.juros_pct) || 0,
+          n_parcelas: parseInt(emp.n_parcelas, 10) || 1,
+          dia_pagamento: parseInt(emp.dia_pagamento, 10) || new Date(form.data).getDate(),
+        });
+        onClose();
+      } catch { setSalvando(false); }
+      return;
+    }
+
     if (!form.descricao || !form.valor || !form.data) return;
     setSalvando(true);
     try {
       await onSave({ ...form, valor: parseFloat(form.valor) });
       onClose();
-    } catch {
-      setSalvando(false);
-    }
+    } catch { setSalvando(false); }
   };
 
+  // Se está editando, não permite trocar pra empréstimo (cria fluxo só na criação)
+  const podeEmprestimo = !editando;
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 480, boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "24px 26px", width: 520, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 500 }}>{editando ? "Editar" : "Novo"} Lançamento</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e", lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-          {["entrada", "saida"].map(t => (
-            <button key={t} onClick={() => setForm({ ...form, tipo: t, cat: t === "entrada" ? "Vendas" : "Fornecedores" })}
-              style={{ flex: 1, padding: "9px", border: `2px solid ${form.tipo === t ? (t === "entrada" ? "#15803d" : "#dc2626") : "#e7e5e4"}`, borderRadius: 8, background: form.tipo === t ? (t === "entrada" ? "#f0fdf4" : "#fef2f2") : "#fff", color: form.tipo === t ? (t === "entrada" ? "#15803d" : "#dc2626") : "#78716c", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", transition: "all 0.15s" }}>
-              {t === "entrada" ? "↑ Entrada" : "↓ Saída"}
+        {/* Seletor de tipo: entrada / saída / empréstimo */}
+        {podeEmprestimo && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 18 }}>
+            <button onClick={() => { setModo("simples"); setForm(f => ({ ...f, tipo: "entrada", cat: "Vendas" })); }}
+              style={{ padding: 11, border: `2px solid ${modo === "simples" && form.tipo === "entrada" ? "#15803d" : "#e7e5e4"}`, borderRadius: 10, background: modo === "simples" && form.tipo === "entrada" ? "#f0fdf4" : "#fff", color: modo === "simples" && form.tipo === "entrada" ? "#15803d" : "#78716c", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+              <div style={{ fontSize: 16 }}>⬇️</div>
+              <div style={{ marginTop: 3 }}>Entrada</div>
             </button>
-          ))}
-        </div>
+            <button onClick={() => { setModo("simples"); setForm(f => ({ ...f, tipo: "saida", cat: "Fornecedores" })); }}
+              style={{ padding: 11, border: `2px solid ${modo === "simples" && form.tipo === "saida" ? "#dc2626" : "#e7e5e4"}`, borderRadius: 10, background: modo === "simples" && form.tipo === "saida" ? "#fef2f2" : "#fff", color: modo === "simples" && form.tipo === "saida" ? "#dc2626" : "#78716c", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+              <div style={{ fontSize: 16 }}>⬆️</div>
+              <div style={{ marginTop: 3 }}>Saída</div>
+            </button>
+            <button onClick={() => { setModo("emprestimo"); setForm(f => ({ ...f, tipo: "entrada", cat: "Empréstimo" })); }}
+              style={{ padding: 11, border: `2px solid ${modo === "emprestimo" ? "#7C5CFC" : "#e7e5e4"}`, borderRadius: 10, background: modo === "emprestimo" ? "#EFEBFE" : "#fff", color: modo === "emprestimo" ? "#5b3df1" : "#78716c", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+              <div style={{ fontSize: 16 }}>🏦</div>
+              <div style={{ marginTop: 3 }}>Empréstimo</div>
+            </button>
+          </div>
+        )}
+
+        {/* Toggle entrada/saida — só quando editando ou modo simples (e não é hub de tipos) */}
+        {editando && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+            {["entrada", "saida"].map(t => (
+              <button key={t} onClick={() => setForm({ ...form, tipo: t, cat: t === "entrada" ? "Vendas" : "Fornecedores" })}
+                style={{ flex: 1, padding: "9px", border: `2px solid ${form.tipo === t ? (t === "entrada" ? "#15803d" : "#dc2626") : "#e7e5e4"}`, borderRadius: 8, background: form.tipo === t ? (t === "entrada" ? "#f0fdf4" : "#fef2f2") : "#fff", color: form.tipo === t ? (t === "entrada" ? "#15803d" : "#dc2626") : "#78716c", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                {t === "entrada" ? "↑ Entrada" : "↓ Saída"}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {[["Descrição", "text", "descricao", "Ex: Pagamento cliente X"], ["Valor (R$)", "number", "valor", "0,00"]].map(([label, type, key, ph]) => (
-            <div key={key}>
-              <label style={lbl}>{label}</label>
-              <input style={inp} type={type} placeholder={ph} value={form[key]} onChange={e => setForm({ ...form, [key]: e.target.value })} />
-            </div>
-          ))}
+          <div>
+            <label style={lbl}>Descrição</label>
+            <input style={inp} type="text" placeholder={modo === "emprestimo" ? "Ex: Empréstimo capital de giro" : "Ex: Pagamento cliente X"}
+              value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} />
+          </div>
+          <div>
+            <label style={lbl}>{modo === "emprestimo" ? "Valor recebido (R$)" : "Valor (R$)"}</label>
+            <input style={inp} type="number" step="0.01" placeholder="0,00" value={form.valor} onChange={e => setForm({ ...form, valor: e.target.value })} />
+          </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
             <div>
               <label style={lbl}>Data</label>
               <input style={inp} type="date" value={form.data} onChange={e => setForm({ ...form, data: e.target.value })} />
             </div>
-            <div>
-              <label style={lbl}>Status</label>
-              <select style={inp} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
-                <option value="realizado">Realizado</option>
-                <option value="previsto">Previsto</option>
-              </select>
-            </div>
+            {modo !== "emprestimo" && (
+              <div>
+                <label style={lbl}>Status</label>
+                <select style={inp} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
+                  <option value="realizado">Realizado</option>
+                  <option value="previsto">Previsto</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div>
@@ -180,16 +307,74 @@ function ModalLancamento({ onSave, onClose, editando }) {
             </select>
           </div>
 
-          <div>
-            <label style={lbl}>Observação (opcional)</label>
-            <input style={inp} placeholder="Notas adicionais..." value={form.obs} onChange={e => setForm({ ...form, obs: e.target.value })} />
-          </div>
+          {modo !== "emprestimo" && (
+            <div>
+              <label style={lbl}>Observação (opcional)</label>
+              <input style={inp} placeholder="Notas adicionais..." value={form.obs} onChange={e => setForm({ ...form, obs: e.target.value })} />
+            </div>
+          )}
+
+          {/* Bloco do empréstimo inteligente */}
+          {modo === "emprestimo" && (
+            <div style={{ background: "#EFEBFE", border: "1px solid #DDD3FD", borderRadius: 12, padding: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, color: "#5b3df1", fontWeight: 700, fontSize: 13 }}>
+                🧠 A plataforma gera N saídas previstas automaticamente
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+                <div>
+                  <label style={lbl}>Nº DE PARCELAS</label>
+                  <input style={inp} type="number" min="1" max="360" value={emp.n_parcelas}
+                    onChange={e => setEmp(s => ({ ...s, n_parcelas: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={lbl}>JUROS A.M. (%)</label>
+                  <input style={inp} type="number" step="0.01" min="0" value={emp.juros_pct}
+                    onChange={e => setEmp(s => ({ ...s, juros_pct: e.target.value }))} />
+                </div>
+                <div>
+                  <label style={lbl}>DIA DO PAGTO</label>
+                  <input style={inp} type="number" min="1" max="28" value={emp.dia_pagamento}
+                    onChange={e => setEmp(s => ({ ...s, dia_pagamento: e.target.value }))} />
+                </div>
+              </div>
+              {previewParcelas.v > 0 && (
+                <div style={{ background: "#fff", border: "1px solid #DDD3FD", borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ fontSize: 11, color: "#5b3df1", fontWeight: 700, letterSpacing: "0.05em", marginBottom: 6 }}>PRÉVIA DAS PARCELAS</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 130, overflowY: "auto" }}>
+                    {Array.from({ length: Math.min(previewParcelas.n, 6) }).map((_, i) => (
+                      <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "3px 0" }}>
+                        <span style={{ color: "#78716c" }}>Parcela {i + 1}/{previewParcelas.n}</span>
+                        <span style={{ fontWeight: 700, color: "#1c1917" }}>{fmt(previewParcelas.parcela)}</span>
+                      </div>
+                    ))}
+                    {previewParcelas.n > 6 && (
+                      <div style={{ textAlign: "center", color: "#a8a29e", fontSize: 11 }}>… +{previewParcelas.n - 6} parcelas</div>
+                    )}
+                  </div>
+                  <div style={{ borderTop: "1px dashed #DDD3FD", marginTop: 8, paddingTop: 8, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                    <span style={{ color: "#78716c" }}>Total com juros:</span>
+                    <span style={{ fontWeight: 800, color: "#5b3df1" }}>{fmt(previewParcelas.total)}</span>
+                  </div>
+                </div>
+              )}
+              <div style={{ marginTop: 10, fontSize: 11, color: "#5b3df1", lineHeight: 1.45 }}>
+                💡 Cada parcela vira <b>saída prevista</b> no mês certo. Você pode editar uma parcela individualmente
+                quando pagar (com juros/desconto) e o saldo se ajusta sozinho.
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
           <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
-          <button onClick={salvar} disabled={salvando} style={{ flex: 2, padding: 11, background: form.tipo === "entrada" ? "#15803d" : "#dc2626", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
-            {salvando ? "Salvando..." : editando ? "Salvar alterações" : "Registrar lançamento"}
+          <button onClick={salvar} disabled={salvando}
+            style={{ flex: 2, padding: 11,
+              background: modo === "emprestimo" ? "#7C5CFC" : (form.tipo === "entrada" ? "#15803d" : "#dc2626"),
+              border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600,
+              cursor: salvando ? "wait" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: salvando ? 0.7 : 1 }}>
+            {salvando ? "Salvando..." : modo === "emprestimo"
+              ? `🏦 Gerar empréstimo + ${parseInt(emp.n_parcelas, 10) || 0} parcelas`
+              : editando ? "Salvar alterações" : "Registrar lançamento"}
           </button>
         </div>
       </div>
@@ -233,6 +418,102 @@ function ModalSaldoInicial({ valorAtual, onSave, onClose }) {
 
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
 const inp = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
+
+// ─── EDITOR DE CATEGORIAS (chips com dot + nome + ×, igual ao modelo) ────────
+function CategoriasEditor({ categorias, onCriar, onAtualizar, onExcluir }) {
+  const [criando, setCriando] = useState(false);
+  const [novoNome, setNovoNome] = useState("");
+  const [novoCor, setNovoCor] = useState("#7C5CFC");
+  const [novoTipo, setNovoTipo] = useState("ambos");
+  const [editandoId, setEditandoId] = useState(null);
+  const [editNome, setEditNome] = useState("");
+  const [editCor, setEditCor] = useState("");
+
+  const CORES = ["#15A056", "#F2741A", "#7C5CFC", "#2D6FE8", "#E03B3B", "#0F7A41", "#E879A6", "#9AA3B0"];
+
+  const salvarNova = async () => {
+    if (!novoNome.trim()) return;
+    try {
+      await onCriar({ nome: novoNome.trim(), cor: novoCor, tipo: novoTipo });
+      setNovoNome(""); setCriando(false);
+    } catch {}
+  };
+
+  const salvarEdicao = async (id) => {
+    if (!editNome.trim()) return;
+    await onAtualizar(id, { nome: editNome.trim(), cor: editCor });
+    setEditandoId(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        {categorias.filter(c => !c.arquivada).map(c => (
+          editandoId === c.id ? (
+            <div key={c.id} className="ns-cat" style={{ padding: "5px 8px", gap: 6 }}>
+              <input type="color" value={editCor} onChange={e => setEditCor(e.target.value)}
+                style={{ width: 22, height: 22, border: "none", padding: 0, background: "transparent", cursor: "pointer" }} />
+              <input type="text" value={editNome} onChange={e => setEditNome(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") salvarEdicao(c.id); if (e.key === "Escape") setEditandoId(null); }}
+                autoFocus
+                style={{ border: "1px solid var(--linha)", borderRadius: 6, padding: "3px 8px", fontSize: 12.5, fontFamily: "var(--font-ui)", outline: "none", width: 120 }} />
+              <button onClick={() => salvarEdicao(c.id)}
+                style={{ background: "var(--verde)", color: "#fff", border: "none", borderRadius: 6, padding: "3px 8px", fontSize: 11, cursor: "pointer", fontWeight: 600 }}>✓</button>
+              <button onClick={() => setEditandoId(null)}
+                style={{ background: "transparent", color: "var(--ink3)", border: "none", borderRadius: 6, padding: "3px 6px", fontSize: 14, cursor: "pointer" }}>×</button>
+            </div>
+          ) : (
+            <div key={c.id} className="ns-cat">
+              <span className="dot" style={{ background: c.cor || "#78716c" }} />
+              <span>{c.nome}</span>
+              <span style={{ fontSize: 10, color: "var(--ink3)", fontWeight: 500, marginLeft: 2 }}>
+                {c.tipo === "entrada" ? "↓" : c.tipo === "saida" ? "↑" : "↕"}
+              </span>
+              <button className="x" title="Editar"
+                onClick={() => { setEditandoId(c.id); setEditNome(c.nome); setEditCor(c.cor || "#78716c"); }}
+                style={{ fontSize: 10 }}>✎</button>
+              <button className="x" title="Remover" onClick={() => onExcluir(c.id)}>×</button>
+            </div>
+          )
+        ))}
+        {!criando && (
+          <button className="ns-cat-add" onClick={() => setCriando(true)}>+ Nova categoria</button>
+        )}
+      </div>
+
+      {criando && (
+        <div style={{ background: "var(--card2)", border: "1px solid var(--linha)", borderRadius: 10, padding: 12, display: "grid", gridTemplateColumns: "1fr 1fr auto auto", gap: 10, alignItems: "center" }}>
+          <input
+            value={novoNome} onChange={e => setNovoNome(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") salvarNova(); if (e.key === "Escape") setCriando(false); }}
+            placeholder="Nome da categoria" autoFocus
+            style={{ border: "1px solid var(--linha)", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontFamily: "var(--font-ui)", outline: "none", color: "var(--ink)" }}
+          />
+          <select value={novoTipo} onChange={e => setNovoTipo(e.target.value)}
+            style={{ border: "1px solid var(--linha)", borderRadius: 8, padding: "8px 10px", fontSize: 13, fontFamily: "var(--font-ui)", outline: "none", color: "var(--ink)", background: "#fff" }}>
+            <option value="ambos">Entrada e saída</option>
+            <option value="entrada">Só entrada</option>
+            <option value="saida">Só saída</option>
+          </select>
+          <div style={{ display: "flex", gap: 4 }}>
+            {CORES.map(c => (
+              <button key={c} onClick={() => setNovoCor(c)} title={c}
+                style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: novoCor === c ? "2px solid var(--ink)" : "2px solid transparent", cursor: "pointer" }} />
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={salvarNova} style={{ background: "var(--verde)", color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-ui)" }}>Criar</button>
+            <button onClick={() => { setCriando(false); setNovoNome(""); }} className="ns-btn-ghost">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {categorias.filter(c => !c.arquivada).length === 0 && !criando && (
+        <div className="ns-muted" style={{ fontSize: 12, marginTop: 6 }}>Nenhuma categoria cadastrada ainda.</div>
+      )}
+    </div>
+  );
+}
 
 // ─── COMPONENTES DRE ──────────────────────────────────────────────────────────
 function lubroBrutoColor(v) { return v >= 0 ? "#15803d" : "#dc2626"; }
@@ -306,6 +587,7 @@ export default function FluxoCaixa() {
   const [lancamentos, setLancamentos] = useState([]);
   const [pedidos, setPedidos] = useState([]);
   const [custosFixosList, setCustosFixosList] = useState([]);
+  const [categoriasFin, setCategoriasFin] = useState([]); // categorias editáveis (CRUD)
   const [saldoInicial, setSaldoInicial] = useState(0);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
@@ -327,22 +609,48 @@ export default function FluxoCaixa() {
   // ─── CARREGAR DADOS DO BANCO ───────────────────────────────────────────────
   const carregarDados = useCallback(async () => {
     try {
-      const [lancs, config, peds, custos] = await Promise.all([
+      const [lancs, config, peds, custos, cats] = await Promise.all([
         api.lancamentos.listar(),
         api.config.obter(),
         api.pedidos.listar(),
         api.custosFixos.listar(),
+        api.categoriasFinanceiro.listar().catch(() => []),
       ]);
       setLancamentos(lancs);
       setSaldoInicial(config.saldo_inicial);
       setPedidos(peds);
       setCustosFixosList(custos);
+      setCategoriasFin(cats);
     } catch (err) {
       showToast("Erro ao carregar dados: " + err.message, "#dc2626");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // CRUD de categorias financeiras (usado na aba Lançamentos)
+  const criarCategoriaFin = async (dados) => {
+    try {
+      const nova = await api.categoriasFinanceiro.criar(dados);
+      setCategoriasFin(cs => [...cs, nova]);
+      showToast("Categoria criada!");
+      return nova;
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); throw err; }
+  };
+  const atualizarCategoriaFin = async (id, dados) => {
+    try {
+      const upd = await api.categoriasFinanceiro.atualizar(id, dados);
+      setCategoriasFin(cs => cs.map(c => c.id === id ? upd : c));
+      showToast("Categoria atualizada!");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
+  const excluirCategoriaFin = async (id) => {
+    try {
+      await api.categoriasFinanceiro.excluir(id);
+      setCategoriasFin(cs => cs.filter(c => c.id !== id));
+      showToast("Categoria removida.", "#7c3aed");
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
 
   useEffect(() => { carregarDados(); }, [carregarDados]);
 
@@ -364,13 +672,32 @@ export default function FluxoCaixa() {
   // Filtrar por mês selecionado
   const lancamentosMes = useMemo(() => lancamentos.filter(l => l.data.startsWith(mesSel)), [lancamentos, mesSel]);
 
-  // Métricas do mês
-  const entradas = useMemo(() => lancamentosMes.filter(l => l.tipo === "entrada").reduce((s, l) => s + l.valor, 0), [lancamentosMes]);
-  const saidas = useMemo(() => lancamentosMes.filter(l => l.tipo === "saida").reduce((s, l) => s + l.valor, 0), [lancamentosMes]);
+  // Caixa: exclui lançamentos legados de CMV (agora embutido na venda + DRE)
+  const lancamentosCaixa = useMemo(() => lancamentosMes.filter(l => !ehCMVLegado(l)), [lancamentosMes]);
+
+  // Métricas do mês (movimento de caixa, sem CMV)
+  const entradas = useMemo(() => lancamentosCaixa.filter(l => l.tipo === "entrada").reduce((s, l) => s + l.valor, 0), [lancamentosCaixa]);
+  const saidas = useMemo(() => lancamentosCaixa.filter(l => l.tipo === "saida").reduce((s, l) => s + l.valor, 0), [lancamentosCaixa]);
   const saldoMes = entradas - saidas;
-  const entradasRealizadas = useMemo(() => lancamentosMes.filter(l => l.tipo === "entrada" && l.status === "realizado").reduce((s, l) => s + l.valor, 0), [lancamentosMes]);
-  const saidasRealizadas = useMemo(() => lancamentosMes.filter(l => l.tipo === "saida" && l.status === "realizado").reduce((s, l) => s + l.valor, 0), [lancamentosMes]);
+  const entradasRealizadas = useMemo(() => lancamentosCaixa.filter(l => l.tipo === "entrada" && l.status === "realizado").reduce((s, l) => s + l.valor, 0), [lancamentosCaixa]);
+  const saidasRealizadas = useMemo(() => lancamentosCaixa.filter(l => l.tipo === "saida" && l.status === "realizado").reduce((s, l) => s + l.valor, 0), [lancamentosCaixa]);
   const saldoAtual = saldoInicial + entradasRealizadas - saidasRealizadas;
+  const resultadoMes = entradasRealizadas - saidasRealizadas;
+  const margemResultado = entradasRealizadas > 0 ? (resultadoMes / entradasRealizadas) * 100 : 0;
+
+  // Variação de entradas vs. mês anterior (chip do KPI "Entrou no mês")
+  const entradasMesAnterior = useMemo(() => {
+    const [ano, mes] = mesSel.split("-").map(Number);
+    let m = mes - 1, a = ano; if (m < 1) { m += 12; a--; }
+    const key = `${a}-${String(m).padStart(2, "0")}`;
+    return lancamentos.filter(l => l.data.startsWith(key) && l.tipo === "entrada" && l.status === "realizado" && !ehCMVLegado(l)).reduce((s, l) => s + l.valor, 0);
+  }, [lancamentos, mesSel]);
+  const varEntradasPct = entradasMesAnterior > 0 ? Math.round(((entradasRealizadas - entradasMesAnterior) / entradasMesAnterior) * 100) : null;
+  const mesAnteriorLabel = (() => {
+    const [, mes] = mesSel.split("-").map(Number);
+    let m = mes - 1; if (m < 1) m += 12;
+    return MESES[m - 1].toLowerCase();
+  })();
 
   // ─── CMV & INDICADORES DO MÊS (baseado em pedidos entregues) ────────────────
   const pedidosMes = useMemo(() => pedidos.filter(p => p.status === "entregue" && p.created_at && p.created_at.startsWith(mesSel)), [pedidos, mesSel]);
@@ -417,14 +744,14 @@ export default function FluxoCaixa() {
     });
   }, [pedidos, mesSel]);
 
-  // Filtros da listagem
-  const lancamentosFiltrados = useMemo(() => lancamentosMes.filter(l => {
+  // Filtros da listagem (sobre o caixa — CMV legado fica fora do feed/tabela)
+  const lancamentosFiltrados = useMemo(() => lancamentosCaixa.filter(l => {
     if (filtroTipo !== "todos" && l.tipo !== filtroTipo) return false;
     if (filtroStatus !== "todos" && l.status !== filtroStatus) return false;
     if (filtroCat !== "todas" && l.cat !== filtroCat) return false;
     if (busca && !l.descricao.toLowerCase().includes(busca.toLowerCase())) return false;
     return true;
-  }).sort((a, b) => new Date(b.data) - new Date(a.data)), [lancamentosMes, filtroTipo, filtroStatus, filtroCat, busca]);
+  }).sort((a, b) => new Date(b.data) - new Date(a.data)), [lancamentosCaixa, filtroTipo, filtroStatus, filtroCat, busca]);
 
   // Categorias do mês
   const categorias = useMemo(() => {
@@ -462,11 +789,12 @@ export default function FluxoCaixa() {
       meses.push(`${a}-${String(m).padStart(2, "0")}`);
     }
     return meses.map(m => {
-      const ls = lancamentos.filter(l => l.data.startsWith(m));
+      const ls = lancamentos.filter(l => l.data.startsWith(m) && !ehCMVLegado(l));
       return {
         mes: MESES[parseInt(m.split("-")[1]) - 1],
         entrada: ls.filter(l => l.tipo === "entrada").reduce((s, l) => s + l.valor, 0),
         saida: ls.filter(l => l.tipo === "saida").reduce((s, l) => s + l.valor, 0),
+        atual: m === mesSel,
       };
     });
   }, [lancamentos, mesSel]);
@@ -499,6 +827,20 @@ export default function FluxoCaixa() {
       setEditando(null);
     } catch (err) {
       showToast("Erro ao salvar: " + err.message, "#dc2626");
+      throw err;
+    }
+  };
+
+  // Cria empréstimo: gera 1 entrada (recebimento) + N saídas previstas (parcelas)
+  const criarEmprestimo = async (dados) => {
+    try {
+      await api.emprestimo.criar(dados);
+      // Recarrega todos os lançamentos (parcelas geradas no servidor)
+      const todos = await api.lancamentos.listar();
+      setLancamentos(todos);
+      showToast(`Empréstimo registrado! ${dados.n_parcelas} parcelas previstas geradas.`);
+    } catch (err) {
+      showToast("Erro ao criar empréstimo: " + err.message, "#dc2626");
       throw err;
     }
   };
@@ -588,107 +930,131 @@ export default function FluxoCaixa() {
 
   return (
     <div className="anim">
-      {/* Sub-navegação financeira + controles */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 10 }}>
-        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", width: "100%", maxWidth: 900 }}>
-          {nav.map(n => (
-            <button key={n.key} className={`nav-pill ${tab === n.key ? "active" : ""}`} onClick={() => setTab(n.key)}>{n.label}</button>
-          ))}
+      {/* Sub-navegação (estilo modelo: branco com borda, tab.on = preto) */}
+      <div className="ns-tabs">
+        {nav.map(n => (
+          <button key={n.key} className={`ns-tab ${tab === n.key ? "on" : ""}`} onClick={() => setTab(n.key)}>{n.label}</button>
+        ))}
+      </div>
+
+      {/* Controles: mês + botão laranja */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
+        <div className="ns-mes-sel">
+          <span style={{ color: "var(--ink3)", fontSize: 12, fontWeight: 500 }}>Mês:</span>
+          <input type="month" value={mesSel} onChange={e => setMesSel(e.target.value)} />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 12, color: "#a8a29e" }}>Mês:</span>
-            <input type="month" className="mes-sel" value={mesSel} onChange={e => setMesSel(e.target.value)} />
-          </div>
-          <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24" }}>
-            <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo lançamento
-          </button>
-        </div>
+        <button className="ns-btn-novo" onClick={() => { setEditando(null); setModal(true); }}>
+          <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo lançamento
+        </button>
       </div>
 
         {/* ── VISÃO GERAL ──────────────────────────────────────────────────── */}
         {tab === "visao-geral" && (
           <div className="anim">
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
-              <div className="saldo-card">
-                <div style={{ fontSize: 11, opacity: 0.75, fontWeight: 600, letterSpacing: "0.08em", marginBottom: 10 }}>SALDO ATUAL</div>
-                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 34, fontWeight: 600, lineHeight: 1 }}>{fmt(saldoAtual)}</div>
-                <div style={{ fontSize: 11, opacity: 0.6, marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                  Saldo inicial: {fmt(saldoInicial)}
-                  <button className="saldo-edit-btn" onClick={() => setModalSaldo(true)}>Editar</button>
+            {/* KPIs (estilo modelo: hero verde/vermelho + 3 secundários) */}
+            <div className="ns-kpis">
+              {/* HERO — Resultado do mês (sign-aware) */}
+              <div className={`ns-kpi hero ${resultadoMes < 0 ? "neg" : ""}`}>
+                <div className="lab">Resultado do mês</div>
+                <div className="val">{resultadoMes >= 0 ? "+" : "−"}{fmt(Math.abs(resultadoMes))}</div>
+                <div className="sub">
+                  {entradasRealizadas > 0 ? `margem de ${margemResultado.toFixed(1).replace(".", ",")}% sobre o que entrou` : "sem entradas no mês"}
                 </div>
-                <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                  <GraficoLinha pontos={saldoDiario} cor="#86efac" />
-                  <span style={{ fontSize: 12, opacity: 0.8 }}>{saldoDiario.length} movimentos realizados</span>
+                <div className="spark" style={{ background: "rgba(255,255,255,0.25)" }}>
+                  <i style={{ background: "#fff", width: `${Math.min(Math.abs(margemResultado), 100)}%` }} />
                 </div>
               </div>
 
-              {[
-                { label: "ENTRADAS NO MÊS", valor: entradas, sub: `${fmt(entradasRealizadas)} realizados`, cor: "#15803d", pct: entradas > 0 ? 100 : 0 },
-                { label: "SAÍDAS NO MÊS", valor: saidas, sub: `${fmt(saidasRealizadas)} realizados`, cor: "#dc2626", pct: entradas > 0 ? Math.round((saidas / entradas) * 100) : 0 },
-                { label: "RESULTADO DO MÊS", valor: saldoMes, sub: saldoMes >= 0 ? "Superávit" : "Déficit", cor: saldoMes >= 0 ? "#15803d" : "#dc2626", pct: entradas > 0 ? Math.abs(Math.round((saldoMes / entradas) * 100)) : 0 },
-              ].map(m => (
-                <div key={m.label} className="metric">
-                  <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{m.label}</div>
-                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 24, fontWeight: 500, color: m.cor, lineHeight: 1 }}>{fmt(m.valor)}</div>
-                  <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6 }}>{m.sub}</div>
-                  <MiniBar pct={m.pct} cor={m.cor} />
+              {/* Entrou no mês */}
+              <div className="ns-kpi">
+                <div className="pic" style={{ background: "var(--verde-bg)", color: "var(--verde-d)" }}>↓</div>
+                <div className="lab">Entrou no mês</div>
+                <div className="val">{fmt(entradasRealizadas)}</div>
+                <div className="sub">
+                  {varEntradasPct != null && (
+                    <span className={`ns-chip ${varEntradasPct >= 0 ? "up" : "down"}`}>{varEntradasPct >= 0 ? "+" : ""}{varEntradasPct}%</span>
+                  )}
+                  vs. {mesAnteriorLabel}
                 </div>
-              ))}
+              </div>
+
+              {/* Saiu no mês */}
+              <div className="ns-kpi">
+                <div className="pic" style={{ background: "var(--vermelho-bg)", color: "var(--vermelho-d)" }}>↑</div>
+                <div className="lab">Saiu no mês</div>
+                <div className="val">{fmt(saidasRealizadas)}</div>
+                <div className="sub ns-muted">fornecedores, folha e despesas</div>
+              </div>
+
+              {/* Saldo em caixa */}
+              <div className="ns-kpi">
+                <div className="pic" style={{ background: "var(--azul-bg)", color: "var(--azul)" }}>≈</div>
+                <div className="lab">Saldo em caixa</div>
+                <div className="val" style={{ color: saldoAtual >= 0 ? "var(--verde-d)" : "var(--vermelho-d)" }}>{fmt(saldoAtual)}</div>
+                <div className="sub ns-muted">
+                  inicial {fmt(saldoInicial)}
+                  <button onClick={() => setModalSaldo(true)}
+                    style={{ background: "var(--card2)", border: "1px solid var(--linha)", borderRadius: 6, padding: "2px 9px", fontSize: 11, color: "var(--ink2)", cursor: "pointer", fontFamily: "var(--font-ui)", fontWeight: 500, marginLeft: 6 }}>
+                    Editar
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, marginBottom: 14 }}>
-              <div className="card">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>Entradas × Saídas</div>
-                  <div style={{ display: "flex", gap: 14, fontSize: 11, color: "#78716c" }}>
-                    <span><span style={{ display: "inline-block", width: 8, height: 8, background: "#16a34a", borderRadius: 2, marginRight: 4 }} />Entradas</span>
-                    <span><span style={{ display: "inline-block", width: 8, height: 8, background: "#dc2626", borderRadius: 2, marginRight: 4 }} />Saídas</span>
-                  </div>
+            {/* Gráfico + últimos lançamentos (lado a lado, vira 1 col em mobile) */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 13, marginBottom: 14 }}>
+              <div className="ns-panel" style={{ minWidth: 0 }}>
+                <div className="ns-panel-h">
+                  <h3>Entradas × Saídas</h3>
+                  <span className="ns-muted" style={{ fontSize: 12 }}>últimos 6 meses</span>
+                </div>
+                <div style={{ display: "flex", gap: 16, fontSize: 12, color: "var(--ink2)", marginBottom: 4 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: "var(--verde)" }} />Entrou</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, borderRadius: 3, background: "var(--vermelho)" }} />Saiu</span>
                 </div>
                 <GraficoBarras dados={dadosGrafico} />
               </div>
 
-              <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                <div style={{ padding: "16px 18px", borderBottom: "1px solid #f5f5f4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>Últimos lançamentos</div>
-                  <button onClick={() => setTab("lancamentos")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#15803d", fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>Ver todos →</button>
+              <div className="ns-panel" style={{ minWidth: 0 }}>
+                <div className="ns-panel-h">
+                  <h3>Últimos lançamentos</h3>
+                  <button className="ns-panel-link" onClick={() => setTab("lancamentos")}>Ver todos →</button>
                 </div>
-                {lancamentosMes.length === 0 ? (
-                  <div style={{ padding: "32px 0", textAlign: "center", color: "#a8a29e", fontSize: 13 }}>
+                {lancamentosCaixa.length === 0 ? (
+                  <div className="ns-muted" style={{ padding: "24px 0", textAlign: "center", fontSize: 13 }}>
                     Nenhum lançamento neste mês.
                   </div>
-                ) : [...lancamentosMes].sort((a, b) => new Date(b.data) - new Date(a.data)).slice(0, 5).map(l => (
-                  <div key={l.id} className="row-item" onClick={() => { setEditando(l); setModal(true); }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: l.tipo === "entrada" ? "#15803d" : "#dc2626", flexShrink: 0 }} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.descricao}</div>
-                      <div style={{ fontSize: 10, color: "#a8a29e" }}>{l.data.split("-").reverse().join("/")} · {l.cat}</div>
-                    </div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: l.tipo === "entrada" ? "#15803d" : "#dc2626", flexShrink: 0 }}>
-                      {l.tipo === "entrada" ? "+" : "-"}{fmt(l.valor)}
-                    </div>
+                ) : (
+                  <div className="ns-lanc-list">
+                    {[...lancamentosCaixa].sort((a, b) => new Date(b.data) - new Date(a.data)).slice(0, 5).map(l => (
+                      <LancRow key={l.id} l={l} onClick={() => { setEditando(l); setModal(true); }} />
+                    ))}
                   </div>
-                ))}
+                )}
+                <div className="ns-nota" style={{ marginTop: 14 }}>
+                  <span>💡</span>
+                  <span><b>Venda + custo viraram uma linha só.</b> Você vê o que entrou e a margem ao lado — sem o CMV repetido. O CMV continua no DRE.</span>
+                </div>
               </div>
             </div>
 
-            {/* Alertas */}
+            {/* Alerta de previstos */}
             {(() => {
               const previstos = lancamentosMes.filter(l => l.status === "previsto");
               const entradasPrev = previstos.filter(l => l.tipo === "entrada").reduce((s, l) => s + l.valor, 0);
               const saidasPrev = previstos.filter(l => l.tipo === "saida").reduce((s, l) => s + l.valor, 0);
               if (previstos.length === 0) return null;
               return (
-                <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: 12, padding: "14px 18px", display: "flex", gap: 12, alignItems: "center" }}>
+                <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: 12, padding: "14px 18px", display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                   <span style={{ fontSize: 18 }}>⚠</span>
-                  <div style={{ flex: 1 }}>
+                  <div style={{ flex: 1, minWidth: 220 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "#92400e" }}>{previstos.length} lançamentos previstos ainda não realizados</div>
                     <div style={{ fontSize: 12, color: "#b45309", marginTop: 2 }}>
                       {fmt(entradasPrev)} em entradas e {fmt(saidasPrev)} em saídas aguardando confirmação.
                     </div>
                   </div>
-                  <button onClick={() => { setTab("lancamentos"); setFiltroStatus("previsto"); }} style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 7, padding: "6px 14px", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#92400e" }}>
+                  <button onClick={() => { setTab("lancamentos"); setFiltroStatus("previsto"); }}
+                    style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 7, padding: "6px 14px", fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "var(--font-ui)", color: "#92400e" }}>
                     Revisar previstos
                   </button>
                 </div>
@@ -700,185 +1066,105 @@ export default function FluxoCaixa() {
         {/* ── DRE ─────────────────────────────────────────────────────────── */}
         {tab === "dre" && (
           <div className="anim">
-            {/* Título do DRE */}
-            <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "#1c1917" }}>
-                Demonstração do Resultado — {MESES[parseInt(mesSel.split("-")[1]) - 1]}/{mesSel.split("-")[0]}
+            <div className="ns-panel">
+              <div className="ns-panel-h">
+                <h3>DRE — {MESES[parseInt(mesSel.split("-")[1]) - 1]} de {mesSel.split("-")[0]}</h3>
+                <span className="ns-muted" style={{ fontSize: 12 }}>de cima pra baixo: o caminho do dinheiro</span>
               </div>
-              <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 3 }}>
-                Resultado automático baseado nos pedidos entregues e custos fixos cadastrados.
+
+              {(() => {
+                const pctDe = (v) => receitaVendas > 0 ? (v / receitaVendas) * 100 : 0;
+                const rotuloPct = (v) => receitaVendas > 0 ? `${pctDe(v).toFixed(0)}% da receita` : "—";
+                const linhas = [
+                  { nome: "Receita com vendas",      desc: `${pedidosMes.length} pedido${pedidosMes.length !== 1 ? "s" : ""} entregue${pedidosMes.length !== 1 ? "s" : ""}`, valor: receitaVendas,    sinal: "+", pct: 100,                  barLabel: `${fmt(receitaVendas)}`, barColor: "var(--verde)",   valClass: "up" },
+                  { nome: "(−) Custo das mercadorias", desc: "CMV — o que você pagou no que vendeu", valor: cmvTotal,         sinal: "−", pct: pctDe(cmvTotal),      barLabel: rotuloPct(cmvTotal),    barColor: "var(--laranja)", valClass: "down" },
+                  { nome: "= Lucro bruto",           desc: "sobrou antes das despesas",            valor: lucroBruto,       sinal: "",  pct: pctDe(lucroBruto),    barLabel: rotuloPct(lucroBruto),  barColor: "var(--verde-d)", valClass: lucroBruto >= 0 ? "up" : "down" },
+                  { nome: "(−) Despesas do mês",     desc: "folha, aluguel, luz, taxas…",          valor: totalCustosFixos, sinal: "−", pct: pctDe(totalCustosFixos), barLabel: rotuloPct(totalCustosFixos), barColor: "var(--vermelho)", valClass: "down" },
+                ];
+                return linhas.map(r => (
+                  <div key={r.nome} className="ns-dre-row">
+                    <div className="dnm">
+                      {r.nome}
+                      <small>{r.desc}</small>
+                    </div>
+                    <div className="ns-dre-bar-wrap">
+                      <div className="ns-dre-bar" style={{ width: `${Math.max(0, Math.min(r.pct, 100))}%`, background: r.barColor }}>{r.barLabel}</div>
+                    </div>
+                    <div className={`dval ${r.valClass}`}>{r.sinal} {fmt(Math.abs(r.valor))}</div>
+                  </div>
+                ));
+              })()}
+
+              {/* Resultado (total) — estilo modelo (.dre-row.total) */}
+              <div className="ns-dre-row total">
+                <div className="dnm">
+                  Resultado (lucro de verdade)
+                  <small style={{ color: lucroLiquido >= 0 ? "var(--verde-d)" : "var(--vermelho-d)", fontWeight: 600 }}>
+                    margem de {margemLiquida.toFixed(1).replace(".", ",")}%
+                  </small>
+                </div>
+                <div className="ns-dre-bar-wrap">
+                  <div className="ns-dre-bar" style={{ width: `${Math.max(0, Math.min(Math.abs(margemLiquida), 100))}%`, background: lucroLiquido >= 0 ? "var(--verde-d)" : "var(--vermelho-d)" }} />
+                </div>
+                <div className={`dval ${lucroLiquido >= 0 ? "up" : "down"}`}>{lucroLiquido >= 0 ? "+ " : "− "}{fmt(Math.abs(lucroLiquido))}</div>
+              </div>
+
+              <div className="ns-nota" style={{ marginTop: 14 }}>
+                <span>💡</span>
+                <span>Cada linha tem uma <b>barra proporcional</b> — bate o olho e entende. A margem do resultado aparece destacada. O CMV continua aqui na contabilidade, mesmo fora do feed.</span>
               </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 16, alignItems: "start" }}>
-
-              {/* ── COLUNA PRINCIPAL: DRE ── */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-
-                {/* Receita Bruta */}
-                <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderRadius: "12px 12px 0 0", padding: "20px 24px", borderBottom: "none" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 4 }}>RECEITA BRUTA DE VENDAS</div>
-                      <div style={{ fontSize: 11, color: "#78716c" }}>{pedidosMes.length} pedido{pedidosMes.length !== 1 ? "s" : ""} entregue{pedidosMes.length !== 1 ? "s" : ""}</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 26, fontWeight: 700, color: "#15803d" }}>{fmt(receitaVendas)}</div>
-                      <div style={{ fontSize: 11, color: "#a8a29e" }}>100%</div>
+            {/* ── Detalhe dos custos fixos + diagnóstico (responsivo) ── */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 13, marginTop: 13 }}>
+              <div className="card" style={{ padding: "16px 18px" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 12, letterSpacing: "0.06em" }}>DESPESAS DO MÊS POR CATEGORIA</div>
+                {custosFixosPorCat.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {custosFixosPorCat.map(([cat, val]) => (
+                      <div key={cat} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "#fafaf9", borderRadius: 7 }}>
+                        <span style={{ fontSize: 12.5, color: "#57534e" }}>{cat}</span>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: "#78716c" }}>{fmt(val)}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", marginTop: 2, borderTop: "1px solid #f0efed" }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: "#1c1917" }}>Total de despesas</span>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: "#dc2626" }}>{fmt(totalCustosFixos)}</span>
                     </div>
                   </div>
-                  <div style={{ marginTop: 12, height: 6, background: "#f0fdf4", borderRadius: 3 }}>
-                    <div style={{ width: "100%", height: "100%", background: "#15803d", borderRadius: 3 }} />
+                ) : (
+                  <div style={{ fontSize: 12, color: "#a8a29e", fontStyle: "italic" }}>
+                    Nenhum custo fixo ativo. Configure na aba "Custos Fixos".
                   </div>
-                </div>
-
-                {/* CMV */}
-                <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderLeft: "1px solid #e7e5e4", borderRight: "1px solid #e7e5e4", padding: "16px 24px", borderBottom: "none" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 11, color: "#78716c", fontWeight: 500 }}>
-                        <span style={{ color: "#dc2626", fontWeight: 700, marginRight: 6 }}>(−)</span>
-                        Custo das Mercadorias Vendidas (CMV)
-                      </div>
-                      <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 2 }}>Custo de produção dos pedidos entregues</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#dc2626" }}>− {fmt(cmvTotal)}</div>
-                      <div style={{ fontSize: 11, color: "#a8a29e" }}>{receitaVendas > 0 ? ((cmvTotal / receitaVendas) * 100).toFixed(1) : 0}% da receita</div>
-                    </div>
-                  </div>
-                  {receitaVendas > 0 && (
-                    <div style={{ marginTop: 10, height: 4, background: "#f5f5f4", borderRadius: 2 }}>
-                      <div style={{ width: `${Math.min((cmvTotal / receitaVendas) * 100, 100)}%`, height: "100%", background: "#fca5a5", borderRadius: 2 }} />
-                    </div>
-                  )}
-                </div>
-
-                {/* Lucro Bruto */}
-                <div style={{ background: lucroBruto >= 0 ? "#f0fdf4" : "#fef2f2", border: "2px solid " + (lucroBruto >= 0 ? "#86efac" : "#fecaca"), padding: "18px 24px", borderBottom: "none" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 10, color: "#15803d", fontWeight: 700, letterSpacing: "0.08em", marginBottom: 2 }}>(=) LUCRO BRUTO</div>
-                      <div style={{ fontSize: 11, color: "#57534e" }}>Receita após dedução do CMV</div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: lucroBruto >= 0 ? "#15803d" : "#dc2626" }}>{fmt(lucroBruto)}</div>
-                      <div style={{ background: lucroBruto >= 0 ? "#dcfce7" : "#fee2e2", color: lubroBrutoColor(lucroBruto), padding: "2px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, display: "inline-block", marginTop: 2 }}>
-                        Margem {margemBruta.toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Custos Fixos — cabeçalho */}
-                <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderTop: "none", padding: "16px 24px 0", borderBottom: "none" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: custosFixosPorCat.length > 0 ? 12 : 0 }}>
-                    <div>
-                      <div style={{ fontSize: 11, color: "#78716c", fontWeight: 500 }}>
-                        <span style={{ color: "#dc2626", fontWeight: 700, marginRight: 6 }}>(−)</span>
-                        Custos Fixos Mensais
-                      </div>
-                      <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 2 }}>
-                        {custosFixosList.filter(c => c.ativo).length} custo{custosFixosList.filter(c => c.ativo).length !== 1 ? "s" : ""} fixo{custosFixosList.filter(c => c.ativo).length !== 1 ? "s" : ""} ativo{custosFixosList.filter(c => c.ativo).length !== 1 ? "s" : ""}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 600, color: "#dc2626" }}>− {fmt(totalCustosFixos)}</div>
-                      <div style={{ fontSize: 11, color: "#a8a29e" }}>{receitaVendas > 0 ? ((totalCustosFixos / receitaVendas) * 100).toFixed(1) : "—"}% da receita</div>
-                    </div>
-                  </div>
-
-                  {/* Breakdown por categoria */}
-                  {custosFixosPorCat.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 16 }}>
-                      {custosFixosPorCat.map(([cat, val]) => (
-                        <div key={cat} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: "#fafaf9", borderRadius: 6 }}>
-                          <span style={{ fontSize: 12, color: "#57534e" }}>{cat}</span>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: "#78716c" }}>{fmt(val)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {custosFixosPorCat.length === 0 && (
-                    <div style={{ padding: "12px 0 16px", fontSize: 12, color: "#a8a29e", fontStyle: "italic" }}>
-                      Nenhum custo fixo ativo cadastrado. Acesse a aba "Custos Fixos" para configurar.
-                    </div>
-                  )}
-                </div>
-
-                {/* Lucro Líquido */}
-                <div style={{ background: lucroLiquido >= 0 ? "linear-gradient(135deg, #15803d 0%, #166534 100%)" : "linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)", borderRadius: "0 0 12px 12px", padding: "22px 24px", color: "#fff" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", opacity: 0.85, marginBottom: 4 }}>(=) LUCRO LÍQUIDO REAL</div>
-                      <div style={{ fontSize: 12, opacity: 0.75 }}>
-                        {lucroLiquido >= 0 ? "Resultado positivo no mês ✓" : "Resultado negativo — despesas superam a receita"}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{fmt(lucroLiquido)}</div>
-                      <div style={{ background: "rgba(255,255,255,0.2)", padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, marginTop: 6, display: "inline-block" }}>
-                        Margem {margemLiquida.toFixed(1)}%
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* ── COLUNA LATERAL: CARDS + WATERFALL ── */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-
-                {/* KPI cards */}
-                {[
-                  { label: "Receita Bruta", valor: receitaVendas, cor: "#15803d", bg: "#f0fdf4", pct: 100, desc: "das vendas" },
-                  { label: "CMV", valor: cmvTotal, cor: "#f59e0b", bg: "#fffbeb", pct: receitaVendas > 0 ? (cmvTotal / receitaVendas) * 100 : 0, desc: "da receita" },
-                  { label: "Lucro Bruto", valor: lucroBruto, cor: lucroBruto >= 0 ? "#15803d" : "#dc2626", bg: lucroBruto >= 0 ? "#f0fdf4" : "#fef2f2", pct: receitaVendas > 0 ? (lucroBruto / receitaVendas) * 100 : 0, desc: "da receita" },
-                  { label: "Custos Fixos", valor: totalCustosFixos, cor: "#dc2626", bg: "#fef2f2", pct: receitaVendas > 0 ? (totalCustosFixos / receitaVendas) * 100 : 0, desc: "da receita" },
-                  { label: "Lucro Líquido", valor: lucroLiquido, cor: lucroLiquido >= 0 ? "#15803d" : "#dc2626", bg: lucroLiquido >= 0 ? "#f0fdf4" : "#fef2f2", pct: receitaVendas > 0 ? (lucroLiquido / receitaVendas) * 100 : 0, desc: "da receita", destaque: true },
-                ].map(k => (
-                  <div key={k.label} className="card" style={{ padding: "14px 18px", background: k.destaque ? undefined : "#fff", border: k.destaque ? "2px solid " + k.cor : undefined }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                      <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.07em" }}>{k.label.toUpperCase()}</div>
-                      <div style={{ background: k.bg, color: k.cor, padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
-                        {k.pct.toFixed(1)}%
-                      </div>
-                    </div>
-                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: k.cor }}>{fmt(k.valor)}</div>
-                    <div style={{ marginTop: 8, height: 4, background: "#f5f5f4", borderRadius: 2 }}>
-                      <div style={{ width: `${Math.min(Math.abs(k.pct), 100)}%`, height: "100%", background: k.cor, borderRadius: 2, opacity: 0.7, transition: "width 0.8s" }} />
-                    </div>
+              <div className="card" style={{ padding: "16px 18px", background: "#fafaf9" }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 12, letterSpacing: "0.06em" }}>DIAGNÓSTICO</div>
+                {receitaVendas === 0 ? (
+                  <div style={{ fontSize: 12, color: "#a8a29e" }}>Sem pedidos entregues neste mês.</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <DiagItem
+                      ok={margemBruta >= 50}
+                      warn={margemBruta >= 30}
+                      label="Margem Bruta"
+                      desc={margemBruta >= 50 ? "Excelente (≥50%)" : margemBruta >= 30 ? "Boa (≥30%)" : "Baixa — revise o CMV"}
+                    />
+                    <DiagItem
+                      ok={margemLiquida >= 20}
+                      warn={margemLiquida >= 5}
+                      label="Margem Líquida"
+                      desc={margemLiquida >= 20 ? "Excelente (≥20%)" : margemLiquida >= 5 ? "Moderada (≥5%)" : margemLiquida < 0 ? "Negativa — prejuízo" : "Baixa — reduza custos fixos"}
+                    />
+                    <DiagItem
+                      ok={totalCustosFixos / receitaVendas <= 0.3}
+                      warn={totalCustosFixos / receitaVendas <= 0.5}
+                      label="Peso dos Fixos"
+                      desc={totalCustosFixos / receitaVendas <= 0.3 ? "Controlado (≤30% da receita)" : totalCustosFixos / receitaVendas <= 0.5 ? "Moderado (≤50%)" : "Alto (>50% da receita)"}
+                    />
                   </div>
-                ))}
-
-                {/* Diagnóstico */}
-                <div className="card" style={{ padding: "14px 18px", background: "#fafaf9" }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 10 }}>DIAGNÓSTICO</div>
-                  {receitaVendas === 0 ? (
-                    <div style={{ fontSize: 12, color: "#a8a29e" }}>Sem pedidos entregues neste mês.</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      <DiagItem
-                        ok={margemBruta >= 50}
-                        warn={margemBruta >= 30}
-                        label="Margem Bruta"
-                        desc={margemBruta >= 50 ? "Excelente (≥50%)" : margemBruta >= 30 ? "Boa (≥30%)" : "Baixa — revise o CMV"}
-                      />
-                      <DiagItem
-                        ok={margemLiquida >= 20}
-                        warn={margemLiquida >= 5}
-                        label="Margem Líquida"
-                        desc={margemLiquida >= 20 ? "Excelente (≥20%)" : margemLiquida >= 5 ? "Moderada (≥5%)" : margemLiquida < 0 ? "Negativa — prejuízo" : "Baixa — reduza custos fixos"}
-                      />
-                      <DiagItem
-                        ok={totalCustosFixos / receitaVendas <= 0.3}
-                        warn={totalCustosFixos / receitaVendas <= 0.5}
-                        label="Peso dos Fixos"
-                        desc={totalCustosFixos / receitaVendas <= 0.3 ? "Controlado (≤30% da receita)" : totalCustosFixos / receitaVendas <= 0.5 ? "Moderado (≤50%)" : "Alto (>50% da receita)"}
-                      />
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             </div>
           </div>
@@ -1172,6 +1458,20 @@ export default function FluxoCaixa() {
         {/* ── LANÇAMENTOS ──────────────────────────────────────────────────── */}
         {tab === "lancamentos" && (
           <div className="anim">
+            {/* Painel: Categorias editáveis (CRUD) */}
+            <div className="ns-panel ns-mb12">
+              <div className="ns-panel-h">
+                <h3>Categorias</h3>
+                <span className="ns-muted" style={{ fontSize: 12 }}>crie, edite ou remova as suas categorias de lançamento</span>
+              </div>
+              <CategoriasEditor
+                categorias={categoriasFin}
+                onCriar={criarCategoriaFin}
+                onAtualizar={atualizarCategoriaFin}
+                onExcluir={excluirCategoriaFin}
+              />
+            </div>
+
             <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
               <input className="search" placeholder="Buscar lançamento..." value={busca} onChange={e => setBusca(e.target.value)} />
               <div style={{ display: "flex", gap: 6 }}>
@@ -1186,7 +1486,13 @@ export default function FluxoCaixa() {
               </div>
               <select className="fil" value={filtroCat} onChange={e => setFiltroCat(e.target.value)} style={{ cursor: "pointer" }}>
                 <option value="todas">Todas categorias</option>
-                {[...CATEGORIAS_ENTRADA, ...CATEGORIAS_SAIDA].filter((v, i, a) => a.indexOf(v) === i).map(c => <option key={c}>{c}</option>)}
+                {/* Categorias do CRUD (preferidas) + qualquer categoria legada que ainda aparece em lançamentos antigos */}
+                {(() => {
+                  const fromCrud = categoriasFin.filter(c => !c.arquivada).map(c => c.nome);
+                  const fromLegado = [...CATEGORIAS_ENTRADA, ...CATEGORIAS_SAIDA];
+                  const todas = [...new Set([...fromCrud, ...fromLegado])].sort();
+                  return todas.map(c => <option key={c}>{c}</option>);
+                })()}
               </select>
               <div style={{ flex: 1 }} />
               <div style={{ fontSize: 12, color: "#a8a29e" }}>{lancamentosFiltrados.length} registros</div>
@@ -1210,7 +1516,9 @@ export default function FluxoCaixa() {
                   <div style={{ fontSize: 12, color: "#78716c" }}>{l.data.split("-").reverse().join("/")}</div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 500 }}>{l.descricao}</div>
-                    {l.obs && <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 1 }}>{l.obs}</div>}
+                    {l.custo != null && l.valor > 0
+                      ? <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 1 }}>custo {fmt(l.custo)} · margem {(((l.valor - l.custo) / l.valor) * 100).toFixed(0)}%</div>
+                      : l.obs && <div style={{ fontSize: 10, color: "#a8a29e", marginTop: 1 }}>{l.obs}</div>}
                   </div>
                   <div style={{ fontSize: 12, color: "#57534e" }}>{l.cat}</div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: l.tipo === "entrada" ? "#15803d" : "#dc2626" }}>
@@ -1393,7 +1701,7 @@ export default function FluxoCaixa() {
         )}
 
       {/* MODAL LANÇAMENTO */}
-      {modal && <ModalLancamento onSave={salvarLancamento} onClose={() => { setModal(false); setEditando(null); }} editando={editando} />}
+      {modal && <ModalLancamento onSave={salvarLancamento} onCreateEmprestimo={criarEmprestimo} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categoriasFin={categoriasFin} />}
 
       {/* MODAL SALDO INICIAL */}
       {modalSaldo && <ModalSaldoInicial valorAtual={saldoInicial} onSave={salvarSaldoInicial} onClose={() => setModalSaldo(false)} />}

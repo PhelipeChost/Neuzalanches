@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nexus PDV — Licença</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { background: #0d0f14; color: #e7e9ee; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 28px; }
+  .card { width: 100%; max-width: 540px; }
+  .logo { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
+  .logo span { color: #7c5cfc; }
+  .sub { color: #9aa3b0; font-size: 13.5px; margin-bottom: 22px; }
+  .alerta { background: rgba(224,59,59,.12); border: 1px solid rgba(224,59,59,.4); color: #ffb4b4; border-radius: 12px; padding: 13px 15px; font-size: 13.5px; line-height: 1.5; margin-bottom: 20px; }
+  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #9aa3b0; text-transform: uppercase; margin-bottom: 7px; }
+  textarea { width: 100%; height: 120px; resize: vertical; background: #161922; border: 1.5px solid #2a2f3a; border-radius: 12px; color: #e7e9ee; padding: 12px 14px; font-family: 'Consolas', monospace; font-size: 12px; outline: none; }
+  textarea:focus { border-color: #7c5cfc; }
+  input.chave { width: 100%; background: #161922; border: 1.5px solid #2a2f3a; border-radius: 12px; color: #e7e9ee; padding: 13px 15px; font-family: 'Consolas', monospace; font-size: 15px; letter-spacing: 1px; text-transform: uppercase; outline: none; }
+  input.chave:focus { border-color: #7c5cfc; }
+  .sep { display: flex; align-items: center; gap: 12px; color: #5b626e; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; margin: 26px 0 16px; }
+  .sep::before, .sep::after { content: ""; flex: 1; height: 1px; background: #222732; }
+  .row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  button { border: none; border-radius: 10px; padding: 12px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .primary { background: #7c5cfc; color: #fff; flex: 1; }
+  .primary:hover { background: #6a49f2; }
+  .ghost { background: #161922; color: #cfd4dd; border: 1.5px solid #2a2f3a; }
+  .ghost:hover { border-color: #3a4150; }
+  .msg { margin-top: 14px; font-size: 13px; min-height: 18px; }
+  .msg.err { color: #ff8f8f; }
+  .msg.ok { color: #4ade80; }
+  .fp { margin-top: 26px; background: #12141b; border: 1px solid #222732; border-radius: 12px; padding: 14px 16px; }
+  .fp h4 { font-size: 12px; color: #9aa3b0; font-weight: 700; margin-bottom: 8px; }
+  .fp .code { display: flex; align-items: center; gap: 10px; }
+  .fp code { flex: 1; background: #0d0f14; border: 1px solid #222732; border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: #b9c0cc; word-break: break-all; }
+  .fp .hint { font-size: 11.5px; color: #727a86; margin-top: 9px; line-height: 1.5; }
+  .foot { margin-top: 18px; font-size: 11.5px; color: #5b626e; text-align: center; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Nexus <span>PDV</span></div>
+  <div class="sub">Ativação de licença</div>
+
+  <div class="alerta" id="alerta">Verificando licença…</div>
+
+  <label>Chave de licença</label>
+  <input class="chave" id="chave" placeholder="NXS-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false" />
+  <div class="row">
+    <button class="primary" id="btnOnline">Ativar online</button>
+  </div>
+  <div class="msg" id="msg"></div>
+
+  <div class="sep">ou ative por arquivo (offline)</div>
+
+  <label>Cole a sua licença (.lic)</label>
+  <textarea id="token" placeholder="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."></textarea>
+  <div class="row">
+    <button class="ghost" id="btnArquivo">📂 Abrir arquivo .lic</button>
+    <button class="ghost" id="btnAtivar">Ativar por arquivo</button>
+  </div>
+  <div class="msg" id="msg2"></div>
+
+  <div class="fp">
+    <h4>Código desta máquina (fingerprint)</h4>
+    <div class="code">
+      <code id="fp">—</code>
+      <button class="ghost" id="btnCopiar" style="padding:8px 12px;">Copiar</button>
+    </div>
+    <div class="hint">Envie este código para a Nexus caso a sua licença seja vinculada a esta máquina.</div>
+  </div>
+
+  <div style="margin-top:18px;text-align:center;">
+    <button class="ghost" id="btnReset" style="font-size:12px;padding:8px 18px;color:#ff8f8f;border-color:#3a2020;">Resetar licença</button>
+  </div>
+
+  <div class="foot" id="versao"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  (async () => {
+    const info = await window.licenca.info();
+    $("alerta").textContent = info.motivo;
+    $("fp").textContent = info.fingerprint;
+    $("versao").textContent = "Nexus PDV v" + (info.versao || "1.0.0");
+  })();
+
+  $("btnOnline").onclick = async () => {
+    const chave = $("chave").value.trim();
+    if (!chave) return setMsg("Informe a chave de licença.", "err");
+    $("btnOnline").disabled = true; setMsg("Ativando…", "");
+    const r = await window.licenca.ativarOnline(chave);
+    if (r.ok) {
+      setMsg(r.estado === "tolerancia" ? "Licença aceita (em tolerância). Reiniciando…" : "Licença ativada! Reiniciando…", "ok");
+    } else {
+      setMsg(r.motivo || "Não foi possível ativar.", "err");
+      $("btnOnline").disabled = false;
+    }
+  };
+
+  $("btnArquivo").onclick = async () => {
+    const conteudo = await window.licenca.abrirArquivo();
+    if (conteudo) { $("token").value = conteudo; setMsg2("", ""); }
+  };
+
+  $("btnCopiar").onclick = async () => {
+    try { await navigator.clipboard.writeText($("fp").textContent); $("btnCopiar").textContent = "Copiado!"; setTimeout(() => $("btnCopiar").textContent = "Copiar", 1500); } catch {}
+  };
+
+  $("btnAtivar").onclick = async () => {
+    const token = $("token").value.trim();
+    if (!token) return setMsg2("Cole a licença ou abra o arquivo .lic.", "err");
+    $("btnAtivar").disabled = true; setMsg2("Validando…", "");
+    const r = await window.licenca.validar(token);
+    if (r.ok) {
+      setMsg2(r.estado === "tolerancia" ? "Licença aceita (em tolerância). Reiniciando…" : "Licença ativada! Reiniciando…", "ok");
+    } else {
+      setMsg2(r.motivo || "Licença inválida.", "err");
+      $("btnAtivar").disabled = false;
+    }
+  };
+
+  $("btnReset").onclick = async () => {
+    if (!confirm("Tem certeza? A licença será apagada e o programa pedirá uma nova.")) return;
+    await window.licenca.reset();
+  };
+
+  function setMsg(t, cls)  { const m = $("msg");  m.textContent = t; m.className = "msg " + (cls || ""); }
+  function setMsg2(t, cls) { const m = $("msg2"); m.textContent = t; m.className = "msg " + (cls || ""); }
+</script>
+</body>
+</html>

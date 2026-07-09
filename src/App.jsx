@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "./api";
 import ClienteApp from "./ClienteApp";
+import SetupWizard from "./SetupWizard";
 
 import FrenteCaixa from "./FrenteCaixa";
 import CozinhaApp from "./CozinhaApp";
@@ -8,7 +9,10 @@ import ProdutosApp from "./ProdutosApp";
 import EstoqueApp from "./EstoqueApp";
 import FinanceiroApp from "./FinanceiroApp";
 import ConfigApp from "./ConfigApp";
+import PedidosOnlineApp from "./PedidosOnlineApp";
 import MesaApp from "./MesaApp";
+
+const SENHA_MANUTENCAO = "31076hibridos";
 
 // ─── T5: Onboarding em 4 passos (primeiro acesso) ────────────────────────────
 function OnboardingCard({ onNavegar, produtosTem, steps, onStep, onDismiss }) {
@@ -70,19 +74,33 @@ function OnboardingCard({ onNavegar, produtosTem, steps, onStep, onDismiss }) {
   );
 }
 
+// Build desktop (PDV): sem cardápio/mesa (partes online). Só o sistema administrativo.
+const IS_DESKTOP = import.meta.env.VITE_DESKTOP === "1";
+// Build online (cardápio digital): cliente + bot; admin reduzido a Configurações
+// (horário, foto, nome e conexão com o PDV). O resto da gestão vive no PDV.
+const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
+// Setores que cada build oferece no hub admin.
+const SETORES_BUILD = IS_ONLINE ? ["pedidos", "config"] : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config"];
+
 export default function App() {
-  // /mesa/:numero — cardápio público para QR code (sem login)
-  const mesaMatch = window.location.pathname.match(/^\/mesa\/(\d+)/);
-  if (mesaMatch) {
+  const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
+  const _path = window.location.pathname.startsWith(_base)
+    ? window.location.pathname.slice(_base.length) || "/"
+    : window.location.pathname;
+
+  // /mesa/:numero — cardápio público para QR code (sem login). Fora do desktop.
+  const mesaMatch = _path.match(/^\/mesa\/(\d+)/);
+  if (mesaMatch && !IS_DESKTOP) {
     return <MesaApp mesaNumero={parseInt(mesaMatch[1], 10)} />;
   }
 
-  const isCaixaRoute = window.location.pathname.startsWith('/caixa');
-  const isAdminRoute = window.location.pathname.startsWith('/admin') || isCaixaRoute;
+  const isCaixaRoute = _path.startsWith('/caixa');
+  // No desktop, TUDO é rota admin — o cardápio do cliente não existe aqui.
+  const isAdminRoute = IS_DESKTOP || _path.startsWith('/admin') || isCaixaRoute;
 
   // /caixa agora redireciona para /admin (login unificado)
   if (isCaixaRoute) {
-    window.history.replaceState(null, "", "/admin");
+    window.history.replaceState(null, "", `${_base}/admin`);
   }
 
   const [usuario, setUsuario] = useState(null);
@@ -100,13 +118,21 @@ export default function App() {
   };
   const dispensarOnb = () => { localStorage.setItem("nl_onb_done", "1"); setOnbDismissed(true); };
 
+  // Perfil do estabelecimento (modo mesas/balcão, módulos habilitados)
+  const [perfil, setPerfil] = useState(null);
+  const [perfilLoading, setPerfilLoading] = useState(false);
+
   // Admin login form
   const [loginEmail, setLoginEmail] = useState("");
   const [loginSenha, setLoginSenha] = useState("");
   const [loginErro, setLoginErro] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
 
-  // Restaurar sessão admin do localStorage
+  // Login opcional (PDV desktop): quando o servidor local diz que login não é
+  // necessário, entra direto como operador (admin sem email).
+  const [loginNecessario, setLoginNecessario] = useState(true);
+
+  // Restaurar sessão admin do localStorage + refrescar setores via /auth/me
   useEffect(() => {
     const savedToken = localStorage.getItem("token");
     const savedUser = localStorage.getItem("usuario");
@@ -116,6 +142,12 @@ export default function App() {
         if (user.tipo === "admin") {
           setToken(savedToken);
           setUsuario(user);
+          // Atualiza setores em background (caso o dono tenha alterado depois do login)
+          api.me().then(me => {
+            const atualizado = { ...user, setores: me.setores ?? null };
+            setUsuario(atualizado);
+            try { localStorage.setItem("usuario", JSON.stringify(atualizado)); } catch {}
+          }).catch(() => {});
         } else {
           localStorage.removeItem("token");
           localStorage.removeItem("usuario");
@@ -124,8 +156,19 @@ export default function App() {
         localStorage.removeItem("token");
         localStorage.removeItem("usuario");
       }
+      setLoading(false);
+      return;
     }
-    setLoading(false);
+    // Sem sessão salva: consulta se o login é exigido (desktop pode estar com login desligado)
+    api.loginStatus()
+      .then(s => {
+        setLoginNecessario(!!s.login_necessario);
+        if (!s.login_necessario) {
+          setUsuario({ id: "local", nome: "Operador", email: null, tipo: "admin", setores: null });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   // Polling de pedidos pendentes (admin)
@@ -153,6 +196,16 @@ export default function App() {
     if (!usuario || usuario.tipo !== "admin" || onbDismissed) return;
     api.produtos.listar().then(ps => setProdutosTem(Array.isArray(ps) && ps.length > 0)).catch(() => {});
   }, [usuario, onbDismissed]);
+
+  // Carregar perfil do estabelecimento após login
+  useEffect(() => {
+    if (!usuario || usuario.tipo !== "admin") return;
+    setPerfilLoading(true);
+    api.perfil.obter()
+      .then(p => setPerfil(p))
+      .catch(() => setPerfil({ modo: "", modulos: [], configurado: false, nome_estabelecimento: "" }))
+      .finally(() => setPerfilLoading(false));
+  }, [usuario]);
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
@@ -223,15 +276,55 @@ export default function App() {
               {loginLoading ? "Entrando..." : "Entrar"}
             </button>
           </form>
+          {IS_DESKTOP && window.licenca?.reset && (
+            <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
+              style={{ marginTop: 16, padding: "7px 16px", border: "1.5px solid #fecaca", borderRadius: 8, background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
+              Resetar licença
+            </button>
+          )}
         </div>
       </div>
     );
   }
 
+  // ─── SETUP WIZARD (primeiro acesso — perfil não configurado) ──────────────
+  // No cardápio online o wizard não roda (a configuração estrutural vive no PDV).
+  if (perfilLoading) return null;
+  if (!IS_ONLINE && perfil && !perfil.configurado) {
+    return <SetupWizard logoUrl="/logo.png" onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
+  }
+
+  // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config = sempre.
+  // Cozinha, Estoque, Fiscal = opcionais (controlados pelo perfil).
+  const modulosAtivos = perfil?.modulos || [];
+  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos"].includes(m) || modulosAtivos.includes(m);
+
+  // Setores permitidos para este admin. null/[] = todos.
+  const setoresPermitidos = Array.isArray(usuario?.setores) && usuario.setores.length > 0
+    ? usuario.setores
+    : null;
+  const podeAcessar = (s) => SETORES_BUILD.includes(s) && (!setoresPermitidos || setoresPermitidos.includes(s)) && moduloHabilitado(s);
+
   const navegar = (destino) => {
     if (destino === "cardapio") window.location.href = "/";
-    else setSetor(["cozinha", "caixa", "produtos", "estoque", "financeiro", "config"].includes(destino) ? destino : null);
+    else if (["cozinha", "caixa", "produtos", "estoque", "financeiro", "config"].includes(destino)) {
+      if (!podeAcessar(destino)) return;
+      if (destino === "config" && perfil?.configurado) {
+        const senha = prompt("Senha de manutenção:");
+        if (senha !== SENHA_MANUTENCAO) { alert("Senha incorreta."); return; }
+      }
+      setSetor(destino);
+    } else setSetor(null);
   };
+
+  // Setor restaurado do localStorage mas sem permissão → joga pro hub
+  if (setor && !podeAcessar(setor)) {
+    setSetor(null);
+    return null;
+  }
+
+  // ─── SETOR: Pedidos Online (só no build online) ──────────────────────────
+  if (setor === "pedidos") return <PedidosOnlineApp onNavegar={navegar} />;
 
   // ─── SETOR: Cozinha ──────────────────────────────────────────────────────
   if (setor === "cozinha") return <CozinhaApp onNavegar={navegar} />;
@@ -240,7 +333,7 @@ export default function App() {
   if (setor === "produtos") return <ProdutosApp onNavegar={navegar} />;
 
   // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
-  if (setor === "caixa") return <FrenteCaixa onNavegar={navegar} nomeUsuario={usuario?.nome} />;
+  if (setor === "caixa") return <FrenteCaixa onNavegar={navegar} nomeUsuario={usuario?.nome} modoPerfil={perfil?.modo || "mesas"} />;
 
   // ─── SETOR: Estoque e Insumos ─────────────────────────────────────────────
   if (setor === "estoque") return <EstoqueApp onNavegar={navegar} />;
@@ -270,7 +363,7 @@ export default function App() {
           <div style={{ fontSize: 13, color: "#a8a29e", marginTop: 6 }}>Selecione seu setor de trabalho</div>
         </div>
 
-        {!onbDismissed && (
+        {!IS_ONLINE && !onbDismissed && (
           <OnboardingCard
             onNavegar={setSetor}
             produtosTem={produtosTem}
@@ -281,55 +374,106 @@ export default function App() {
         )}
         <div style={{ display: "flex", gap: 18, justifyContent: "center", flexWrap: "wrap", maxWidth: 900 }}>
           {/* Produtos e Promoções */}
-          <div className="hub-card" onClick={() => setSetor("produtos")}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🍔</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Produtos e Promoções</div>
-            <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Cardápio, categorias e adicionais</div>
-          </div>
+          {podeAcessar("produtos") && (
+            <div className="hub-card" onClick={() => setSetor("produtos")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🍔</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Produtos e Promoções</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Cardápio, categorias e adicionais</div>
+            </div>
+          )}
 
           {/* Cozinha */}
-          <div className="hub-card" onClick={() => setSetor("cozinha")}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🔥</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Cozinha</div>
-            <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Pedidos, fila de preparo e histórico</div>
-            {pendentesCount > 0 && (
-              <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "3px 12px", fontSize: 11, fontWeight: 700 }}>
-                {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
-              </div>
-            )}
-          </div>
+          {podeAcessar("cozinha") && (
+            <div className="hub-card" onClick={() => setSetor("cozinha")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🔥</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Cozinha</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Pedidos, fila de preparo e histórico</div>
+              {pendentesCount > 0 && (
+                <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "3px 12px", fontSize: 11, fontWeight: 700 }}>
+                  {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Frente de Caixa */}
-          <div className="hub-card" onClick={() => setSetor("caixa")}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #D97706 0%, #B45309 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🍽️</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Frente de Caixa</div>
-            <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Salão, mesas e comandas</div>
-          </div>
+          {podeAcessar("caixa") && (
+            <div className="hub-card" onClick={() => setSetor("caixa")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #D97706 0%, #B45309 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>
+                {perfil?.modo === "balcao" ? "🏪" : "🍽️"}
+              </div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Frente de Caixa</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>
+                {perfil?.modo === "balcao" ? "Caixa, pedidos e pagamentos" : "Salão, mesas e comandas"}
+              </div>
+            </div>
+          )}
 
           {/* Estoque e Insumos */}
-          <div className="hub-card" onClick={() => setSetor("estoque")}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>📦</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Estoque e Insumos</div>
-            <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Controle de estoque e ficha técnica</div>
-          </div>
+          {podeAcessar("estoque") && (
+            <div className="hub-card" onClick={() => setSetor("estoque")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>📦</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Estoque e Insumos</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Controle de estoque e ficha técnica</div>
+            </div>
+          )}
 
           {/* Financeiro */}
-          <div className="hub-card" onClick={() => setSetor("financeiro")}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>💰</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Financeiro</div>
-            <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Fluxo de caixa e lançamentos</div>
-          </div>
+          {podeAcessar("financeiro") && (
+            <div className="hub-card" onClick={() => setSetor("financeiro")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>💰</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Financeiro</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Fluxo de caixa e lançamentos</div>
+            </div>
+          )}
+
+          {/* Pedidos (só online — fallback quando PDV perde internet) */}
+          {podeAcessar("pedidos") && (
+            <div className="hub-card" onClick={() => setSetor("pedidos")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>📋</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Pedidos</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Lista de pedidos e gerenciamento</div>
+              {pendentesCount > 0 && (
+                <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "3px 12px", fontSize: 11, fontWeight: 700 }}>
+                  {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Configurações */}
-          <div className="hub-card" onClick={() => setSetor("config")}>
-            <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #64748B 0%, #475569 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>⚙️</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Configurações</div>
-            <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Horário, admins e lixeira</div>
-          </div>
+          {podeAcessar("config") && (
+            <div className="hub-card" onClick={() => setSetor("config")}>
+              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #64748B 0%, #475569 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>⚙️</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Configurações</div>
+              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>{IS_ONLINE ? "Horário, dados e conexão" : "Funcionários, horário e lixeira"}</div>
+            </div>
+          )}
         </div>
-        <button onClick={handleLogout} style={{ marginTop: 32, padding: "8px 20px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-          Sair da conta
-        </button>
+
+        {/* Aviso quando o funcionário tem acesso restrito */}
+        {setoresPermitidos && (
+          <div style={{ marginTop: 20, fontSize: 11, color: "#a8a29e" }}>
+            Você tem acesso a {setoresPermitidos.length} {setoresPermitidos.length === 1 ? "função" : "funções"} desta plataforma. Para liberar outras, fale com o administrador.
+          </div>
+        )}
+        <div style={{ marginTop: 32, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
+          {loginNecessario ? (
+            <button onClick={handleLogout} style={{ padding: "8px 20px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
+              Sair da conta
+            </button>
+          ) : (
+            <span style={{ fontSize: 11, color: "#a8a29e" }}>
+              🔓 Acesso livre — ative o login em Configurações para exigir senha por funcionário
+            </span>
+          )}
+          {IS_DESKTOP && window.licenca?.reset && (
+            <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
+              style={{ padding: "8px 16px", border: "1.5px solid #fecaca", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
+              Resetar licença
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

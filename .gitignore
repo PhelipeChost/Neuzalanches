@@ -14,6 +14,12 @@ dist
 *.db-shm
 *.db-wal
 dist-ssr
+dist-mercadolojo
+dist-online-test
+desktop/dist-build-*
+desktop/dist-installer/
+desktop/dist-installer-v2/
+desktop/app-dist/
 *.local
 
 # Editor directories and files

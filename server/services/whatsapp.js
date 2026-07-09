@@ -1,7 +1,18 @@
 // ─── WhatsApp via Evolution API ──────────────────────────────────────────────
+import { obterConfig } from '../database.js';
+
 const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
 const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
 const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+
+// Identidade do estabelecimento — SEMPRE das Configurações da plataforma
+function nomeEstab() {
+  return obterConfig('nome_estabelecimento') || 'nosso estabelecimento';
+}
+function linhaLink(prefixo = '') {
+  const link = (obterConfig('link_exibicao') || '').trim();
+  return link ? `\n${prefixo}🌐 ${link}` : '';
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -66,7 +77,7 @@ function listarItens(pedido) {
 }
 
 // ─── Envio ───────────────────────────────────────────────────────────────────
-async function enviarMensagem(telefone, texto) {
+export async function enviarMensagem(telefone, texto) {
   if (!telefone) return false;
   try {
     const numero = String(telefone).replace(/\D/g, '');
@@ -112,15 +123,13 @@ export async function notificarPedidoConfirmado(pedido) {
 
   const texto =
     `✅ *Pedido recebido, ${nome}!*\n` +
-    `📋 ${codigo}\n` +
+    `📋 ${codigo} — *${nomeEstab()}*\n` +
     `\n` +
     (itens ? `*Itens:*\n${itens}\n\n` : '') +
     `💰 *Total:* ${fmtBRL(pedido.total)}\n` +
     `💳 *Pagamento:* ${pagamento}\n` +
-    `${linhaEntrega}\n` +
-    `\n` +
-    `_Acompanhe seu pedido em:_\n` +
-    `🌐 neuzalanches.com.br`;
+    `${linhaEntrega}` +
+    (linhaLink() ? `\n\n_Acompanhe seu pedido em:_${linhaLink()}` : '');
 
   await enviarMensagem(pedido.cliente_telefone, texto);
 }
@@ -156,14 +165,14 @@ export async function notificarStatusPedido(pedido, status) {
       `\n` +
       `Obrigado pela preferência, *${nome}*! ❤️\n` +
       `\n` +
-      `Esperamos que tenha gostado. Volte sempre! 🍔\n` +
-      `🌐 neuzalanches.com.br`,
+      `A *${nomeEstab()}* espera que tenha gostado. Volte sempre! 🍔` +
+      linhaLink('\n'),
 
     cancelado:
       `❌ *${nome}*, infelizmente seu pedido ${codigo} foi *cancelado*.\n` +
       `\n` +
-      `Se ficou alguma dúvida, é só responder esta mensagem que te ajudamos.\n` +
-      `🌐 neuzalanches.com.br`,
+      `Se ficou alguma dúvida, é só responder esta mensagem que te ajudamos.` +
+      linhaLink('\n'),
   };
 
   const texto = mensagens[status];

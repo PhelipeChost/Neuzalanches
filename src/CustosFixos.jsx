@@ -34,24 +34,49 @@ function catStyle(cat) {
 function ModalCustoFixo({ editando, onSave, onClose }) {
   const [form, setForm] = useState(
     editando
-      ? { nome: editando.nome, valor: String(editando.valor), categoria: editando.categoria, ativo: !!editando.ativo }
-      : { nome: "", valor: "", categoria: "Aluguel", ativo: true }
+      ? {
+          nome: editando.nome,
+          valor: String(editando.valor || 0),
+          categoria: editando.categoria,
+          ativo: !!editando.ativo,
+          tipo: editando.tipo === "variavel" ? "variavel" : "fixo",
+          diaria: String(editando.diaria || ""),
+          qtd: String(editando.qtd || ""),
+        }
+      : { nome: "", valor: "", categoria: "Aluguel", ativo: true, tipo: "fixo", diaria: "", qtd: "" }
   );
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
 
+  const totalVariavel = (parseFloat(form.diaria) || 0) * (parseFloat(form.qtd) || 0);
+
   const salvar = async () => {
     setErro("");
     if (!form.nome.trim()) return setErro("Nome é obrigatório.");
-    const valor = parseFloat(form.valor);
-    if (isNaN(valor) || valor < 0) return setErro("Valor inválido.");
-    setSalvando(true);
-    try {
-      await onSave({ nome: form.nome.trim(), valor, categoria: form.categoria, ativo: form.ativo });
-      onClose();
-    } catch (err) {
-      setErro(err.message);
-      setSalvando(false);
+    if (form.tipo === "variavel") {
+      const diaria = parseFloat(form.diaria);
+      const qtd = parseFloat(form.qtd);
+      if (isNaN(diaria) || diaria < 0) return setErro("Valor da diária inválido.");
+      if (isNaN(qtd) || qtd < 0) return setErro("Quantidade inválida.");
+      setSalvando(true);
+      try {
+        await onSave({
+          nome: form.nome.trim(), valor: 0, categoria: form.categoria, ativo: form.ativo,
+          tipo: "variavel", diaria, qtd,
+        });
+        onClose();
+      } catch (err) { setErro(err.message); setSalvando(false); }
+    } else {
+      const valor = parseFloat(form.valor);
+      if (isNaN(valor) || valor < 0) return setErro("Valor inválido.");
+      setSalvando(true);
+      try {
+        await onSave({
+          nome: form.nome.trim(), valor, categoria: form.categoria, ativo: form.ativo,
+          tipo: "fixo", diaria: 0, qtd: 0,
+        });
+        onClose();
+      } catch (err) { setErro(err.message); setSalvando(false); }
     }
   };
 
@@ -71,20 +96,61 @@ function ModalCustoFixo({ editando, onSave, onClose }) {
             <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })}
               placeholder="Ex: Aluguel do ponto" autoFocus />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            <div>
-              <label style={lbl}>CATEGORIA</label>
-              <select style={{ ...inp, cursor: "pointer" }} value={form.categoria}
-                onChange={e => setForm({ ...form, categoria: e.target.value })}>
-                {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+
+          {/* Tipo: fixo (valor mensal) ou variável (diária × quantidade) */}
+          <div>
+            <label style={lbl}>TIPO DE CUSTO</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {[
+                { v: "fixo",     l: "Fixo",     d: "Mesmo valor todo mês (ex: aluguel)" },
+                { v: "variavel", l: "Variável", d: "Diária × nº de diárias (ex: garçom)" },
+              ].map(t => (
+                <button key={t.v} type="button"
+                  onClick={() => setForm({ ...form, tipo: t.v })}
+                  style={{
+                    padding: "10px 12px", textAlign: "left",
+                    borderRadius: 10, cursor: "pointer", background: "#fff",
+                    border: `1.5px solid ${form.tipo === t.v ? (t.v === "fixo" ? "#2563eb" : "#F38C24") : "#e7e5e4"}`,
+                    backgroundColor: form.tipo === t.v ? (t.v === "fixo" ? "#eff6ff" : "#fff7ed") : "#fff",
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: form.tipo === t.v ? (t.v === "fixo" ? "#1e40af" : "#9a3412") : "#1c1917" }}>{t.l}</div>
+                  <div style={{ fontSize: 11, color: "#78716c", marginTop: 2 }}>{t.d}</div>
+                </button>
+              ))}
             </div>
+          </div>
+
+          <div>
+            <label style={lbl}>CATEGORIA</label>
+            <select style={{ ...inp, cursor: "pointer", width: "100%" }} value={form.categoria}
+              onChange={e => setForm({ ...form, categoria: e.target.value })}>
+              {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+
+          {form.tipo === "variavel" ? (
+            <div>
+              <label style={lbl}>VALOR UNITÁRIO × QUANTIDADE</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
+                <input style={inp} type="number" step="0.01" min="0" value={form.diaria}
+                  onChange={e => setForm({ ...form, diaria: e.target.value })} placeholder="Valor da diária" />
+                <span style={{ fontSize: 14, color: "#a8a29e", fontWeight: 600 }}>×</span>
+                <input style={inp} type="number" step="1" min="0" value={form.qtd}
+                  onChange={e => setForm({ ...form, qtd: e.target.value })} placeholder="Qtd no mês" />
+              </div>
+              <div style={{ marginTop: 8, padding: "8px 12px", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, fontSize: 12, color: "#9a3412", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>Total do mês:</span>
+                <strong>{fmt(totalVariavel)}</strong>
+              </div>
+            </div>
+          ) : (
             <div>
               <label style={lbl}>VALOR MENSAL (R$)</label>
               <input style={inp} type="number" step="0.01" min="0" value={form.valor}
                 onChange={e => setForm({ ...form, valor: e.target.value })} placeholder="0,00" />
             </div>
-          </div>
+          )}
 
           <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13, userSelect: "none" }}>
             <input type="checkbox" checked={form.ativo} onChange={e => setForm({ ...form, ativo: e.target.checked })} />
@@ -182,7 +248,23 @@ export default function CustosFixos({ onCustosChange }) {
     }
   };
 
-  const totalMensal = custos.filter(c => c.ativo).reduce((s, c) => s + c.valor, 0);
+  // Total mensal: para variável usa diaria*qtd, para fixo usa valor
+  const totalEfetivo = (c) => c.tipo === "variavel" ? (Number(c.diaria) || 0) * (Number(c.qtd) || 0) : (Number(c.valor) || 0);
+  const totalMensal = custos.filter(c => c.ativo).reduce((s, c) => s + totalEfetivo(c), 0);
+
+  // Edição inline da quantidade/diária de um custo variável (recalcula no banco)
+  const atualizarVariavel = async (cf, campo, valor) => {
+    const novoValor = Math.max(0, Number(valor) || 0);
+    try {
+      const atualizado = await api.custosFixos.atualizar(cf.id, {
+        nome: cf.nome, valor: 0, categoria: cf.categoria, ativo: cf.ativo,
+        tipo: "variavel",
+        diaria: campo === "diaria" ? novoValor : (Number(cf.diaria) || 0),
+        qtd:    campo === "qtd"    ? novoValor : (Number(cf.qtd) || 0),
+      });
+      setCustosSync(cs => cs.map(c => c.id === cf.id ? atualizado : c));
+    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  };
 
   // Agrupar por categoria
   const porCategoria = custos.reduce((acc, c) => {
@@ -242,12 +324,15 @@ export default function CustosFixos({ onCustosChange }) {
               <div style={{ padding: "10px 18px", borderBottom: "1px solid #f5f5f4", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fafaf9" }}>
                 <span style={catStyle(cat)}>{cat}</span>
                 <span style={{ fontSize: 12, color: "#78716c", fontWeight: 600 }}>
-                  {fmt(itens.filter(i => i.ativo).reduce((s, i) => s + i.valor, 0))}/mês
+                  {fmt(itens.filter(i => i.ativo).reduce((s, i) => s + totalEfetivo(i), 0))}/mês
                 </span>
               </div>
               {/* Itens */}
-              {itens.map((cf, idx) => (
-                <div key={cf.id} style={{ display: "flex", alignItems: "center", padding: "12px 18px", gap: 14, borderBottom: idx < itens.length - 1 ? "1px solid #f5f5f4" : "none", opacity: cf.ativo ? 1 : 0.5 }}>
+              {itens.map((cf, idx) => {
+                const ehVariavel = cf.tipo === "variavel";
+                const total = totalEfetivo(cf);
+                return (
+                <div key={cf.id} style={{ display: "flex", alignItems: "center", padding: "12px 18px", gap: 14, borderBottom: idx < itens.length - 1 ? "1px solid #f5f5f4" : "none", opacity: cf.ativo ? 1 : 0.5, flexWrap: "wrap" }}>
                   {/* Toggle ativo */}
                   <button
                     onClick={() => toggleAtivo(cf)}
@@ -256,15 +341,39 @@ export default function CustosFixos({ onCustosChange }) {
                     <span style={{ position: "absolute", top: 2, left: cf.ativo ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", display: "block" }} />
                   </button>
 
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#1c1917" }}>{cf.nome}</div>
+                  <div style={{ flex: 1, minWidth: 140 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#1c1917" }}>{cf.nome}</span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                        background: ehVariavel ? "#fff7ed" : "#eff6ff",
+                        color: ehVariavel ? "#9a3412" : "#1e40af",
+                      }}>{ehVariavel ? "VARIÁVEL" : "FIXO"}</span>
+                    </div>
                     <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>
-                      {cf.ativo ? "Gera lançamento previsto todo mês" : "Inativo"}
+                      {!cf.ativo ? "Inativo" : ehVariavel
+                        ? "Total = valor da diária × nº de diárias do mês"
+                        : "Gera lançamento previsto todo mês"}
                     </div>
                   </div>
 
-                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, color: "#dc2626", flexShrink: 0 }}>
-                    {fmt(cf.valor)}<span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 400 }}>/mês</span>
+                  {/* Edição inline para variável */}
+                  {ehVariavel ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#57534e", flexShrink: 0 }}>
+                      R$
+                      <input type="number" min="0" step="0.01" defaultValue={cf.diaria || 0}
+                        onBlur={e => atualizarVariavel(cf, "diaria", e.target.value)}
+                        style={{ width: 70, padding: "5px 7px", border: "1.5px solid #e7e5e4", borderRadius: 6, fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "right", color: "#1c1917" }} />
+                      <span style={{ color: "#a8a29e" }}>×</span>
+                      <input type="number" min="0" step="1" defaultValue={cf.qtd || 0}
+                        onBlur={e => atualizarVariavel(cf, "qtd", e.target.value)}
+                        style={{ width: 56, padding: "5px 7px", border: "1.5px solid #e7e5e4", borderRadius: 6, fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: "none", textAlign: "center", color: "#1c1917" }} />
+                      <span style={{ color: "#a8a29e", fontSize: 11 }}>diárias</span>
+                    </div>
+                  ) : null}
+
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, color: "#dc2626", flexShrink: 0, minWidth: 110, textAlign: "right" }}>
+                    {fmt(total)}<span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 400 }}>/mês</span>
                   </div>
 
                   <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -272,7 +381,7 @@ export default function CustosFixos({ onCustosChange }) {
                     <button className="icon-btn del" onClick={() => setConfirmDel(cf)}>🗑️</button>
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
           ))}
         </div>

@@ -1,0 +1,72 @@
+{
+  "name": "nexus-pdv-desktop",
+  "productName": "Nexus PDV",
+  "version": "1.3.0",
+  "description": "Versão desktop offline-first da plataforma Nexus (Frente de Caixa), com gate de licença RS256.",
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test:licenca": "node licenca/teste-licenca.mjs",
+    "build:frontend": "vite build --base=/ --outDir desktop/app-dist --emptyOutDir",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "dist": "electron-builder"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "@electron/rebuild": "^3.7.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.nexus.pdv",
+    "productName": "Nexus PDV",
+    "directories": { "output": "dist-installer-v2" },
+    "publish": [
+      { "provider": "generic", "url": "https://reinonexusideal.com.br/prototipocompleto/updates/", "channel": "latest" }
+    ],
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "atualizacao.js",
+      "licenca/**/*",
+      "sync/**/*",
+      "ui/**/*",
+      "build/icon.ico",
+      "app-dist/**/*",
+      "!licenca/teste-licenca.mjs",
+      "!licenca/chave-dev.pem",
+      "!sync/teste-sync.mjs"
+    ],
+    "extraResources": [
+      { "from": "../server", "to": "server" },
+      { "from": "../node_modules", "to": "node_modules" },
+      { "from": "server-package.json", "to": "server/package.json" }
+    ],
+    "win": {
+      "target": ["nsis"],
+      "signAndEditExecutable": false,
+      "icon": "build/icon.ico",
+      "artifactName": "NexusPDV-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Nexus PDV",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/uninstallerSidebar.bmp",
+      "displayLanguageSelector": false,
+      "language": "1046",
+      "include": "build/installer.nsh"
+    }
+  }
+}

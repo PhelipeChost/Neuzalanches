@@ -80,6 +80,28 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
   const [salvando, setSalvando]       = useState(false);
   const [erro, setErro]               = useState("");
 
+  // Vinculação opcional com um produto existente (preenche nome/preço/CMV automaticamente)
+  const [produtos, setProdutos] = useState([]);
+  const [produtoVinculadoId, setProdutoVinculadoId] = useState("");
+  useEffect(() => {
+    api.produtos.listar()
+      .then(list => setProdutos(list.filter(p => !p.eh_promocao)))
+      .catch(() => {});
+  }, []);
+
+  const aoSelecionarProduto = (id) => {
+    setProdutoVinculadoId(id);
+    if (!id) return; // "Nenhum (criar do zero)" — não altera o que já está digitado
+    const p = produtos.find(x => String(x.id) === String(id));
+    if (!p) return;
+    // Autopreenche nome, preço normal e custo. O preço promocional fica em branco
+    // para o dono decidir; a imagem permanece manual (conforme solicitado).
+    setNome(p.nome || "");
+    setPrecoDe(p.preco != null ? String(p.preco) : "");
+    setCusto(p.custo != null ? String(p.custo) : "");
+    if (!descricao && p.descricao) setDescricao(p.descricao);
+  };
+
   const desconto = calcularDesconto(Number(preco), Number(precoDe));
 
   // Preview da duração ao vivo
@@ -144,6 +166,32 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700, color: "#78350F", fontSize: 14 }}>Desconto de {desconto}%</div>
             <div style={{ fontSize: 12, color: "#92400E" }}>De {fmtBRL(precoDe)} por {fmtBRL(preco)} — economia de {fmtBRL(Number(precoDe) - Number(preco))}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Seletor: vincular produto existente (autopreenche os campos) */}
+      {!inicial && (
+        <div style={{
+          background: "linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%)",
+          border: "1.5px solid #93C5FD", borderRadius: 10, padding: "12px 16px",
+        }}>
+          <label style={{ ...lbl, color: "#1E40AF", marginBottom: 6 }}>
+            🔗 Vincular a um produto existente?
+          </label>
+          <select style={{ ...inp, background: "#fff", borderColor: "#93C5FD" }}
+            value={produtoVinculadoId} onChange={e => aoSelecionarProduto(e.target.value)}>
+            <option value="">— Nenhum (criar promoção do zero) —</option>
+            {produtos.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.nome} — {fmtBRL(p.preco)}{p.custo > 0 ? ` (CMV ${fmtBRL(p.custo)})` : ""}
+              </option>
+            ))}
+          </select>
+          <div style={{ fontSize: 11, color: "#1E40AF", marginTop: 6, lineHeight: 1.4 }}>
+            {produtoVinculadoId
+              ? "✓ Preenchi o nome, o preço de referência (riscado) e o CMV. Falta digitar o preço promocional."
+              : "Selecione um produto pra colocar em promoção, ou deixe em branco se for um combo novo."}
           </div>
         </div>
       )}

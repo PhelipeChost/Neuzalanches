@@ -1,5 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
+import {
+  isWebUsbSuportado,
+  conectarImpressora as usbConectar,
+  getImpressoraAutorizada as usbGetAutorizada,
+  desconectarImpressora as usbDesconectar,
+  imprimirCupomUSB,
+  agenteStatus,
+  imprimirViaAgente,
+} from "./cozinhaImpressoraUSB";
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 const fmt = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -51,11 +60,12 @@ const STATUS_CORES = {
 const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const TIPO_CUPOM = { delivery: "DELIVERY", retirada: "RETIRADA", casa: "CONSUMIR NO LOCAL" };
 
-function gerarCupomCozinha(p) {
+function gerarCupomCozinha(p, marca = "MEU ESTABELECIMENTO") {
   const tipo = p.tipo_entrega === "retirada" ? "retirada" : p.tipo_entrega === "casa" ? "casa" : "delivery";
   const hora = fmtHora(p.created_at);
   const idCurto = String(p.id || "").slice(0, 6).toUpperCase();
   const origem = p.tipo === "online" ? "ONLINE" : "PRESENCIAL";
+  const marcaTxt = escHtml((marca || "MEU ESTABELECIMENTO").toUpperCase());
 
   const itensHtml = (p.itens || []).map(it => {
     const ads = (it.adicionais || []).map(a => `<div class="add">+ ${(a.quantidade || 1) > 1 ? (a.quantidade + "x ") : ""}${escHtml(a.nome)}</div>`).join("");
@@ -92,7 +102,7 @@ function gerarCupomCozinha(p) {
     .obs { font-size: 14px; font-weight: bold; border: 2px solid #000; padding: 5px; margin-top: 6px; text-align: center; }
     .tag { display: inline-block; border: 2px solid #000; padding: 2px 8px; font-size: 15px; font-weight: bold; margin: 4px 0; }
   </style></head><body>
-    <div class="center huge">NEUZA LANCHES</div>
+    <div class="center huge">${marcaTxt}</div>
     <div class="center big">&gt;&gt; COZINHA &lt;&lt;</div>
     <div class="hr"></div>
     <div class="row"><span class="big">#${idCurto}</span><span class="big">${hora}</span></div>
@@ -441,6 +451,23 @@ export default function CozinhaApp({ onNavegar }) {
   const printQueueRef = useRef([]);
   const printingRef = useRef(false);
 
+  // Impressora USB (Web USB + ESC/POS) — imprime sem caixa de diálogo
+  const usbDeviceRef = useRef(null);
+  const [usbConectada, setUsbConectada] = useState(false);
+  const [usbDisponivel] = useState(() => isWebUsbSuportado());
+
+  // Agente local de impressão (recomendado) — imprime ESC/POS direto, sem driver
+  const [agenteImpressora, setAgenteImpressora] = useState(null); // nome da impressora ou null
+  const agenteRef = useRef(null);
+
+  // Nome do estabelecimento (vai no topo do cupom). Cache local p/ uso imediato.
+  const marcaRef = useRef((() => { try { return localStorage.getItem("nl_nome_estab") || ""; } catch { return ""; } })());
+  useEffect(() => {
+    api.config.estabelecimento()
+      .then(r => { const n = (r && r.nome_estabelecimento) || ""; if (n) { marcaRef.current = n; try { localStorage.setItem("nl_nome_estab", n); } catch {} } })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => { somAtivoRef.current = somAtivo; localStorage.setItem("nl_coz_som", somAtivo ? "1" : "0"); }, [somAtivo]);
   useEffect(() => { repetirRef.current = repetirSom; localStorage.setItem("nl_coz_repetir", repetirSom ? "1" : "0"); }, [repetirSom]);
   useEffect(() => { autoPrintRef.current = autoPrint; localStorage.setItem("nl_coz_print", autoPrint ? "1" : "0"); }, [autoPrint]);
@@ -503,29 +530,95 @@ export default function CozinhaApp({ onNavegar }) {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
-  // ─── IMPRESSÃO: fila sequencial via iframe oculto ─────────────────────────
-  const imprimirAgora = useCallback((pedido) => {
-    try {
-      const frame = printFrameRef.current;
-      if (!frame || !frame.contentWindow) return;
-      const doc = frame.contentWindow.document;
-      doc.open(); doc.write(gerarCupomCozinha(pedido)); doc.close();
-      setTimeout(() => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch {} }, 280);
-    } catch {}
+  // ─── IMPRESSÃO: USB direto (ESC/POS) com fallback para iframe ────────────
+  const imprimirViaIframe = useCallback((pedido) => {
+    const frame = printFrameRef.current;
+    if (!frame || !frame.contentWindow) return;
+    const doc = frame.contentWindow.document;
+    doc.open(); doc.write(gerarCupomCozinha(pedido, marcaRef.current)); doc.close();
+    setTimeout(() => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch {} }, 280);
   }, []);
-  const processarFilaImpressao = useCallback(() => {
+  const imprimirAgora = useCallback(async (pedido) => {
+    // 1º) Agente local (recomendado): ESC/POS direto, sem diálogo, sem driver.
+    if (agenteRef.current) {
+      try { await imprimirViaAgente(pedido, marcaRef.current); return "agente"; }
+      catch (e) { console.warn("Agente falhou, tentando próximo método:", e); }
+    }
+    // 2º) Web USB direto (precisa de driver WinUSB/Zadig).
+    if (usbDeviceRef.current) {
+      try { await imprimirCupomUSB(usbDeviceRef.current, pedido); return "usb"; }
+      catch (e) { console.warn("USB falhou, caindo no fallback de iframe:", e); }
+    }
+    // 3º) Fallback: impressão pelo navegador (kiosk-printing / diálogo).
+    try { imprimirViaIframe(pedido); } catch {}
+    return "iframe";
+  }, [imprimirViaIframe]);
+  const processarFilaImpressao = useCallback(async () => {
     if (printingRef.current) return;
     const prox = printQueueRef.current.shift();
     if (!prox) return;
     printingRef.current = true;
-    imprimirAgora(prox);
-    setTimeout(() => { printingRef.current = false; processarFilaImpressao(); }, 1700);
+    let modo = "iframe";
+    try { modo = await imprimirAgora(prox); } catch {}
+    // USB termina em milissegundos; iframe precisa de mais tempo pro Chrome despachar.
+    const delay = (modo === "usb" || modo === "agente") ? 350 : 1700;
+    setTimeout(() => { printingRef.current = false; processarFilaImpressao(); }, delay);
   }, [imprimirAgora]);
   const enfileirarImpressao = useCallback((pedido) => {
     printQueueRef.current.push(pedido);
     processarFilaImpressao();
   }, [processarFilaImpressao]);
   const imprimirManual = (pedido) => { imprimirAgora(pedido); showToast("\u{1F5A8}\u{FE0F} Enviado para impressão"); };
+
+  // Auto-reconecta a impressora USB se já foi autorizada antes
+  useEffect(() => {
+    if (!usbDisponivel) return;
+    (async () => {
+      try {
+        const dev = await usbGetAutorizada();
+        if (dev) { usbDeviceRef.current = dev; setUsbConectada(true); }
+      } catch {}
+    })();
+    const onDisconnect = (e) => {
+      if (usbDeviceRef.current && e.device === usbDeviceRef.current) {
+        usbDeviceRef.current = null;
+        setUsbConectada(false);
+      }
+    };
+    navigator.usb.addEventListener("disconnect", onDisconnect);
+    return () => navigator.usb.removeEventListener("disconnect", onDisconnect);
+  }, [usbDisponivel]);
+
+  const conectarImpressoraUSB = async () => {
+    try {
+      const dev = await usbConectar();
+      usbDeviceRef.current = dev;
+      setUsbConectada(true);
+      showToast("\u{1F5A8}\u{FE0F} Impressora USB conectada");
+    } catch (e) {
+      showToast("\u{274C} " + (e?.message || "Falha ao conectar"));
+    }
+  };
+  const desconectarImpressoraUSB = async () => {
+    await usbDesconectar(usbDeviceRef.current);
+    usbDeviceRef.current = null;
+    setUsbConectada(false);
+    showToast("Impressora USB desconectada");
+  };
+
+  // Detecta o agente local de impressão e fica monitorando (a cada 15s)
+  useEffect(() => {
+    let vivo = true;
+    const checar = async () => {
+      const imp = await agenteStatus();
+      if (!vivo) return;
+      agenteRef.current = imp;          // string (nome) quando online, null quando offline
+      setAgenteImpressora(imp);
+    };
+    checar();
+    const id = setInterval(checar, 15000);
+    return () => { vivo = false; clearInterval(id); };
+  }, []);
 
   // ─── CARREGAR DADOS ──────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
@@ -724,8 +817,6 @@ export default function CozinhaApp({ onNavegar }) {
     return `${pre} — ${dias[data.getDay()]}`;
   };
 
-  const totalDoDia = (lista) => lista.reduce((s, p) => s + Number(p.total || 0), 0);
-
   // ─── COUNTERS ────────────────────────────────────────────────────────────
   const totalMesaItens = gruposMesa.reduce((s, g) => s + g.itens.length, 0);
   const countByTipo = {
@@ -790,8 +881,8 @@ export default function CozinhaApp({ onNavegar }) {
           }}>
             {somAtivo ? "\u{1F514}" : "\u{1F515}"} {somAtivo ? "Som" : "Mudo"}
           </button>
-          {/* Toggle impressão automática XP-80 */}
-          <button onClick={() => setAutoPrint(v => !v)} title="Imprimir automaticamente os pedidos novos na impressora (XP-80)" style={{
+          {/* Toggle impressão automática */}
+          <button onClick={() => setAutoPrint(v => !v)} title="Imprimir automaticamente os pedidos novos na impressora térmica 80mm" style={{
             background: autoPrint ? "#0C2A4A" : "#1A1A1A",
             color: autoPrint ? "#60A5FA" : "#555",
             border: `1.5px solid ${autoPrint ? "#1E40AF" : "#2A2A2A"}`,
@@ -800,6 +891,36 @@ export default function CozinhaApp({ onNavegar }) {
           }}>
             {"\u{1F5A8}\u{FE0F}"} {autoPrint ? "Impressão ON" : "Impressão OFF"}
           </button>
+          {/* Status do agente local de impressão (recomendado) */}
+          <div title={agenteImpressora
+              ? `Agente de impressão conectado. Impressora: ${agenteImpressora}. Os cupons saem direto, sem caixa de diálogo.`
+              : "Agente de impressão offline. Inicie o 'iniciar-agente.bat' na máquina da cozinha para imprimir direto, sem diálogo."}
+            style={{
+              background: agenteImpressora ? "#052E16" : "#1A1A1A",
+              color: agenteImpressora ? "#4ADE80" : "#777",
+              border: `1.5px solid ${agenteImpressora ? "#15803D" : "#2A2A2A"}`,
+              borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 5, whiteSpace: "nowrap",
+            }}>
+            {agenteImpressora ? "\u{1F5A8}\u{FE0F} Impressora pronta" : "\u{1F5A8}\u{FE0F} Agente offline"}
+          </div>
+          {/* Conexão direta com impressora USB (Web USB) — imprime sem diálogo */}
+          {usbDisponivel && !agenteImpressora && (
+            <button
+              onClick={usbConectada ? desconectarImpressoraUSB : conectarImpressoraUSB}
+              title={usbConectada
+                ? "Impressora USB conectada. Os cupons saem direto, sem caixa de diálogo. Clique para desconectar."
+                : "Conecta direto na impressora térmica USB (Web USB + ESC/POS). Imprime sem mostrar a janela 'Salvar como PDF'."}
+              style={{
+                background: usbConectada ? "#052E16" : "#1A1A1A",
+                color: usbConectada ? "#4ADE80" : "#A78BFA",
+                border: `1.5px solid ${usbConectada ? "#15803D" : "#5B21B6"}`,
+                borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 5,
+              }}>
+              {usbConectada ? "\u{1F50C} USB conectada" : "\u{1F50C} Conectar USB"}
+            </button>
+          )}
           {somAtivo && (
             <button onClick={() => setRepetirSom(r => !r)} style={{
               background: repetirSom ? "#332B00" : "#1A1A1A",
@@ -929,8 +1050,6 @@ export default function CozinhaApp({ onNavegar }) {
         <span style={{ fontSize: 12, color: "#555" }}>
           {pedidosFiltrados.length} {pedidosFiltrados.length === 1 ? "pedido" : "pedidos"}
           {mesasFiltradas.length > 0 && ` · ${mesasFiltradas.length} mesa${mesasFiltradas.length > 1 ? "s" : ""}`}
-          {" · "}
-          <span style={{ color: "#4ADE80", fontWeight: 600 }}>{fmt(pedidosFiltrados.reduce((s, p) => s + Number(p.total || 0), 0))}</span>
         </span>
       </div>
 
@@ -1015,7 +1134,6 @@ export default function CozinhaApp({ onNavegar }) {
                   <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 800 }}>{labelDia(chaveDia)}</span>
                   <span style={{ fontSize: 12, color: "#555", fontWeight: 600 }}>{lista.length} {lista.length === 1 ? "pedido" : "pedidos"}</span>
                 </div>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#4ADE80" }}>{fmt(totalDoDia(lista))}</span>
               </div>
               <div className="cz-grid">
                 {lista.map(p => {
@@ -1081,13 +1199,10 @@ export default function CozinhaApp({ onNavegar }) {
                           {/* Items */}
                           <div style={{ background: "#111", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
                             {p.itens?.map((item, i) => {
-                              const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
-                              const itemTotal = (item.preco_unitario + adTotal) * item.quantidade;
                               return (
                                 <div key={i} style={{ padding: "6px 0", borderBottom: i < p.itens.length - 1 ? "1px solid #1F1F1F" : "none" }}>
                                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
                                     <span>{item.quantidade}x {item.produto_nome}</span>
-                                    <span style={{ fontWeight: 500, color: "#aaa" }}>{fmt(itemTotal)}</span>
                                   </div>
                                   {item.adicionais?.length > 0 && (
                                     <div style={{ marginTop: 3 }}>
@@ -1130,21 +1245,13 @@ export default function CozinhaApp({ onNavegar }) {
                             </div>
                           )}
 
-                          {/* Payment */}
+                          {/* Payment (apenas a forma de pagamento, sem valores) */}
                           {p.metodo_pagamento && (() => {
                             const labels = { pix: "⚡ Pix", credito: "\u{1F4B3} Crédito", debito: "\u{1F4B3} Débito", dinheiro: "\u{1F4B5} Dinheiro" };
                             const label = labels[p.metodo_pagamento] || p.metodo_pagamento;
-                            const trocoNum = Number(p.troco_para);
-                            const totalNum = Number(p.total);
-                            const mostraTroco = p.metodo_pagamento === "dinheiro" && trocoNum > 0 && trocoNum > totalNum;
                             return (
                               <div style={{ display: "inline-block", background: "#332B00", border: "1px solid #854D0E", borderRadius: 6, padding: "4px 10px", fontSize: 12, fontWeight: 600, color: "#FBBF24", marginBottom: 12 }}>
                                 {label}
-                                {p.metodo_pagamento === "dinheiro" && (
-                                  mostraTroco
-                                    ? <> {"—"} Troco para {fmt(trocoNum)} <span style={{ color: "#4ADE80" }}>(devolver {fmt(trocoNum - totalNum)})</span></>
-                                    : <> {"—"} Sem troco</>
-                                )}
                               </div>
                             );
                           })()}
@@ -1164,7 +1271,7 @@ export default function CozinhaApp({ onNavegar }) {
                           )}
                           {p.status === "entregue" && (
                             <div style={{ background: "#052E16", border: "1px solid #15803D", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#4ADE80", fontWeight: 500 }}>
-                              {"✅"} Entregue {"—"} {fmt(p.total)} registrado no caixa
+                              {"✅"} Entregue {"—"} registrado no caixa
                             </div>
                           )}
 
