@@ -11,8 +11,11 @@ import FinanceiroApp from "./FinanceiroApp";
 import ConfigApp from "./ConfigApp";
 import PedidosOnlineApp from "./PedidosOnlineApp";
 import MesaApp from "./MesaApp";
+import SuporteApp from "./SuporteApp";
+import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
 
 const SENHA_MANUTENCAO = "31076hibridos";
+const SENHA_SUPORTE = "31076hibridos";
 
 // ─── T5: Onboarding em 4 passos (primeiro acesso) ────────────────────────────
 function OnboardingCard({ onNavegar, produtosTem, steps, onStep, onDismiss }) {
@@ -80,7 +83,9 @@ const IS_DESKTOP = import.meta.env.VITE_DESKTOP === "1";
 // (horário, foto, nome e conexão com o PDV). O resto da gestão vive no PDV.
 const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
 // Setores que cada build oferece no hub admin.
-const SETORES_BUILD = IS_ONLINE ? ["pedidos", "config"] : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config"];
+const SETORES_BUILD = IS_ONLINE
+  ? ["pedidos", "config"]
+  : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config", "suporte"];
 
 export default function App() {
   const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
@@ -106,8 +111,15 @@ export default function App() {
   const [usuario, setUsuario] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [setor, setSetor] = useState(() => localStorage.getItem("nl_setor") || null); // null = hub; restaura último setor
+  // Setor default = "caixa" no PDV (Frente de Caixa é a cara principal), "pedidos" no online.
+  const [setor, setSetor] = useState(() => {
+    const saved = localStorage.getItem("nl_setor");
+    if (saved) return saved;
+    return IS_ONLINE ? "pedidos" : "caixa";
+  });
   const [pendentesCount, setPendentesCount] = useState(0);
+  const [suporteLiberado, setSuporteLiberado] = useState(false);
+  const [syncStatus, setSyncStatus] = useState("sem-config");
 
   // T5 — onboarding (primeiro acesso)
   const [onbDismissed, setOnbDismissed] = useState(() => localStorage.getItem("nl_onb_done") === "1");
@@ -182,6 +194,24 @@ export default function App() {
     };
     checkPendentes();
     const interval = setInterval(checkPendentes, 10000);
+    return () => clearInterval(interval);
+  }, [usuario]);
+
+  // Polling do status de sincronização com o cardápio online (rodapé da sidebar)
+  useEffect(() => {
+    if (!usuario || usuario.tipo !== "admin" || IS_ONLINE) return;
+    const checkSync = async () => {
+      try {
+        const cfg = await api.sync.config();
+        if (!cfg.url || !cfg.token || !cfg.enabled) { setSyncStatus("sem-config"); return; }
+        const erroRecente = (cfg.last_sync_result || "").toLowerCase().startsWith("erro");
+        const ultimaMs = cfg.last_sync ? Date.now() - new Date(cfg.last_sync).getTime() : Infinity;
+        if (erroRecente || ultimaMs > 20 * 60_000) setSyncStatus("offline");
+        else setSyncStatus("ok");
+      } catch { setSyncStatus("offline"); }
+    };
+    checkSync();
+    const interval = setInterval(checkSync, 30_000);
     return () => clearInterval(interval);
   }, [usuario]);
 
@@ -294,10 +324,10 @@ export default function App() {
     return <SetupWizard logoUrl="/logo.png" onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
   }
 
-  // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config = sempre.
+  // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config, Suporte = sempre.
   // Cozinha, Estoque, Fiscal = opcionais (controlados pelo perfil).
   const modulosAtivos = perfil?.modulos || [];
-  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos"].includes(m) || modulosAtivos.includes(m);
+  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos", "suporte"].includes(m) || modulosAtivos.includes(m);
 
   // Setores permitidos para este admin. null/[] = todos.
   const setoresPermitidos = Array.isArray(usuario?.setores) && usuario.setores.length > 0
@@ -306,169 +336,76 @@ export default function App() {
   const podeAcessar = (s) => SETORES_BUILD.includes(s) && (!setoresPermitidos || setoresPermitidos.includes(s)) && moduloHabilitado(s);
 
   const navegar = (destino) => {
-    if (destino === "cardapio") window.location.href = "/";
-    else if (["cozinha", "caixa", "produtos", "estoque", "financeiro", "config"].includes(destino)) {
-      if (!podeAcessar(destino)) return;
-      if (destino === "config" && perfil?.configurado) {
-        const senha = prompt("Senha de manutenção:");
-        if (senha !== SENHA_MANUTENCAO) { alert("Senha incorreta."); return; }
+    if (destino === "cardapio") { window.location.href = "/"; return; }
+    if (destino === "suporte") {
+      if (!podeAcessar("suporte")) return;
+      if (!suporteLiberado) {
+        const senha = prompt("Senha de suporte Nexus:");
+        if (senha !== SENHA_SUPORTE) { alert("Senha incorreta."); return; }
+        setSuporteLiberado(true);
       }
+      setSetor("suporte");
+      return;
+    }
+    if (["cozinha", "caixa", "produtos", "estoque", "financeiro", "config", "pedidos"].includes(destino)) {
+      if (!podeAcessar(destino)) return;
       setSetor(destino);
-    } else setSetor(null);
+      return;
+    }
+    // fallback: volta pra caixa (que é a "home" do PDV)
+    setSetor(IS_ONLINE ? "pedidos" : "caixa");
   };
 
-  // Setor restaurado do localStorage mas sem permissão → joga pro hub
+  // Setor restaurado do localStorage mas sem permissão → fallback pra home
   if (setor && !podeAcessar(setor)) {
-    setSetor(null);
+    const home = IS_ONLINE ? "pedidos" : "caixa";
+    if (podeAcessar(home)) setSetor(home);
+    else setSetor(null);
     return null;
   }
 
-  // ─── SETOR: Pedidos Online (só no build online) ──────────────────────────
-  if (setor === "pedidos") return <PedidosOnlineApp onNavegar={navegar} />;
+  // ─── Renderização do conteúdo do setor (dentro da sidebar) ────────────────
+  const conteudoSetor = (() => {
+    if (setor === "pedidos")    return <PedidosOnlineApp onNavegar={navegar} />;
+    if (setor === "cozinha")    return <CozinhaApp onNavegar={navegar} />;
+    if (setor === "produtos")   return <ProdutosApp onNavegar={navegar} />;
+    if (setor === "caixa")      return <FrenteCaixa onNavegar={navegar} nomeUsuario={usuario?.nome} modoPerfil={perfil?.modo || "mesas"} />;
+    if (setor === "estoque")    return <EstoqueApp onNavegar={navegar} />;
+    if (setor === "financeiro") return <FinanceiroApp onNavegar={navegar} />;
+    if (setor === "config")     return <ConfigApp onNavegar={navegar} />;
+    if (setor === "suporte")    return <SuporteApp onNavegar={navegar} perfil={perfil} onPerfilChange={setPerfil} />;
+    return null;
+  })();
 
-  // ─── SETOR: Cozinha ──────────────────────────────────────────────────────
-  if (setor === "cozinha") return <CozinhaApp onNavegar={navegar} />;
-
-  // ─── SETOR: Produtos e Promoções ─────────────────────────────────────────
-  if (setor === "produtos") return <ProdutosApp onNavegar={navegar} />;
-
-  // ─── SETOR: Frente de Caixa ───────────────────────────────────────────────
-  if (setor === "caixa") return <FrenteCaixa onNavegar={navegar} nomeUsuario={usuario?.nome} modoPerfil={perfil?.modo || "mesas"} />;
-
-  // ─── SETOR: Estoque e Insumos ─────────────────────────────────────────────
-  if (setor === "estoque") return <EstoqueApp onNavegar={navegar} />;
-
-  // ─── SETOR: Financeiro ────────────────────────────────────────────────────
-  if (setor === "financeiro") return <FinanceiroApp onNavegar={navegar} />;
-
-  // ─── SETOR: Configurações ─────────────────────────────────────────────────
-  if (setor === "config") return <ConfigApp onNavegar={navegar} />;
-
-  // ─── HUB: Escolha do setor ──────────────────────────────────────────────
-  return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@600;700;800&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        .hub-card { background: #fff; border: 2px solid #e7e5e4; border-radius: 20px; padding: 36px 28px; width: 220px; cursor: pointer; text-align: center; transition: all 0.2s ease; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-        .hub-card:hover { border-color: #15803d; transform: translateY(-4px); box-shadow: 0 12px 36px rgba(0,0,0,0.1); }
-        .hub-card:active { transform: translateY(-1px); }
-        @media (max-width: 900px) { .hub-card { width: 170px; padding: 28px 18px; } }
-      `}</style>
-      <div style={{ textAlign: "center", padding: "40px 20px" }}>
-
-        {!IS_ONLINE && !onbDismissed && (
-          <OnboardingCard
-            onNavegar={setSetor}
-            produtosTem={produtosTem}
-            steps={onbSteps}
-            onStep={marcarPasso}
-            onDismiss={dispensarOnb}
-          />
-        )}
-        <div style={{ display: "flex", gap: 18, justifyContent: "center", flexWrap: "wrap", maxWidth: 900 }}>
-          {/* Produtos e Promoções */}
-          {podeAcessar("produtos") && (
-            <div className="hub-card" onClick={() => setSetor("produtos")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #F59E0B 0%, #D97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🍔</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Produtos e Promoções</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Cardápio, categorias e adicionais</div>
-            </div>
-          )}
-
-          {/* Cozinha */}
-          {podeAcessar("cozinha") && (
-            <div className="hub-card" onClick={() => setSetor("cozinha")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🔥</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Cozinha</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Pedidos, fila de preparo e histórico</div>
-              {pendentesCount > 0 && (
-                <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "3px 12px", fontSize: 11, fontWeight: 700 }}>
-                  {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Frente de Caixa */}
-          {podeAcessar("caixa") && (
-            <div className="hub-card" onClick={() => setSetor("caixa")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #D97706 0%, #B45309 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>
-                {perfil?.modo === "balcao" ? "🏪" : "🍽️"}
-              </div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Frente de Caixa</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>
-                {perfil?.modo === "balcao" ? "Caixa, pedidos e pagamentos" : "Salão, mesas e comandas"}
-              </div>
-            </div>
-          )}
-
-          {/* Estoque e Insumos */}
-          {podeAcessar("estoque") && (
-            <div className="hub-card" onClick={() => setSetor("estoque")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #0D9488 0%, #0F766E 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>📦</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Estoque e Insumos</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Controle de estoque e ficha técnica</div>
-            </div>
-          )}
-
-          {/* Financeiro */}
-          {podeAcessar("financeiro") && (
-            <div className="hub-card" onClick={() => setSetor("financeiro")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>💰</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Financeiro</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Fluxo de caixa e lançamentos</div>
-            </div>
-          )}
-
-          {/* Pedidos (só online — fallback quando PDV perde internet) */}
-          {podeAcessar("pedidos") && (
-            <div className="hub-card" onClick={() => setSetor("pedidos")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>📋</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Pedidos</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>Lista de pedidos e gerenciamento</div>
-              {pendentesCount > 0 && (
-                <div style={{ background: "#dc2626", color: "#fff", borderRadius: 20, padding: "3px 12px", fontSize: 11, fontWeight: 700 }}>
-                  {pendentesCount} pendente{pendentesCount > 1 ? "s" : ""}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Configurações */}
-          {podeAcessar("config") && (
-            <div className="hub-card" onClick={() => setSetor("config")}>
-              <div style={{ width: 64, height: 64, borderRadius: 16, background: "linear-gradient(135deg, #64748B 0%, #475569 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>⚙️</div>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>Configurações</div>
-              <div style={{ fontSize: 12, color: "#78716c", lineHeight: 1.4 }}>{IS_ONLINE ? "Horário, dados e conexão" : "Funcionários, horário e lixeira"}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Aviso quando o funcionário tem acesso restrito */}
-        {setoresPermitidos && (
-          <div style={{ marginTop: 20, fontSize: 11, color: "#a8a29e" }}>
-            Você tem acesso a {setoresPermitidos.length} {setoresPermitidos.length === 1 ? "função" : "funções"} desta plataforma. Para liberar outras, fale com o administrador.
-          </div>
-        )}
-        <div style={{ marginTop: 32, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", alignItems: "center" }}>
-          {loginNecessario ? (
-            <button onClick={handleLogout} style={{ padding: "8px 20px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-              Sair da conta
-            </button>
-          ) : (
-            <span style={{ fontSize: 11, color: "#a8a29e" }}>
-              🔓 Acesso livre — ative o login em Configurações para exigir senha por funcionário
-            </span>
-          )}
-          {IS_DESKTOP && window.licenca?.reset && (
-            <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
-              style={{ padding: "8px 16px", border: "1.5px solid #fecaca", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
-              Resetar licença
-            </button>
-          )}
-        </div>
+  // ─── Layout: sidebar + conteúdo (PDV = sidebar sempre visível) ────────────
+  // No build online (mercadolojo) mantém layout antigo sem sidebar tipo PDV.
+  if (!IS_ONLINE && conteudoSetor) {
+    const handleResetLicenca = (IS_DESKTOP && window.licenca?.reset)
+      ? () => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }
+      : null;
+    return (
+      <div style={{ minHeight: "100vh", paddingLeft: SIDEBAR_LAYOUT_WIDTH, background: "#f5f5f4" }}>
+        <SidebarNav
+          setorAtivo={setor}
+          onNavegar={navegar}
+          onLogout={loginNecessario ? handleLogout : null}
+          onResetLicenca={handleResetLicenca}
+          usuario={usuario}
+          perfil={perfil}
+          loginNecessario={loginNecessario}
+          pendentesCount={pendentesCount}
+          podeAcessar={podeAcessar}
+          syncStatus={syncStatus}
+        />
+        <div style={{ minHeight: "100vh" }}>{conteudoSetor}</div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  if (conteudoSetor) return conteudoSetor;
+
+  // Sem conteúdo → fallback pra home. Nunca deveria chegar aqui.
+  const home = IS_ONLINE ? "pedidos" : "caixa";
+  if (podeAcessar(home)) { setTimeout(() => setSetor(home), 0); }
+  return null;
 }

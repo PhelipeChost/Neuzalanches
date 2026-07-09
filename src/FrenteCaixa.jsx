@@ -106,6 +106,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const qrQueueRef = useRef([]);
   const qrPrintingRef = useRef(false);
   const [qrUrls, setQrUrls] = useState({});
+  // Base URL usada nos QR Codes das mesas — puxa do cardápio online configurado
+  // (senão o cliente escaneia um QR local que não abre no celular dele).
+  const [qrBaseUrl, setQrBaseUrl] = useState("");
   // Agente local de impressão (mesmo da Cozinha) — imprime QR sem diálogo
   const agenteQRRef = useRef(null);
   const [agenteQROnline, setAgenteQROnline] = useState(false);
@@ -198,8 +201,17 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   // Gerar QR codes quando o modal abre
   useEffect(() => {
     if (!modalQR || mesas.length === 0) return;
-    const baseUrl = window.location.origin;
     (async () => {
+      // Usa a URL do cardápio online (sync_url) se configurada — os clientes
+      // escaneiam pelo celular deles, que não fala com localhost do PDV.
+      // Fallback: origin local (só útil no dev / na mesma rede LAN).
+      let baseUrl = window.location.origin;
+      try {
+        const cfg = await api.sync.config();
+        if (cfg?.url) baseUrl = cfg.url.replace(/\/+$/, "");
+      } catch { /* sem conexão remota configurada */ }
+      setQrBaseUrl(baseUrl);
+
       const urls = {};
       for (const mesa of mesas) {
         urls[mesa.numero] = await QRCode.toDataURL(`${baseUrl}/mesa/${mesa.numero}`, {
@@ -230,7 +242,8 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     // 1º) Agente local (recomendado): imprime o QR como raster, sem diálogo.
     if (agenteQRRef.current) {
       try {
-        const url = `${window.location.origin}/mesa/${mesa.numero}`;
+        const base = qrBaseUrl || window.location.origin;
+        const url = `${base}/mesa/${mesa.numero}`;
         const matrix = QRCode.create(url, { errorCorrectionLevel: "M" }).modules;
         await imprimirBytesViaAgente(gerarQRMesaBytes(mesa, matrix, marcaRef.current));
         return "agente";
@@ -620,7 +633,6 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
           </button>
           <div style={{ width: 1, height: 22, background: "var(--border)" }} />
           {nomeUsuario && <span style={{ fontSize: 12, color: "var(--text-muted)", fontWeight: 500 }}>{nomeUsuario}</span>}
-          <button className="fc-nav-tab" onClick={() => onNavegar(null)}>← Início</button>
         </div>
       </header>
 
@@ -1184,6 +1196,14 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               <div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>📱 QR Codes das Mesas</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Imprima e cole nas mesas para pedidos pelo celular</div>
+                {qrBaseUrl && (
+                  <div style={{ fontSize: 11, marginTop: 6, color: qrBaseUrl.includes("://") && !qrBaseUrl.includes("localhost") && !qrBaseUrl.includes("127.0.0.1") ? "var(--success)" : "#d97706", fontWeight: 600 }}
+                    title={"Todos os QR Codes apontam para: " + qrBaseUrl + "/mesa/N"}>
+                    {qrBaseUrl.includes("localhost") || qrBaseUrl.includes("127.0.0.1")
+                      ? "⚠️ Sem cardápio online configurado — QR só funciona na rede local"
+                      : `🌐 Apontando para ${qrBaseUrl.replace(/^https?:\/\//, "")}`}
+                  </div>
+                )}
                 <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, color: agenteQROnline ? "var(--success)" : "var(--text-soft)" }}
                   title={agenteQROnline
                     ? "Agente de impressão conectado: a térmica sai direto, sem caixa de diálogo."

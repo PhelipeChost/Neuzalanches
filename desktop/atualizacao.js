@@ -5,8 +5,18 @@
 // IMPORTANTE: o electron-updater (CJS) é carregado de forma PREGUIÇOSA via
 // createRequire, DENTRO da função e sob try/catch. Assim, mesmo que ele falhe
 // ao carregar no app empacotado, NUNCA derruba o boot do sistema.
-import { app, dialog, Notification } from "electron";
+import { app, dialog, Notification, ipcMain } from "electron";
 import { createRequire } from "module";
+
+// Referência ao autoUpdater atual (a área de Suporte usa pra forçar checagem)
+let _autoUpdater = null;
+
+// Handler IPC pra "verificar atualização agora" (chamado pela seção Suporte)
+ipcMain.handle("atualizacao:verificar", async () => {
+  if (!_autoUpdater) return { ok: false, motivo: "auto-updater não carregou" };
+  try { await _autoUpdater.checkForUpdates(); return { ok: true }; }
+  catch (e) { return { ok: false, motivo: e?.message || String(e) }; }
+});
 
 export function configurarAutoUpdate(getJanela) {
   if (!app.isPackaged) {
@@ -18,6 +28,7 @@ export function configurarAutoUpdate(getJanela) {
   try {
     const require = createRequire(import.meta.url);
     autoUpdater = require("electron-updater").autoUpdater;
+    _autoUpdater = autoUpdater;
   } catch (e) {
     console.error("[update] não foi possível carregar electron-updater:", e?.message || e);
     return; // sem auto-update, mas o app segue normal

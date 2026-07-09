@@ -12,3 +12,14 @@ contextBridge.exposeInMainWorld("licenca", {
 contextBridge.exposeInMainWorld("splash", {
   versao: () => ipcRenderer.invoke("splash:versao"),
 });
+
+// Info do PDV (versão do app) — usada pela seção Suporte no diagnóstico.
+contextBridge.exposeInMainWorld("pdvInfo", {
+  versao: null, // preenchido no boot pelo próprio main; a UI faz fallback via IPC
+  getVersao: () => ipcRenderer.invoke("splash:versao"),
+});
+
+// Auto-update: gatilho manual "verificar agora" no painel de Suporte
+contextBridge.exposeInMainWorld("atualizacao", {
+  verificar: () => ipcRenderer.invoke("atualizacao:verificar"),
+});

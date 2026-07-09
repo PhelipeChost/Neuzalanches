@@ -297,6 +297,11 @@ app.get("/api/config/estabelecimento", (req, res) => {
   });
 });
 
+// Health check leve — usado pelo Suporte pra reportar status do servidor local.
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, desktop: IS_DESKTOP_APP, uptime: process.uptime() });
+});
+
 // ─── LOGIN OPCIONAL (PDV desktop) ────────────────────────────────────────────
 
 // Público: o frontend consulta antes de decidir se mostra a tela de login.
@@ -501,7 +506,9 @@ app.post("/api/categorias", authMiddleware, adminOnly, (req, res) => {
   const { nome, permite_adicionais } = req.body;
   if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
   try {
-    res.status(201).json(criarCategoria({ nome, permite_adicionais }));
+    const c = criarCategoria({ nome, permite_adicionais });
+    agendarSyncCatalogo();
+    res.status(201).json(c);
   } catch (err) {
     if (err.message.includes("UNIQUE")) {
       return res.status(409).json({ error: "Categoria já existe" });
@@ -513,7 +520,9 @@ app.post("/api/categorias", authMiddleware, adminOnly, (req, res) => {
 app.put("/api/categorias/reordenar", authMiddleware, adminOnly, (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) return res.status(400).json({ error: "ids deve ser um array" });
-  res.json(reordenarCategorias(ids));
+  const r = reordenarCategorias(ids);
+  agendarSyncCatalogo();
+  res.json(r);
 });
 
 app.put("/api/categorias/:id", authMiddleware, adminOnly, (req, res) => {
@@ -521,11 +530,13 @@ app.put("/api/categorias/:id", authMiddleware, adminOnly, (req, res) => {
   if (nome !== undefined && !nome) return res.status(400).json({ error: "Nome inválido" });
   const c = atualizarCategoria(req.params.id, { nome, permite_adicionais, ordem });
   if (!c) return res.status(404).json({ error: "Não encontrado" });
+  agendarSyncCatalogo();
   res.json(c);
 });
 
 app.delete("/api/categorias/:id", authMiddleware, adminOnly, (req, res) => {
   if (!excluirCategoria(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
+  agendarSyncCatalogo();
   res.json({ success: true });
 });
 
@@ -547,7 +558,9 @@ app.post("/api/adicionais", authMiddleware, adminOnly, (req, res) => {
   const { nome, preco, custo, disponivel, max_quantidade, categoria_id } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  res.status(201).json(criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id }));
+  const a = criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id });
+  agendarSyncCatalogo();
+  res.status(201).json(a);
 });
 
 app.put("/api/adicionais/:id", authMiddleware, adminOnly, (req, res) => {
@@ -555,11 +568,13 @@ app.put("/api/adicionais/:id", authMiddleware, adminOnly, (req, res) => {
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
   const a = atualizarAdicional(req.params.id, { nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id });
   if (!a) return res.status(404).json({ error: "Não encontrado" });
+  agendarSyncCatalogo();
   res.json(a);
 });
 
 app.delete("/api/adicionais/:id", authMiddleware, adminOnly, (req, res) => {
   if (!excluirAdicional(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
+  agendarSyncCatalogo();
   res.json({ success: true });
 });
 
@@ -587,7 +602,9 @@ app.post("/api/produtos", authMiddleware, adminOnly, (req, res) => {
   const { nome, descricao, preco, custo, categoria, imagem, disponivel } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  res.status(201).json(criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel }));
+  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel });
+  agendarSyncCatalogo();
+  res.status(201).json(p);
 });
 
 app.put("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
@@ -595,11 +612,13 @@ app.put("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
   const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel });
   if (!p) return res.status(404).json({ error: "Não encontrado" });
+  agendarSyncCatalogo();
   res.json(p);
 });
 
 app.delete("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
   if (!excluirProduto(req.params.id)) return res.status(404).json({ error: "Não encontrado" });
+  agendarSyncCatalogo();
   res.json({ success: true });
 });
 
@@ -629,7 +648,9 @@ app.post("/api/promocoes", authMiddleware, adminOnly, (req, res) => {
   if (b.promo_data_inicio && b.promo_data_fim && b.promo_data_inicio > b.promo_data_fim) {
     return res.status(400).json({ error: "Data de início não pode ser após data de fim" });
   }
-  res.status(201).json(criarPromocao(b));
+  const p = criarPromocao(b);
+  agendarSyncCatalogo();
+  res.status(201).json(p);
 });
 
 app.put("/api/promocoes/:id", authMiddleware, adminOnly, (req, res) => {
@@ -642,6 +663,7 @@ app.put("/api/promocoes/:id", authMiddleware, adminOnly, (req, res) => {
   }
   const p = atualizarPromocao(req.params.id, b);
   if (!p) return res.status(404).json({ error: "Promoção não encontrada" });
+  agendarSyncCatalogo();
   res.json(p);
 });
 
@@ -659,12 +681,14 @@ app.post("/api/produtos/:id/imagens", authMiddleware, adminOnly, (req, res) => {
   const { imagem, ordem } = req.body;
   if (!imagem) return res.status(400).json({ error: "Imagem obrigatória" });
   const img = adicionarImagemProduto({ produto_id: req.params.id, imagem, ordem: ordem ?? 0 });
+  agendarSyncCatalogo();
   res.status(201).json(img);
 });
 
 app.delete("/api/produtos/:id/imagens/:imagemId", authMiddleware, adminOnly, (req, res) => {
   const ok = removerImagemProduto(req.params.imagemId);
   if (!ok) return res.status(404).json({ error: "Imagem não encontrada" });
+  agendarSyncCatalogo();
   res.json({ ok: true });
 });
 
@@ -2176,6 +2200,44 @@ function iniciarSyncPedidos() {
 // para o servidor online a cada 10 min (apenas mudanças detectadas por hash).
 let syncCatalogoTimer = null;
 let syncCatalogoHash = "";
+let syncCatalogoDebounce = null;
+
+async function pushCatalogoAgora() {
+  const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
+  const token = obterConfig("sync_token") || "";
+  const enabled = obterConfig("sync_enabled") === "1";
+  if (!url || !token || !enabled) return;
+  try {
+    const produtos = listarProdutos();
+    const categorias = listarCategorias();
+    const adicionais = listarAdicionais();
+    const hash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
+      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(",") });
+    if (hash === syncCatalogoHash) return;
+    const r = await fetch(`${url}/api/sync/push-catalogo`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ produtos, categorias, adicionais }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (r.ok) {
+      syncCatalogoHash = hash;
+      salvarConfig("sync_last", new Date().toISOString());
+      salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
+      console.log(`[sync-catalogo] push ok — ${produtos.length} prod, ${categorias.length} cat, ${adicionais.length} adic`);
+    }
+  } catch { /* offline — próximo tick tenta de novo */ }
+}
+
+// Trigger imediato com debounce (cliente edita 5 produtos → 1 push).
+// Chamado após qualquer CRUD de produto/categoria/adicional.
+export function agendarSyncCatalogo(delayMs = 2000) {
+  if (syncCatalogoDebounce) clearTimeout(syncCatalogoDebounce);
+  syncCatalogoDebounce = setTimeout(() => {
+    syncCatalogoDebounce = null;
+    pushCatalogoAgora();
+  }, delayMs);
+}
 
 function iniciarSyncCatalogo() {
   if (syncCatalogoTimer) clearInterval(syncCatalogoTimer);
@@ -2186,33 +2248,9 @@ function iniciarSyncCatalogo() {
   const enabled = obterConfig("sync_enabled") === "1";
   if (!url || !token || !enabled) return;
 
-  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-
-  async function tick() {
-    try {
-      const produtos = listarProdutos();
-      const categorias = listarCategorias();
-      const adicionais = listarAdicionais();
-      const hash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
-        ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(",") });
-      if (hash === syncCatalogoHash) return;
-      const r = await fetch(`${url}/api/sync/push-catalogo`, {
-        method: "POST", headers,
-        body: JSON.stringify({ produtos, categorias, adicionais }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (r.ok) {
-        syncCatalogoHash = hash;
-        salvarConfig("sync_last", new Date().toISOString());
-        salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
-        console.log(`[sync-catalogo] push ok — ${produtos.length} prod, ${categorias.length} cat, ${adicionais.length} adic`);
-      }
-    } catch { /* offline — tenta de novo no próximo tick */ }
-  }
-
-  syncCatalogoTimer = setInterval(tick, 10 * 60_000);
-  setTimeout(tick, 5000);
-  console.log(`[sync-catalogo] iniciado → ${url} (a cada 10 min)`);
+  syncCatalogoTimer = setInterval(pushCatalogoAgora, 10 * 60_000);
+  setTimeout(pushCatalogoAgora, 5000);
+  console.log(`[sync-catalogo] iniciado → ${url} (a cada 10 min + trigger imediato após CRUD)`);
 }
 
 // Re-inicia os motores quando a config de sync muda
