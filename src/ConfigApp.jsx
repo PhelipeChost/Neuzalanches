@@ -411,7 +411,7 @@ function GeralTab() {
             <div>
               <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>NOME DO FAVORECIDO (opcional)</label>
               <input value={pixCfg.pix_nome} onChange={e => setPixCfg(c => ({ ...c, pix_nome: e.target.value }))}
-                placeholder="Ex: Neuza Lanches LTDA"
+                placeholder="Ex: Lanches do Marcos LTDA"
                 style={{ ...cfgInp, width: "100%" }} />
             </div>
             <button onClick={salvarPix} disabled={salvandoPix}
@@ -658,6 +658,7 @@ function ConexaoTab() {
           </div>
         </div>
 
+        {!IS_ONLINE && <>
         {/* Formulário de conexão */}
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -747,6 +748,7 @@ function ConexaoTab() {
             </div>
           )}
         </div>
+        </>}
       </div>
 
       {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}

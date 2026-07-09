@@ -255,7 +255,7 @@ export default function App() {
         `}</style>
         <div style={{ background: "#fff", borderRadius: 16, padding: "40px 36px", width: 400, maxWidth: "92vw", boxShadow: "0 8px 30px rgba(0,0,0,0.08)" }}>
           <div style={{ textAlign: "center", marginBottom: 28 }}>
-            <img src="/logo.png" alt="NeuzaLanches" style={{ width: 72, height: 72, borderRadius: "50%", objectFit: "cover", marginBottom: 12 }} />
+            <img src="/logo.png" alt="Logo" style={{ width: 72, height: 72, borderRadius: "50%", objectFit: "cover", marginBottom: 12 }} />
             <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700 }}>Painel Admin</div>
             <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>Acesse com suas credenciais</div>
           </div>
@@ -356,12 +356,6 @@ export default function App() {
         @media (max-width: 900px) { .hub-card { width: 170px; padding: 28px 18px; } }
       `}</style>
       <div style={{ textAlign: "center", padding: "40px 20px" }}>
-        <div style={{ marginBottom: 36 }}>
-          <img src="/logo.png" alt="Logo" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", marginBottom: 14 }}
-            onError={e => { e.currentTarget.style.display = "none"; }} />
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, color: "#1c1917" }}>Olá, {usuario.nome}</div>
-          <div style={{ fontSize: 13, color: "#a8a29e", marginTop: 6 }}>Selecione seu setor de trabalho</div>
-        </div>
 
         {!IS_ONLINE && !onbDismissed && (
           <OnboardingCard

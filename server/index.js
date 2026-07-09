@@ -1011,6 +1011,8 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
     const agora = new Date().toISOString();
     salvarConfig("sync_last", agora);
     salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
+    syncCatalogoHash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
+      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(",") });
     res.json({ ok: true, ...result, sincronizado_em: agora });
   } catch (err) {
     salvarConfig("sync_last", new Date().toISOString());
@@ -1510,8 +1512,8 @@ app.put('/api/config/horario', authMiddleware, (req, res) => {
 // ─── WHATSAPP QR CODE PAGE ──────────────────────────────────────────────────
 
 const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
 
 app.get('/whatsapp', async (req, res) => {
   let qrData = null;
@@ -1545,7 +1547,7 @@ app.get('/whatsapp', async (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>WhatsApp — Neuzalanches</title>
+  <title>WhatsApp — Conexão</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', sans-serif; background: #f0fdf4; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -1571,7 +1573,7 @@ app.get('/whatsapp', async (req, res) => {
 <body>
 <div class="card">
   <div class="logo">🍔</div>
-  <h1>Neuzalanches — WhatsApp</h1>
+  <h1>WhatsApp Business</h1>
   <p class="sub">Conexão do WhatsApp Business via Evolution API</p>
 
   ${status === 'open' ? `
@@ -1851,8 +1853,8 @@ app.post('/api/bot/webhook', async (req, res) => {
     const texto = montarSaudacaoBot();
 
     const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
-    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
+    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
 
     try {
       // Evolution API v2 usa { number, text } direto (não mais textMessage.text)
@@ -1885,8 +1887,8 @@ app.post('/api/bot/enviar', async (req, res) => {
     if (!number || !text) return res.status(400).json({ error: 'number e text são obrigatórios' });
 
     const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
-    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
+    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
 
     // Evolution API v2 usa { number, text } direto
     const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
@@ -2169,9 +2171,54 @@ function iniciarSyncPedidos() {
   console.log(`[sync-pedidos] iniciado → ${url}`);
 }
 
-// Re-inicia o motor quando a config de sync muda
+// ─── MOTOR DE AUTO-SYNC DO CATÁLOGO ─────────────────────────────────────────
+// Quando a conexão remota está configurada, empurra produtos/categorias/adicionais
+// para o servidor online a cada 10 min (apenas mudanças detectadas por hash).
+let syncCatalogoTimer = null;
+let syncCatalogoHash = "";
+
+function iniciarSyncCatalogo() {
+  if (syncCatalogoTimer) clearInterval(syncCatalogoTimer);
+  syncCatalogoTimer = null;
+
+  const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
+  const token = obterConfig("sync_token") || "";
+  const enabled = obterConfig("sync_enabled") === "1";
+  if (!url || !token || !enabled) return;
+
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+
+  async function tick() {
+    try {
+      const produtos = listarProdutos();
+      const categorias = listarCategorias();
+      const adicionais = listarAdicionais();
+      const hash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
+        ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(",") });
+      if (hash === syncCatalogoHash) return;
+      const r = await fetch(`${url}/api/sync/push-catalogo`, {
+        method: "POST", headers,
+        body: JSON.stringify({ produtos, categorias, adicionais }),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (r.ok) {
+        syncCatalogoHash = hash;
+        salvarConfig("sync_last", new Date().toISOString());
+        salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
+        console.log(`[sync-catalogo] push ok — ${produtos.length} prod, ${categorias.length} cat, ${adicionais.length} adic`);
+      }
+    } catch { /* offline — tenta de novo no próximo tick */ }
+  }
+
+  syncCatalogoTimer = setInterval(tick, 10 * 60_000);
+  setTimeout(tick, 5000);
+  console.log(`[sync-catalogo] iniciado → ${url} (a cada 10 min)`);
+}
+
+// Re-inicia os motores quando a config de sync muda
 app.post("/api/sync/reiniciar", authMiddleware, adminOnly, (_req, res) => {
   iniciarSyncPedidos();
+  iniciarSyncCatalogo();
   res.json({ ok: true });
 });
 
@@ -2188,6 +2235,7 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`Frontend: rode "npm run dev" ou "npm run build" para servir a interface`);
   }
 
-  // Inicia sync de pedidos automaticamente se configurado
+  // Inicia sync automaticamente se configurado
   try { iniciarSyncPedidos(); } catch (e) { console.error("[sync-pedidos] falha ao iniciar:", e.message); }
+  try { iniciarSyncCatalogo(); } catch (e) { console.error("[sync-catalogo] falha ao iniciar:", e.message); }
 });

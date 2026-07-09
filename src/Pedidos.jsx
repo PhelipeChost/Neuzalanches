@@ -384,7 +384,7 @@ export default function Pedidos() {
       new Notification("🔔 Novo pedido!", {
         body: qtd === 1 ? "1 pedido pendente aguardando confirmação." : `${qtd} pedidos pendentes aguardando confirmação.`,
         icon: "/favicon.ico",
-        tag: "neuzalanches-pedido",
+        tag: "nexus-pedido",
       });
     } catch { /* noop */ }
   }, []);

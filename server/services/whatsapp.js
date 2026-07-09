@@ -2,8 +2,8 @@
 import { obterConfig } from '../database.js';
 
 const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-const EVOLUTION_KEY = process.env.EVOLUTION_KEY || 'neuzalanches-secret-key-2024';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'neuzalanches';
+const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
 
 // Identidade do estabelecimento — SEMPRE das Configurações da plataforma
 function nomeEstab() {

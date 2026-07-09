@@ -420,7 +420,7 @@ if (!existePix) {
 }
 const existePixNome = db.prepare("SELECT 1 FROM config WHERE key = 'pix_nome'").get();
 if (!existePixNome) {
-  db.prepare("INSERT INTO config (key, value) VALUES ('pix_nome', 'Neuza Lanches')").run();
+  db.prepare("INSERT INTO config (key, value) VALUES ('pix_nome', '')").run();
 }
 
 // Migração: permitir email NULL e telefone UNIQUE na tabela usuarios (para bancos já existentes)
@@ -2122,15 +2122,15 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
   const resultado = { categorias: { inserido: 0, atualizado: 0 }, adicionais: { inserido: 0, atualizado: 0 }, produtos: { inserido: 0, atualizado: 0 } };
 
   const tx = db.transaction(() => {
+    const catIdsRecebidos = new Set();
     for (const c of categorias) {
       if (!c || !c.id) continue;
-      // nome é UNIQUE em categorias — dois catálogos independentes costumam ter
-      // nomes iguais (ex.: "Bebidas") com ids diferentes. Casa por id OU nome
-      // pra não colidir com a constraint; senão insere como categoria nova.
+      catIdsRecebidos.add(c.id);
       const porId = db.prepare("SELECT id FROM categorias WHERE id = ?").get(c.id);
       const porNome = porId ? null : db.prepare("SELECT id FROM categorias WHERE nome = ?").get(c.nome);
       const alvo = porId || porNome;
       if (alvo) {
+        catIdsRecebidos.add(alvo.id);
         db.prepare("UPDATE categorias SET nome = ?, permite_adicionais = ?, ordem = ? WHERE id = ?")
           .run(c.nome, c.permite_adicionais ?? 0, c.ordem ?? 0, alvo.id);
         resultado.categorias.atualizado++;
@@ -2141,8 +2141,10 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
       }
     }
 
+    const adicIdsRecebidos = new Set();
     for (const a of adicionais) {
       if (!a || !a.id) continue;
+      adicIdsRecebidos.add(a.id);
       const existe = db.prepare("SELECT id FROM adicionais WHERE id = ?").get(a.id);
       if (existe) {
         db.prepare("UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ?, max_quantidade = ?, categoria_id = ? WHERE id = ?")
@@ -2155,8 +2157,10 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
       }
     }
 
+    const prodIdsRecebidos = new Set();
     for (const p of produtos) {
       if (!p || !p.id) continue;
+      prodIdsRecebidos.add(p.id);
       const existe = db.prepare("SELECT id FROM produtos WHERE id = ?").get(p.id);
       if (existe) {
         db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ? WHERE id = ?")
@@ -2166,6 +2170,27 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
         db.prepare("INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
           .run(p.id, p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1);
         resultado.produtos.inserido++;
+      }
+    }
+
+    if (produtos.length > 0) {
+      const orfaos = db.prepare("SELECT id FROM produtos WHERE deleted_at IS NULL").all();
+      resultado.produtos.removido = 0;
+      for (const o of orfaos) {
+        if (!prodIdsRecebidos.has(o.id)) {
+          db.prepare("UPDATE produtos SET deleted_at = datetime('now') WHERE id = ?").run(o.id);
+          resultado.produtos.removido++;
+        }
+      }
+    }
+    if (adicionais.length > 0) {
+      const orfaos = db.prepare("SELECT id FROM adicionais WHERE deleted_at IS NULL").all();
+      resultado.adicionais.removido = 0;
+      for (const o of orfaos) {
+        if (!adicIdsRecebidos.has(o.id)) {
+          db.prepare("UPDATE adicionais SET deleted_at = datetime('now') WHERE id = ?").run(o.id);
+          resultado.adicionais.removido++;
+        }
       }
     }
   });

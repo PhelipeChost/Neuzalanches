@@ -57,7 +57,7 @@ export default function ModalAuth({ onLogin, onClose, defaultMode = "registro" }
 
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <img src="/logo.png" alt="NeuzaLanches" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", marginBottom: 8 }} />
+          <img src="/logo.png" alt="Logo" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", marginBottom: 8 }} />
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700 }}>
             {modo === "login" ? "Entrar na conta" : "Crie sua conta"}
           </div>

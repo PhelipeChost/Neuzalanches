@@ -1481,6 +1481,7 @@ export default function ClienteApp() {
   const [cardapioAtivo, setCardapioAtivo] = useState(null);
   const [pedidoEnviado, setPedidoEnviado] = useState(null);
   const [modalProduto, setModalProduto] = useState(null);
+  const [nomeEstab, setNomeEstab] = useState("");
 
   // Tema (light/dark) com persistência
   const [tema, setTema] = useState(() => {
@@ -1503,6 +1504,7 @@ export default function ClienteApp() {
 
   useEffect(() => {
     fetchHorarioAberto().then(setAberto);
+    api.config.estabelecimento().then(e => setNomeEstab(e.nome_estabelecimento || "")).catch(() => {});
     const t = setInterval(() => fetchHorarioAberto().then(setAberto), 5 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
@@ -1913,7 +1915,7 @@ export default function ClienteApp() {
             fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 17,
             color: "#fff", letterSpacing: "-0.2px", lineHeight: 1,
           }}>
-            Neuza<span style={{ color: "var(--brand)" }}>Lanches</span>
+            {nomeEstab || "Cardápio"}
           </span>
         </div>
 
