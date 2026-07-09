@@ -48,19 +48,22 @@ async function main() {
     // Recompilar better-sqlite3 para o ABI do Electron (o Node.js do sistema
     // pode ser uma versão diferente — ex.: Node 24 = MODULE_VERSION 137 vs
     // Electron 33/Node 22 = MODULE_VERSION 130).
-    console.log("→ Recompilando better-sqlite3 para o Electron…\n");
-    const rb = spawnSync("npx", ["@electron/rebuild", "-f", "-w", "better-sqlite3", "-m", ".."],
-      { cwd: DESKTOP, stdio: "inherit", shell: true });
-    if (rb.status !== 0) { console.error("\n✗ electron-rebuild falhou."); process.exit(1); }
+    // Usa prebuild-install para baixar o binário pré-compilado correto.
+    const electronVer = JSON.parse(readFileSync(join(DESKTOP, "node_modules/electron/package.json"), "utf8")).version;
+    console.log(`→ Baixando better-sqlite3 para Electron ${electronVer}…\n`);
+    const rb = spawnSync("npx", ["prebuild-install", "--runtime=electron", `--target=${electronVer}`, "--arch=x64", "--tag-prefix=v"],
+      { cwd: join(process.cwd(), "node_modules", "better-sqlite3"), stdio: "inherit", shell: true });
+    if (rb.status !== 0) { console.error("\n✗ prebuild-install falhou."); process.exit(1); }
 
     console.log(`\n→ Buildando instalador em ${OUT}… isso leva alguns minutos.\n`);
     const r = spawnSync("npx", ["electron-builder", `-c.directories.output=${OUT}`],
       { cwd: DESKTOP, stdio: "inherit", shell: true });
 
     // Recompila better-sqlite3 de volta para o Node.js do sistema (senão o server
-    // de dev local quebra). Não falha o processo se der erro aqui.
-    console.log("\n→ Recompilando better-sqlite3 de volta para o Node.js do sistema…");
-    spawnSync("npm", ["rebuild", "better-sqlite3"], { stdio: "inherit", shell: true });
+    // de dev local quebra).
+    console.log("\n→ Restaurando better-sqlite3 para o Node.js do sistema…");
+    spawnSync("npx", ["prebuild-install", "--tag-prefix=v"],
+      { cwd: join(process.cwd(), "node_modules", "better-sqlite3"), stdio: "inherit", shell: true });
 
     if (r.status !== 0) { console.error("\n✗ Build falhou. Nada foi publicado."); process.exit(1); }
   }
