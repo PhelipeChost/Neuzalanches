@@ -251,7 +251,7 @@ app.get("/api/config", authMiddleware, adminOnly, (req, res) => {
 
 app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
   const { saldo_inicial, nome_estabelecimento, whatsapp, logo, link_exibicao, mensagem_alerta,
-    evolution_url, evolution_key, evolution_instance } = req.body;
+    evolution_url, evolution_key, evolution_instance, pix_key, pix_nome } = req.body;
   if (evolution_url !== undefined) salvarConfig("evolution_url", String(evolution_url).trim().slice(0, 200));
   if (evolution_key !== undefined) salvarConfig("evolution_key", String(evolution_key).trim().slice(0, 200));
   if (evolution_instance !== undefined) salvarConfig("evolution_instance", String(evolution_instance).trim().slice(0, 100));
@@ -276,8 +276,13 @@ app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
     salvarConfig("link_exibicao", String(link_exibicao).trim().slice(0, 200));
   }
   if (mensagem_alerta !== undefined) {
-    // Mensagem de alerta (adversidade): vazia = sem alerta ativo
     salvarConfig("mensagem_alerta", String(mensagem_alerta).trim().slice(0, 600));
+  }
+  if (pix_key !== undefined) {
+    salvarConfig("pix_key", String(pix_key).trim().slice(0, 200));
+  }
+  if (pix_nome !== undefined) {
+    salvarConfig("pix_nome", String(pix_nome).trim().slice(0, 200));
   }
   res.json({
     saldo_inicial: parseFloat(obterConfig("saldo_inicial") || "0"),
@@ -289,6 +294,10 @@ app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
     evolution_url: obterConfig("evolution_url") || "",
     evolution_key: obterConfig("evolution_key") || "",
     evolution_instance: obterConfig("evolution_instance") || "",
+    pix_key: obterConfig("pix_key") || "",
+    pix_nome: obterConfig("pix_nome") || "",
+    pix_key: obterConfig("pix_key") || "",
+    pix_nome: obterConfig("pix_nome") || "",
   });
 });
 

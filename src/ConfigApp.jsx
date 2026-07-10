@@ -220,32 +220,15 @@ function GeralTab() {
   const [horarioAberto, setHorarioAberto] = useState(false);
   const [salvandoHorario, setSalvandoHorario] = useState(false);
 
-  // Chave Pix
-  const [pixCfg, setPixCfg] = useState({ pix_key: "", pix_nome: "" });
-  const [salvandoPix, setSalvandoPix] = useState(false);
-
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
   useEffect(() => {
-    const promises = [api.pix.obter().catch(() => ({ pix_key: "", pix_nome: "" }))];
-    if (IS_ONLINE) promises.push(api.horario.obter());
-    Promise.all(promises).then(([pix, extra]) => {
-      setPixCfg({ pix_key: pix?.pix_key || "", pix_nome: pix?.pix_nome || "" });
-      if (IS_ONLINE && extra) { const { aberto, ...cfg } = extra; setHorario(cfg); setHorarioAberto(aberto); }
-    }).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
+    if (!IS_ONLINE) { setLoading(false); return; }
+    api.horario.obter()
+      .then(extra => { const { aberto, ...cfg } = extra; setHorario(cfg); setHorarioAberto(aberto); })
+      .catch(() => showToast("Erro ao carregar", "#dc2626"))
+      .finally(() => setLoading(false));
   }, []);
-
-  const salvarPix = async () => {
-    setSalvandoPix(true);
-    try {
-      await api.pix.salvar({ pix_key: pixCfg.pix_key.trim(), pix_nome: pixCfg.pix_nome.trim() });
-      showToast("Chave Pix salva!");
-    } catch (err) {
-      showToast("Erro: " + err.message, "#dc2626");
-    } finally {
-      setSalvandoPix(false);
-    }
-  };
 
   const salvarHorario = async (novoHorario) => {
     setSalvandoHorario(true);
@@ -368,44 +351,14 @@ function GeralTab() {
           </button>
         </div>}
 
-        {/* ── DADOS DO ESTABELECIMENTO (só online) ──────────────────── */}
-        {IS_ONLINE && <EstabelecimentoCard showToast={showToast} />}
+        {/* ── BOT WHATSAPP + DADOS DO ESTABELECIMENTO (só online) ── */}
         {IS_ONLINE && <BotWhatsAppCard showToast={showToast} />}
-
-        {/* ── CHAVE PIX ──────────────────────────────────────────────── */}
-        <div className="card">
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Chave Pix</div>
-          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-            Aparece para o cliente nos detalhes do pedido (pagamento Pix), para que ele possa pagar após finalizar.
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>CHAVE PIX</label>
-              <input value={pixCfg.pix_key} onChange={e => setPixCfg(c => ({ ...c, pix_key: e.target.value }))}
-                placeholder="CPF/CNPJ, telefone, e-mail ou chave aleatória"
-                style={{ ...cfgInp, width: "100%" }} />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>NOME DO FAVORECIDO (opcional)</label>
-              <input value={pixCfg.pix_nome} onChange={e => setPixCfg(c => ({ ...c, pix_nome: e.target.value }))}
-                placeholder="Ex: Lanches do Marcos LTDA"
-                style={{ ...cfgInp, width: "100%" }} />
-            </div>
-            <button onClick={salvarPix} disabled={salvandoPix}
-              style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvandoPix ? 0.6 : 1 }}>
-              {salvandoPix ? "Salvando..." : "💾 Salvar chave Pix"}
-            </button>
-          </div>
-        </div>
 
         {/* ── LOGIN E ACESSO (só PDV desktop) ────────────────────────── */}
         <LoginAcessoCard showToast={showToast} />
 
         {/* ── FUNCIONÁRIOS + PERMISSÕES (só PDV) ─────────────────────── */}
         {!IS_ONLINE && <FuncionariosCard showToast={showToast} />}
-
-        {/* Convite de Administradores removido — funcionários entram por
-            "Funcionários e permissões" (card acima). */}
       </div>
 
       {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
@@ -413,26 +366,58 @@ function GeralTab() {
   );
 }
 
-// ─── DADOS DO ESTABELECIMENTO (online) ──────────────────────────────────────
-function EstabelecimentoCard({ showToast }) {
-  const [cfg, setCfg] = useState({ nome_estabelecimento: "", whatsapp: "", logo: "" });
+// ─── BOT WHATSAPP + CONFIGURAÇÕES DO ESTABELECIMENTO (online) ───────────────
+// Card unificado: dados do estabelecimento (nome, logo, WhatsApp, Pix) + bot
+// WhatsApp (QR, alerta). O bot usa esses dados nas mensagens automáticas —
+// tudo num só lugar para cada estabelecimento preencher e o bot capturar.
+function BotWhatsAppCard({ showToast }) {
+  const [cfg, setCfg] = useState({
+    nome_estabelecimento: "", whatsapp: "", logo: "",
+    pix_key: "", pix_nome: "", mensagem_alerta: "",
+  });
+  const [status, setStatus] = useState(null);
   const [salvando, setSalvando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const carregarStatus = () => api.whatsappBot.status().then(setStatus).catch(() => setStatus(null));
 
   useEffect(() => {
     api.config.obter()
-      .then(c => setCfg({ nome_estabelecimento: c.nome_estabelecimento || "", whatsapp: c.whatsapp || "", logo: c.logo || "" }))
+      .then(c => setCfg({
+        nome_estabelecimento: c.nome_estabelecimento || "",
+        whatsapp: c.whatsapp || "",
+        logo: c.logo || "",
+        pix_key: c.pix_key || "",
+        pix_nome: c.pix_nome || "",
+        mensagem_alerta: c.mensagem_alerta || "",
+      }))
       .catch(() => {})
       .finally(() => setLoading(false));
+    carregarStatus();
+    const iv = setInterval(carregarStatus, 15000);
+    return () => clearInterval(iv);
   }, []);
 
   const salvar = async () => {
     setSalvando(true);
     try {
       await api.config.salvar(cfg);
-      showToast("Dados salvos!");
+      showToast("Configurações salvas!");
     } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
     finally { setSalvando(false); }
+  };
+
+  const enviarAlerta = async () => {
+    const msg = cfg.mensagem_alerta.trim();
+    if (!msg) { showToast("Escreva a mensagem de alerta antes de enviar", "#dc2626"); return; }
+    if (!confirm("Enviar este alerta agora para TODOS os clientes com pedido em andamento?")) return;
+    setEnviando(true);
+    try {
+      const r = await api.whatsappBot.enviarAlerta(msg);
+      showToast(`Alerta enviado para ${r.enviados} de ${r.total} cliente(s)!`);
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setEnviando(false); }
   };
 
   const handleFoto = (e) => {
@@ -444,116 +429,31 @@ function EstabelecimentoCard({ showToast }) {
     reader.readAsDataURL(file);
   };
 
-  if (loading) return null;
-
-  return (
-    <div className="card">
-      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Dados do Estabelecimento</div>
-      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-        Nome, foto e WhatsApp aparecem no cardápio digital para o cliente.
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>NOME DO ESTABELECIMENTO</label>
-          <input value={cfg.nome_estabelecimento} onChange={e => setCfg(c => ({ ...c, nome_estabelecimento: e.target.value }))}
-            placeholder="Ex: Marcos Lojo Lanches" maxLength={60} style={{ ...cfgInp, width: "100%" }} />
-        </div>
-
-        <div>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>FOTO / LOGO</label>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {cfg.logo && <img src={cfg.logo} alt="logo" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid #e7e5e4" }} />}
-            <label style={{ ...cfgBtn, background: "#1c1917", cursor: "pointer", display: "inline-block" }}>
-              {cfg.logo ? "Trocar foto" : "Enviar foto"}
-              <input type="file" accept="image/*" onChange={handleFoto} style={{ display: "none" }} />
-            </label>
-            {cfg.logo && <button onClick={() => setCfg(c => ({ ...c, logo: "" }))} style={{ ...cfgDel }}>Remover</button>}
-          </div>
-        </div>
-
-        <div>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>WHATSAPP</label>
-          <input value={cfg.whatsapp} onChange={e => setCfg(c => ({ ...c, whatsapp: e.target.value }))}
-            placeholder="(11) 99999-9999" maxLength={30} style={{ ...cfgInp, width: "100%" }} />
-          <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Aparece como ícone clicável no cardápio digital.</div>
-        </div>
-
-        <button onClick={salvar} disabled={salvando}
-          style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvando ? 0.6 : 1 }}>
-          {salvando ? "Salvando..." : "💾 Salvar dados"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ─── BOT WHATSAPP (online) ───────────────────────────────────────────────────
-// O admin não configura nada técnico: a conexão com a Evolution é infra da
-// Nexus (pré-configurada no servidor). Aqui ele só ativa o bot lendo o QR
-// Code e gerencia a mensagem de alerta (adversidade).
-function BotWhatsAppCard({ showToast }) {
-  const [mensagem, setMensagem] = useState("");
-  const [status, setStatus] = useState(null); // { configurado, estado }
-  const [salvando, setSalvando] = useState(false);
-  const [enviando, setEnviando] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  const carregarStatus = () => api.whatsappBot.status().then(setStatus).catch(() => setStatus(null));
-
-  useEffect(() => {
-    api.config.obter()
-      .then(c => setMensagem(c.mensagem_alerta || ""))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    carregarStatus();
-    const iv = setInterval(carregarStatus, 15000);
-    return () => clearInterval(iv);
-  }, []);
-
-  const salvarMensagem = async () => {
-    setSalvando(true);
-    try {
-      await api.config.salvar({ mensagem_alerta: mensagem });
-      showToast(mensagem.trim() ? "Mensagem de alerta salva!" : "Alerta desativado.");
-    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
-    finally { setSalvando(false); }
-  };
-
-  const enviarAlerta = async () => {
-    const msg = mensagem.trim();
-    if (!msg) { showToast("Escreva a mensagem de alerta antes de enviar", "#dc2626"); return; }
-    if (!confirm("Enviar este alerta agora para TODOS os clientes com pedido em andamento?")) return;
-    setEnviando(true);
-    try {
-      const r = await api.whatsappBot.enviarAlerta(msg);
-      showToast(`Alerta enviado para ${r.enviados} de ${r.total} cliente(s)!`);
-    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
-    finally { setEnviando(false); }
-  };
-
   const conectado = status?.estado === "open";
   const badge = !status || !status.configurado || status.estado === "inacessivel"
-    ? { txt: "🔴 Bot indisponível — fale com o suporte", bg: "#fee2e2", cor: "#dc2626" }
+    ? { txt: "🔴 Bot indisponível", bg: "#fee2e2", cor: "#dc2626" }
     : conectado
       ? { txt: "🟢 Bot ativo", bg: "#dcfce7", cor: "#16a34a" }
       : { txt: "🟡 Aguardando ativação", bg: "#fef3c7", cor: "#92400e" };
 
   if (loading) return null;
 
+  const lblStyle = { display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 };
+
   return (
     <div className="card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={{ fontSize: 15, fontWeight: 600 }}>Bot WhatsApp</div>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Bot WhatsApp e Dados do Estabelecimento</div>
         <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: badge.bg, color: badge.cor }}>{badge.txt}</span>
       </div>
       <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-        O bot responde os clientes no WhatsApp com a saudação do estabelecimento, envia as notificações de cada
-        atualização de pedido e — quando o cliente escolhe <b>Pix</b> como pagamento — manda a chave Pix (definida em
-        "Dados do Estabelecimento") junto da confirmação.
+        Preencha os dados abaixo — o bot usa essas informações nas mensagens automáticas
+        (saudação, notificações de pedido e chave Pix).
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+        {/* ─ Conexão WhatsApp ─ */}
         {conectado ? (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", background: "#f0fdf4", border: "1.5px solid #bbf7d0", borderRadius: 10 }}>
             <span style={{ fontSize: 22 }}>✅</span>
@@ -563,37 +463,88 @@ function BotWhatsAppCard({ showToast }) {
             </div>
           </div>
         ) : (
-          <button onClick={() => window.open("/api/bot/qr", "_blank")}
-            style={{ ...cfgBtn, width: "100%", padding: "14px 20px", fontSize: 14, background: "#15803d" }}>
-            📱 Ativar bot — ler QR Code no WhatsApp
-          </button>
-        )}
-        {!conectado && (
-          <div style={{ fontSize: 11, color: "#a8a29e", textAlign: "center", marginTop: -4 }}>
-            No celular do estabelecimento: WhatsApp → ⋮ → Aparelhos conectados → Conectar aparelho
-          </div>
+          <>
+            <button onClick={() => window.open("/api/bot/qr", "_blank")}
+              style={{ ...cfgBtn, width: "100%", padding: "14px 20px", fontSize: 14, background: "#15803d" }}>
+              📱 Ativar bot — ler QR Code no WhatsApp
+            </button>
+            <div style={{ fontSize: 11, color: "#a8a29e", textAlign: "center", marginTop: -6 }}>
+              No celular do estabelecimento: WhatsApp → ⋮ → Aparelhos conectados → Conectar aparelho
+            </div>
+          </>
         )}
 
-        <div style={{ borderTop: "1px solid #f5f5f4", paddingTop: 12 }}>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>MENSAGEM DE ALERTA (adversidade)</label>
-          <textarea value={mensagem} onChange={e => setMensagem(e.target.value)}
+        {/* ─ Dados do estabelecimento ─ */}
+        <div style={{ borderTop: "1px solid #f5f5f4", paddingTop: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#57534e", marginBottom: 12 }}>DADOS DO ESTABELECIMENTO</div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={lblStyle}>NOME DO ESTABELECIMENTO</label>
+              <input value={cfg.nome_estabelecimento} onChange={e => setCfg(c => ({ ...c, nome_estabelecimento: e.target.value }))}
+                placeholder="Ex: Marcos Lojo Lanches" maxLength={60} style={{ ...cfgInp, width: "100%" }} />
+            </div>
+
+            <div>
+              <label style={lblStyle}>FOTO / LOGO</label>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {cfg.logo && <img src={cfg.logo} alt="logo" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid #e7e5e4" }} />}
+                <label style={{ ...cfgBtn, background: "#1c1917", cursor: "pointer", display: "inline-block" }}>
+                  {cfg.logo ? "Trocar foto" : "Enviar foto"}
+                  <input type="file" accept="image/*" onChange={handleFoto} style={{ display: "none" }} />
+                </label>
+                {cfg.logo && <button onClick={() => setCfg(c => ({ ...c, logo: "" }))} style={{ ...cfgDel }}>Remover</button>}
+              </div>
+            </div>
+
+            <div>
+              <label style={lblStyle}>WHATSAPP</label>
+              <input value={cfg.whatsapp} onChange={e => setCfg(c => ({ ...c, whatsapp: e.target.value }))}
+                placeholder="(11) 99999-9999" maxLength={30} style={{ ...cfgInp, width: "100%" }} />
+              <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Aparece como ícone clicável no cardápio digital.</div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={lblStyle}>CHAVE PIX</label>
+                <input value={cfg.pix_key} onChange={e => setCfg(c => ({ ...c, pix_key: e.target.value }))}
+                  placeholder="CPF, CNPJ, telefone ou chave" style={{ ...cfgInp, width: "100%" }} />
+              </div>
+              <div>
+                <label style={lblStyle}>NOME DO RECEBEDOR</label>
+                <input value={cfg.pix_nome} onChange={e => setCfg(c => ({ ...c, pix_nome: e.target.value }))}
+                  placeholder="Ex: Lanches do Marcos LTDA" style={{ ...cfgInp, width: "100%" }} />
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#a8a29e", marginTop: -6 }}>
+              O bot envia a chave Pix junto da confirmação quando o cliente escolhe pagamento por Pix.
+            </div>
+          </div>
+        </div>
+
+        {/* ─ Mensagem de alerta ─ */}
+        <div style={{ borderTop: "1px solid #f5f5f4", paddingTop: 14 }}>
+          <label style={lblStyle}>MENSAGEM DE ALERTA (adversidade)</label>
+          <textarea value={cfg.mensagem_alerta} onChange={e => setCfg(c => ({ ...c, mensagem_alerta: e.target.value }))}
             placeholder="Ex: Estamos sem entregador hoje — só retirada no balcão." maxLength={600} rows={3}
             style={{ ...cfgInp, width: "100%", resize: "vertical", minHeight: 60 }} />
           <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4, marginBottom: 10 }}>
-            Enquanto preenchida, o bot inclui o alerta na saudação de quem mandar mensagem. O botão ao lado dispara
+            Enquanto preenchida, o bot inclui o alerta na saudação. O botão ao lado dispara
             o alerta imediatamente para todos os clientes com pedido em andamento. Deixe vazio para desativar.
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={salvarMensagem} disabled={salvando}
-              style={{ ...cfgBtn, flex: 1, background: "#fff", color: "#57534e", border: "1.5px solid #e7e5e4", opacity: salvando ? 0.6 : 1 }}>
-              {salvando ? "Salvando..." : "💾 Salvar mensagem"}
-            </button>
-            <button onClick={enviarAlerta} disabled={enviando || !mensagem.trim()}
-              style={{ ...cfgBtn, flex: 1, background: "#b45309", opacity: (enviando || !mensagem.trim()) ? 0.5 : 1 }}>
+            <button onClick={enviarAlerta} disabled={enviando || !cfg.mensagem_alerta.trim()}
+              style={{ ...cfgBtn, flex: 1, background: "#b45309", opacity: (enviando || !cfg.mensagem_alerta.trim()) ? 0.5 : 1 }}>
               {enviando ? "Enviando..." : "⚠️ Enviar alerta agora"}
             </button>
           </div>
         </div>
+
+        {/* ─ Salvar tudo ─ */}
+        <button onClick={salvar} disabled={salvando}
+          style={{ ...cfgBtn, width: "100%", padding: 12, marginTop: 4, opacity: salvando ? 0.6 : 1 }}>
+          {salvando ? "Salvando..." : "💾 Salvar configurações"}
+        </button>
       </div>
     </div>
   );
