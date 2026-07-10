@@ -23,3 +23,8 @@ contextBridge.exposeInMainWorld("pdvInfo", {
 contextBridge.exposeInMainWorld("atualizacao", {
   verificar: () => ipcRenderer.invoke("atualizacao:verificar"),
 });
+
+// Correção do bug de foco pós-alert/confirm (Chromium no Windows)
+contextBridge.exposeInMainWorld("janela", {
+  refocus: () => ipcRenderer.invoke("janela:refocus"),
+});

@@ -1,9 +1,16 @@
 // ─── WhatsApp via Evolution API ──────────────────────────────────────────────
 import { obterConfig } from '../database.js';
 
-const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+// Config da Evolution API: primeiro a config salva no banco (editável na
+// seção Configurações da plataforma online), depois env var, depois default.
+// Lida a cada chamada — mudar na UI passa a valer sem reiniciar o servidor.
+export function evolutionCfg() {
+  return {
+    url: (obterConfig('evolution_url') || process.env.EVOLUTION_URL || 'http://localhost:8080').replace(/\/+$/, ''),
+    key: obterConfig('evolution_key') || process.env.EVOLUTION_KEY || '',
+    instance: obterConfig('evolution_instance') || process.env.EVOLUTION_INSTANCE || '',
+  };
+}
 
 // Identidade do estabelecimento — SEMPRE das Configurações da plataforma
 function nomeEstab() {
@@ -87,9 +94,10 @@ export async function enviarMensagem(telefone, texto) {
     }
     const numeroCompleto = numero.startsWith('55') ? numero : `55${numero}`;
 
-    const resp = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+    const evo = evolutionCfg();
+    const resp = await fetch(`${evo.url}/message/sendText/${evo.instance}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
+      headers: { 'Content-Type': 'application/json', 'apikey': evo.key },
       body: JSON.stringify({ number: numeroCompleto, text: texto }),
     });
 

@@ -2147,17 +2147,21 @@ export function upsertPedidoSync(p) {
 // ─── SINCRONIZAÇÃO DE CATÁLOGO (push-catalogo) ──────────────────────────────
 // Recebe categorias, adicionais e produtos do PDV remoto e faz upsert local.
 // Last-write-wins por ID. Transacional para consistência.
-export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos = [] }) {
-  const resultado = { categorias: { inserido: 0, atualizado: 0 }, adicionais: { inserido: 0, atualizado: 0 }, produtos: { inserido: 0, atualizado: 0 } };
+export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos = [], cardapios = [] }) {
+  const resultado = { categorias: { inserido: 0, atualizado: 0 }, adicionais: { inserido: 0, atualizado: 0 }, produtos: { inserido: 0, atualizado: 0 }, cardapios: { inserido: 0, atualizado: 0, removido: 0 } };
 
   const tx = db.transaction(() => {
     const catIdsRecebidos = new Set();
+    // id da categoria no PDV → id da categoria local (pode divergir quando o
+    // match foi por nome); usado pra remapear os vínculos dos cardápios.
+    const mapaCatId = {};
     for (const c of categorias) {
       if (!c || !c.id) continue;
       catIdsRecebidos.add(c.id);
       const porId = db.prepare("SELECT id FROM categorias WHERE id = ?").get(c.id);
       const porNome = porId ? null : db.prepare("SELECT id FROM categorias WHERE nome = ?").get(c.nome);
       const alvo = porId || porNome;
+      mapaCatId[c.id] = alvo ? alvo.id : c.id;
       if (alvo) {
         catIdsRecebidos.add(alvo.id);
         db.prepare("UPDATE categorias SET nome = ?, permite_adicionais = ?, ordem = ? WHERE id = ?")
@@ -2219,6 +2223,49 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
         if (!adicIdsRecebidos.has(o.id)) {
           db.prepare("UPDATE adicionais SET deleted_at = datetime('now') WHERE id = ?").run(o.id);
           resultado.adicionais.removido++;
+        }
+      }
+    }
+
+    // ── Cardápios + vínculos (a home do cardápio online precisa deles) ──────
+    if (cardapios.length > 0) {
+      const cardIdsRecebidos = new Set();
+      for (const c of cardapios) {
+        if (!c || !c.id) continue;
+        cardIdsRecebidos.add(c.id);
+        const existe = db.prepare("SELECT id FROM cardapios WHERE id = ?").get(c.id);
+        if (existe) {
+          db.prepare("UPDATE cardapios SET nome = ?, descricao = ?, icone = ?, cor = ?, ativo = ?, ordem = ?, imagem = ? WHERE id = ?")
+            .run(c.nome, c.descricao ?? "", c.icone ?? "📋", c.cor ?? "#15803d", c.ativo ?? 1, c.ordem ?? 0, c.imagem ?? "", c.id);
+          resultado.cardapios.atualizado++;
+        } else {
+          db.prepare("INSERT INTO cardapios (id, nome, descricao, icone, cor, ativo, ordem, imagem) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .run(c.id, c.nome, c.descricao ?? "", c.icone ?? "📋", c.cor ?? "#15803d", c.ativo ?? 1, c.ordem ?? 0, c.imagem ?? "");
+          resultado.cardapios.inserido++;
+        }
+        // Vínculos: substitui pelos do PDV (fonte da verdade). Remapeia ids de
+        // categoria (match por nome pode divergir) e só insere se o alvo existe
+        // localmente — FK ligada derrubaria a transação inteira.
+        db.prepare("DELETE FROM cardapio_categorias WHERE cardapio_id = ?").run(c.id);
+        for (const catId of (c.categorias || [])) {
+          const realId = mapaCatId[catId] || catId;
+          const ok = db.prepare("SELECT 1 FROM categorias WHERE id = ?").get(realId);
+          if (ok) db.prepare("INSERT OR IGNORE INTO cardapio_categorias (cardapio_id, categoria_id) VALUES (?, ?)").run(c.id, realId);
+        }
+        db.prepare("DELETE FROM cardapio_adicionais WHERE cardapio_id = ?").run(c.id);
+        for (const adId of (c.adicionais || [])) {
+          const ok = db.prepare("SELECT 1 FROM adicionais WHERE id = ?").get(adId);
+          if (ok) db.prepare("INSERT OR IGNORE INTO cardapio_adicionais (cardapio_id, adicional_id) VALUES (?, ?)").run(c.id, adId);
+        }
+      }
+      // Cardápios que não existem mais no PDV somem daqui também
+      const orfaos = db.prepare("SELECT id FROM cardapios").all();
+      for (const o of orfaos) {
+        if (!cardIdsRecebidos.has(o.id)) {
+          db.prepare("DELETE FROM cardapio_categorias WHERE cardapio_id = ?").run(o.id);
+          db.prepare("DELETE FROM cardapio_adicionais WHERE cardapio_id = ?").run(o.id);
+          db.prepare("DELETE FROM cardapios WHERE id = ?").run(o.id);
+          resultado.cardapios.removido++;
         }
       }
     }

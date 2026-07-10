@@ -56,6 +56,7 @@ export const api = {
 
   // Bot WhatsApp — alerta em massa (clientes com pedido em andamento)
   whatsappBot: {
+    status: () => request("/bot/status"),
     enviarAlerta: (mensagem) => request("/whatsapp/alerta", { method: "POST", body: JSON.stringify({ mensagem }) }),
   },
 
@@ -148,6 +149,23 @@ export const api = {
       body: JSON.stringify(typeof dados === "string" ? { email: dados } : dados) }),
     atualizar: (email, dados) => request(`/admin-emails/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify(dados) }),
     remover: (email) => request(`/admin-emails/${encodeURIComponent(email)}`, { method: "DELETE" }),
+  },
+
+  // Funcionários e permissões (adapter sobre /admin-emails — o card usa
+  // "funcoes", o servidor chama de "setores"; o email faz papel de id)
+  funcionarios: {
+    listar: () => request("/admin-emails").then(rows => rows.map(r => ({
+      id: r.email,
+      nome: r.nome || r.email,
+      email: r.email,
+      funcoes: r.setores,          // null = acesso completo
+      tem_senha: r.tem_senha,
+    }))),
+    criar: ({ nome, email, senha, funcoes }) =>
+      request("/admin-emails", { method: "POST", body: JSON.stringify({ email, nome, senha, setores: funcoes }) }),
+    atualizar: (email, { nome, senha, funcoes }) =>
+      request(`/admin-emails/${encodeURIComponent(email)}`, { method: "PUT", body: JSON.stringify({ nome, senha, setores: funcoes }) }),
+    excluir: (email) => request(`/admin-emails/${encodeURIComponent(email)}`, { method: "DELETE" }),
   },
 
   // Pedidos

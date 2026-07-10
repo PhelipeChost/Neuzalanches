@@ -212,8 +212,6 @@ function FuncionariosCard({ showToast }) {
 
 // ─── CONFIGURAÇÕES GERAIS ────────────────────────────────────────────────────
 function GeralTab() {
-  const [emails, setEmails] = useState([]);
-  const [novoEmail, setNovoEmail] = useState("");
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
@@ -231,11 +229,9 @@ function GeralTab() {
   useEffect(() => {
     const promises = [api.pix.obter().catch(() => ({ pix_key: "", pix_nome: "" }))];
     if (IS_ONLINE) promises.push(api.horario.obter());
-    else promises.push(api.adminEmails.listar());
     Promise.all(promises).then(([pix, extra]) => {
       setPixCfg({ pix_key: pix?.pix_key || "", pix_nome: pix?.pix_nome || "" });
-      if (IS_ONLINE) { const { aberto, ...cfg } = extra; setHorario(cfg); setHorarioAberto(aberto); }
-      else setEmails(extra);
+      if (IS_ONLINE && extra) { const { aberto, ...cfg } = extra; setHorario(cfg); setHorarioAberto(aberto); }
     }).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
   }, []);
 
@@ -271,27 +267,6 @@ function GeralTab() {
       ? horario.dias.filter(d => d !== dia)
       : [...horario.dias, dia].sort((a, b) => a - b);
     setHorario(h => ({ ...h, dias: novosDias }));
-  };
-
-  // ── Admin Emails ──
-  const adicionarEmail = async () => {
-    const email = novoEmail.trim().toLowerCase();
-    if (!email || !email.includes("@")) return showToast("Digite um email valido", "#dc2626");
-    if (emails.some(e => e.email === email)) return showToast("Email ja esta na lista", "#d97706");
-    try {
-      await api.adminEmails.adicionar(email);
-      setEmails(es => [...es, { email, created_at: new Date().toISOString() }]);
-      setNovoEmail("");
-      showToast("Convite admin adicionado!");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
-  };
-
-  const removerEmail = async (email) => {
-    try {
-      await api.adminEmails.remover(email);
-      setEmails(es => es.filter(e => e.email !== email));
-      showToast("Email removido", "#7c3aed");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
@@ -395,6 +370,7 @@ function GeralTab() {
 
         {/* ── DADOS DO ESTABELECIMENTO (só online) ──────────────────── */}
         {IS_ONLINE && <EstabelecimentoCard showToast={showToast} />}
+        {IS_ONLINE && <BotWhatsAppCard showToast={showToast} />}
 
         {/* ── CHAVE PIX ──────────────────────────────────────────────── */}
         <div className="card">
@@ -428,37 +404,8 @@ function GeralTab() {
         {/* ── FUNCIONÁRIOS + PERMISSÕES (só PDV) ─────────────────────── */}
         {!IS_ONLINE && <FuncionariosCard showToast={showToast} />}
 
-        {/* ── ADMIN EMAILS (só PDV) ──────────────────────────────────── */}
-        {!IS_ONLINE && <div className="card">
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Convite de Administradores</div>
-          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-            Adicione emails que terao acesso admin ao se registrarem.
-          </div>
-
-          <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
-            <input value={novoEmail} onChange={e => setNovoEmail(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionarEmail()}
-              placeholder="email@exemplo.com" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
-            <button onClick={adicionarEmail} style={cfgBtn}>+ Convidar</button>
-          </div>
-
-          {emails.length === 0 ? (
-            <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhum email admin cadastrado.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {emails.map(e => (
-                <div key={e.email} style={cfgRow}>
-                  <div>
-                    <span style={{ fontSize: 13, fontWeight: 500 }}>{e.email}</span>
-                    <span style={{ fontSize: 10, color: "#a8a29e", marginLeft: 8 }}>
-                      adicionado em {new Date(e.created_at).toLocaleDateString("pt-BR")}
-                    </span>
-                  </div>
-                  <button onClick={() => removerEmail(e.email)} style={cfgDel}>Remover</button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>}
+        {/* Convite de Administradores removido — funcionários entram por
+            "Funcionários e permissões" (card acima). */}
       </div>
 
       {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
@@ -468,13 +415,13 @@ function GeralTab() {
 
 // ─── DADOS DO ESTABELECIMENTO (online) ──────────────────────────────────────
 function EstabelecimentoCard({ showToast }) {
-  const [cfg, setCfg] = useState({ nome_estabelecimento: "", whatsapp: "", logo: "", mensagem_alerta: "" });
+  const [cfg, setCfg] = useState({ nome_estabelecimento: "", whatsapp: "", logo: "" });
   const [salvando, setSalvando] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.config.obter()
-      .then(c => setCfg({ nome_estabelecimento: c.nome_estabelecimento || "", whatsapp: c.whatsapp || "", logo: c.logo || "", mensagem_alerta: c.mensagem_alerta || "" }))
+      .then(c => setCfg({ nome_estabelecimento: c.nome_estabelecimento || "", whatsapp: c.whatsapp || "", logo: c.logo || "" }))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -532,20 +479,136 @@ function EstabelecimentoCard({ showToast }) {
           <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Aparece como ícone clicável no cardápio digital.</div>
         </div>
 
-        <div>
-          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>MENSAGEM DE ALERTA (bot WhatsApp)</label>
-          <textarea value={cfg.mensagem_alerta} onChange={e => setCfg(c => ({ ...c, mensagem_alerta: e.target.value }))}
-            placeholder="Ex: Estamos sem troco hoje, por favor pague no Pix." maxLength={600} rows={3}
-            style={{ ...cfgInp, width: "100%", resize: "vertical", minHeight: 60 }} />
-          <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
-            Quando preenchida, o bot envia esta mensagem junto à saudação. Deixe vazio para desativar.
-          </div>
-        </div>
-
         <button onClick={salvar} disabled={salvando}
           style={{ ...cfgBtn, width: "100%", padding: 11, opacity: salvando ? 0.6 : 1 }}>
           {salvando ? "Salvando..." : "💾 Salvar dados"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── BOT WHATSAPP (online) ───────────────────────────────────────────────────
+// Toda a configuração do bot vive aqui: conexão com a Evolution API, QR Code
+// de pareamento e a mensagem de alerta (adversidade) com envio em massa.
+function BotWhatsAppCard({ showToast }) {
+  const [cfg, setCfg] = useState({ evolution_url: "", evolution_key: "", evolution_instance: "", mensagem_alerta: "" });
+  const [status, setStatus] = useState(null); // { configurado, estado }
+  const [salvando, setSalvando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const carregarStatus = () => api.whatsappBot.status().then(setStatus).catch(() => setStatus(null));
+
+  useEffect(() => {
+    api.config.obter()
+      .then(c => setCfg({
+        evolution_url: c.evolution_url || "",
+        evolution_key: c.evolution_key || "",
+        evolution_instance: c.evolution_instance || "",
+        mensagem_alerta: c.mensagem_alerta || "",
+      }))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+    carregarStatus();
+    const iv = setInterval(carregarStatus, 20000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      await api.config.salvar(cfg);
+      showToast("Configuração do bot salva!");
+      carregarStatus();
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  const enviarAlerta = async () => {
+    const msg = cfg.mensagem_alerta.trim();
+    if (!msg) { showToast("Escreva a mensagem de alerta antes de enviar", "#dc2626"); return; }
+    if (!confirm("Enviar este alerta agora para TODOS os clientes com pedido em andamento?")) return;
+    setEnviando(true);
+    try {
+      const r = await api.whatsappBot.enviarAlerta(msg);
+      showToast(`Alerta enviado para ${r.enviados} de ${r.total} cliente(s)!`);
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setEnviando(false); }
+  };
+
+  const conectado = status?.estado === "open";
+  const badge = !status || !status.configurado
+    ? { txt: "⚙️ Não configurado", bg: "#f5f5f4", cor: "#78716c" }
+    : conectado
+      ? { txt: "🟢 Conectado", bg: "#dcfce7", cor: "#16a34a" }
+      : status.estado === "inacessivel"
+        ? { txt: "🔴 Evolution inacessível", bg: "#fee2e2", cor: "#dc2626" }
+        : { txt: `🟡 ${status.estado}`, bg: "#fef3c7", cor: "#92400e" };
+
+  if (loading) return null;
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Bot WhatsApp</div>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: badge.bg, color: badge.cor }}>{badge.txt}</span>
+      </div>
+      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+        Conexão com a Evolution API (o motor do bot de WhatsApp), QR Code de pareamento e mensagem de alerta.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>URL DA EVOLUTION API</label>
+          <input value={cfg.evolution_url} onChange={e => setCfg(c => ({ ...c, evolution_url: e.target.value }))}
+            placeholder="http://145.223.31.205:8080" style={{ ...cfgInp, width: "100%" }} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>API KEY</label>
+            <input value={cfg.evolution_key} onChange={e => setCfg(c => ({ ...c, evolution_key: e.target.value }))}
+              type="password" placeholder="chave secreta da Evolution" style={{ ...cfgInp, width: "100%" }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>INSTÂNCIA</label>
+            <input value={cfg.evolution_instance} onChange={e => setCfg(c => ({ ...c, evolution_instance: e.target.value }))}
+              placeholder="nome da instância" style={{ ...cfgInp, width: "100%" }} />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={salvar} disabled={salvando}
+            style={{ ...cfgBtn, flex: 1, opacity: salvando ? 0.6 : 1 }}>
+            {salvando ? "Salvando..." : "💾 Salvar conexão"}
+          </button>
+          <button onClick={() => window.open("/api/bot/qr", "_blank")}
+            disabled={!cfg.evolution_instance || !cfg.evolution_key}
+            style={{ ...cfgBtn, flex: 1, background: "#1c1917", opacity: (!cfg.evolution_instance || !cfg.evolution_key) ? 0.5 : 1 }}>
+            📱 Ver QR Code de pareamento
+          </button>
+        </div>
+
+        <div style={{ borderTop: "1px solid #f5f5f4", paddingTop: 12 }}>
+          <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>MENSAGEM DE ALERTA (adversidade)</label>
+          <textarea value={cfg.mensagem_alerta} onChange={e => setCfg(c => ({ ...c, mensagem_alerta: e.target.value }))}
+            placeholder="Ex: Estamos sem entregador hoje — só retirada no balcão." maxLength={600} rows={3}
+            style={{ ...cfgInp, width: "100%", resize: "vertical", minHeight: 60 }} />
+          <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4, marginBottom: 10 }}>
+            Enquanto preenchida, o bot inclui o alerta na saudação de quem mandar mensagem. O botão abaixo dispara
+            o alerta imediatamente para todos os clientes com pedido em andamento.
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={salvar} disabled={salvando}
+              style={{ ...cfgBtn, flex: 1, background: "#fff", color: "#57534e", border: "1.5px solid #e7e5e4", opacity: salvando ? 0.6 : 1 }}>
+              Salvar mensagem
+            </button>
+            <button onClick={enviarAlerta} disabled={enviando || !cfg.mensagem_alerta.trim()}
+              style={{ ...cfgBtn, flex: 1, background: "#b45309", opacity: (enviando || !cfg.mensagem_alerta.trim()) ? 0.5 : 1 }}>
+              {enviando ? "Enviando..." : "⚠️ Enviar alerta agora"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

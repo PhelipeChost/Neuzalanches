@@ -227,6 +227,16 @@ ipcMain.handle("licenca:reset", async () => {
 // Splash pergunta a versão
 ipcMain.handle("splash:versao", () => app.getVersion());
 
+// Workaround do bug de foco do Chromium/Electron no Windows: depois de um
+// alert()/confirm() nativo, os inputs param de aceitar foco até a janela
+// perder e recuperar o foco. O frontend chama isso após cada diálogo nativo.
+ipcMain.handle("janela:refocus", () => {
+  try {
+    if (janela && !janela.isDestroyed()) { janela.blur(); janela.focus(); }
+  } catch { /* janela pode não existir ainda */ }
+  return { ok: true };
+});
+
 // ─── Heartbeat ("ligar em casa") ─────────────────────────────────────────────
 // Renova o token (estende a validade offline), atualiza a config de sync e
 // reporta a versão instalada. Só roda se a ativação foi online (há chave salva).

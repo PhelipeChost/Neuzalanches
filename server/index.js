@@ -7,7 +7,7 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { reportarReceitaNexo } from "./services/nexo.js";
-import { notificarPedidoConfirmado, notificarStatusPedido, enviarMensagem } from "./services/whatsapp.js";
+import { notificarPedidoConfirmado, notificarStatusPedido, enviarMensagem, evolutionCfg } from "./services/whatsapp.js";
 import {
   criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
   isEmailAdmin, buscarAdminEmail, listarAdminEmails, adicionarAdminEmail, atualizarAdminEmail, removerAdminEmail, isAdminPrincipal,
@@ -243,11 +243,18 @@ app.get("/api/config", authMiddleware, adminOnly, (req, res) => {
     logo: obterConfig("logo") || "",
     link_exibicao: obterConfig("link_exibicao") || "",
     mensagem_alerta: obterConfig("mensagem_alerta") || "",
+    evolution_url: obterConfig("evolution_url") || "",
+    evolution_key: obterConfig("evolution_key") || "",
+    evolution_instance: obterConfig("evolution_instance") || "",
   });
 });
 
 app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
-  const { saldo_inicial, nome_estabelecimento, whatsapp, logo, link_exibicao, mensagem_alerta } = req.body;
+  const { saldo_inicial, nome_estabelecimento, whatsapp, logo, link_exibicao, mensagem_alerta,
+    evolution_url, evolution_key, evolution_instance } = req.body;
+  if (evolution_url !== undefined) salvarConfig("evolution_url", String(evolution_url).trim().slice(0, 200));
+  if (evolution_key !== undefined) salvarConfig("evolution_key", String(evolution_key).trim().slice(0, 200));
+  if (evolution_instance !== undefined) salvarConfig("evolution_instance", String(evolution_instance).trim().slice(0, 100));
   if (saldo_inicial !== undefined) {
     if (typeof saldo_inicial !== "number") {
       return res.status(400).json({ error: "saldo_inicial deve ser um número" });
@@ -279,6 +286,9 @@ app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
     logo: obterConfig("logo") || "",
     link_exibicao: obterConfig("link_exibicao") || "",
     mensagem_alerta: obterConfig("mensagem_alerta") || "",
+    evolution_url: obterConfig("evolution_url") || "",
+    evolution_key: obterConfig("evolution_key") || "",
+    evolution_instance: obterConfig("evolution_instance") || "",
   });
 });
 
@@ -467,31 +477,31 @@ app.get("/api/cardapios", (req, res) => {
 app.post("/api/cardapios", authMiddleware, adminOnly, (req, res) => {
   const { nome, descricao, icone, cor, imagem } = req.body;
   if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
-  try { res.json(criarCardapio({ nome, descricao, icone, cor, imagem })); }
+  try { const c = criarCardapio({ nome, descricao, icone, cor, imagem }); agendarSyncCatalogo(); res.json(c); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
-  try { atualizarCardapio(req.params.id, req.body); res.json({ ok: true }); }
+  try { atualizarCardapio(req.params.id, req.body); agendarSyncCatalogo(); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
-  try { excluirCardapio(req.params.id); res.json({ ok: true }); }
+  try { excluirCardapio(req.params.id); agendarSyncCatalogo(); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put("/api/cardapios/:id/categorias", authMiddleware, adminOnly, (req, res) => {
   const { categorias } = req.body;
   if (!Array.isArray(categorias)) return res.status(400).json({ error: "categorias deve ser um array" });
-  try { definirCategoriasCardapio(req.params.id, categorias); res.json({ ok: true }); }
+  try { definirCategoriasCardapio(req.params.id, categorias); agendarSyncCatalogo(); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put("/api/cardapios/:id/adicionais", authMiddleware, adminOnly, (req, res) => {
   const { adicionais } = req.body;
   if (!Array.isArray(adicionais)) return res.status(400).json({ error: "adicionais deve ser um array" });
-  try { definirAdicionaisCardapio(req.params.id, adicionais); res.json({ ok: true }); }
+  try { definirAdicionaisCardapio(req.params.id, adicionais); agendarSyncCatalogo(); res.json({ ok: true }); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1022,11 +1032,12 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
     const produtos = listarProdutos();
     const categorias = listarCategorias();
     const adicionais = listarAdicionais();
+    const cardapios = listarCardapios();
     const baseUrl = url.replace(/\/+$/, "");
     const r = await fetch(`${baseUrl}/api/sync/push-catalogo`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ produtos, categorias, adicionais }),
+      body: JSON.stringify({ produtos, categorias, adicionais, cardapios }),
       signal: AbortSignal.timeout(15000),
     });
     if (!r.ok) {
@@ -1036,9 +1047,10 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
     const result = await r.json();
     const agora = new Date().toISOString();
     salvarConfig("sync_last", agora);
-    salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
+    salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais, ${cardapios.length} cardápios`);
     syncCatalogoHash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
-      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(",") });
+      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(","),
+      cards: cardapios.map(c => `${c.id}:${c.nome}:${c.ativo}:${(c.categorias || []).length}:${(c.adicionais || []).length}`).sort().join(",") });
     res.json({ ok: true, ...result, sincronizado_em: agora });
   } catch (err) {
     salvarConfig("sync_last", new Date().toISOString());
@@ -1049,8 +1061,8 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
 
 app.post("/api/sync/push-catalogo", syncTokenOrAdmin, (req, res) => {
   try {
-    const { categorias = [], adicionais = [], produtos = [] } = req.body;
-    const resultado = upsertCatalogoSync({ categorias, adicionais, produtos });
+    const { categorias = [], adicionais = [], produtos = [], cardapios = [] } = req.body;
+    const resultado = upsertCatalogoSync({ categorias, adicionais, produtos, cardapios });
     res.json({ ok: true, ...resultado });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1536,35 +1548,38 @@ app.put('/api/config/horario', authMiddleware, (req, res) => {
 });
 
 // ─── WHATSAPP QR CODE PAGE ──────────────────────────────────────────────────
-
-const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
-const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+// Config da Evolution vem do banco (editável nas Configurações do online),
+// com fallback para env vars — ver evolutionCfg() em services/whatsapp.js.
 
 app.get('/whatsapp', async (req, res) => {
+  const evo = evolutionCfg();
   let qrData = null;
   let status = 'desconhecido';
   let erro = null;
 
-  try {
-    const r = await fetch(`${EVOLUTION_URL}/instance/connectionState/${EVOLUTION_INSTANCE}`, {
-      headers: { 'apikey': EVOLUTION_KEY },
-    });
-    const json = await r.json();
-    status = json?.instance?.state || json?.state || 'desconhecido';
-  } catch (e) {
-    erro = e.message;
-  }
-
-  if (status !== 'open') {
+  if (!evo.instance || !evo.key) {
+    erro = 'Bot não configurado — preencha URL, API Key e Instância na seção Configurações.';
+  } else {
     try {
-      const r = await fetch(`${EVOLUTION_URL}/instance/connect/${EVOLUTION_INSTANCE}`, {
-        headers: { 'apikey': EVOLUTION_KEY },
+      const r = await fetch(`${evo.url}/instance/connectionState/${evo.instance}`, {
+        headers: { 'apikey': evo.key },
       });
       const json = await r.json();
-      qrData = json?.base64 || json?.qrcode?.base64 || null;
+      status = json?.instance?.state || json?.state || 'desconhecido';
     } catch (e) {
       erro = e.message;
+    }
+
+    if (status !== 'open') {
+      try {
+        const r = await fetch(`${evo.url}/instance/connect/${evo.instance}`, {
+          headers: { 'apikey': evo.key },
+        });
+        const json = await r.json();
+        qrData = json?.base64 || json?.qrcode?.base64 || null;
+      } catch (e) {
+        erro = e.message;
+      }
     }
   }
 
@@ -1757,20 +1772,42 @@ app.post('/api/whatsapp/alerta', authMiddleware, adminOnly, async (req, res) => 
   }
 });
 
+// Status JSON do bot (para o card "Bot WhatsApp" das Configurações)
+app.get('/api/bot/status', authMiddleware, adminOnly, async (req, res) => {
+  const evo = evolutionCfg();
+  if (!evo.instance || !evo.key) return res.json({ configurado: false, estado: 'nao-configurado' });
+  try {
+    const r = await fetch(`${evo.url}/instance/connectionState/${evo.instance}`, {
+      headers: { 'apikey': evo.key }, signal: AbortSignal.timeout(6000),
+    });
+    const j = await r.json();
+    res.json({ configurado: true, estado: j?.instance?.state || 'desconhecido' });
+  } catch (e) {
+    res.json({ configurado: true, estado: 'inacessivel', erro: e.message });
+  }
+});
+
 app.get('/api/bot/qr', async (req, res) => {
+  const evo = evolutionCfg();
+  if (!evo.instance || !evo.key) {
+    return res.status(503).send(`<!doctype html><html><body style="background:#111;color:#eee;text-align:center;font-family:sans-serif;padding:40px">
+<h2>⚙️ Bot não configurado</h2>
+<p>Preencha a URL da Evolution, a API Key e o nome da Instância na seção <b>Configurações → Bot WhatsApp</b> da plataforma online.</p>
+</body></html>`);
+  }
   // Busca QR direto da Evolution (mais confiável que o cache do webhook)
   let qrFromApi = null;
   let estado = 'desconhecido';
   try {
-    const stateResp = await fetch(`${EVOLUTION_URL}/instance/connectionState/${EVOLUTION_INSTANCE}`, {
-      headers: { 'apikey': EVOLUTION_KEY },
+    const stateResp = await fetch(`${evo.url}/instance/connectionState/${evo.instance}`, {
+      headers: { 'apikey': evo.key },
     });
     const stateJson = await stateResp.json();
     estado = stateJson?.instance?.state || 'desconhecido';
 
     if (estado !== 'open') {
-      const r = await fetch(`${EVOLUTION_URL}/instance/connect/${EVOLUTION_INSTANCE}`, {
-        headers: { 'apikey': EVOLUTION_KEY },
+      const r = await fetch(`${evo.url}/instance/connect/${evo.instance}`, {
+        headers: { 'apikey': evo.key },
       });
       const j = await r.json();
       const b64 = j?.base64 || j?.qrcode?.base64 || null;
@@ -1878,15 +1915,13 @@ app.post('/api/bot/webhook', async (req, res) => {
     // (nome do estabelecimento, link de exibição, horário e mensagem de alerta)
     const texto = montarSaudacaoBot();
 
-    const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
-    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+    const evo = evolutionCfg();
 
     try {
       // Evolution API v2 usa { number, text } direto (não mais textMessage.text)
-      const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+      const r = await fetch(`${evo.url}/message/sendText/${evo.instance}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
+        headers: { 'Content-Type': 'application/json', 'apikey': evo.key },
         body: JSON.stringify({ number: numero, text: texto }),
       });
       if (r.ok) {
@@ -1912,14 +1947,12 @@ app.post('/api/bot/enviar', async (req, res) => {
     const { number, text } = req.body;
     if (!number || !text) return res.status(400).json({ error: 'number e text são obrigatórios' });
 
-    const EVOLUTION_URL = process.env.EVOLUTION_URL || 'http://localhost:8080';
-    const EVOLUTION_KEY = process.env.EVOLUTION_KEY || '';
-    const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || '';
+    const evo = evolutionCfg();
 
     // Evolution API v2 usa { number, text } direto
-    const r = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+    const r = await fetch(`${evo.url}/message/sendText/${evo.instance}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_KEY },
+      headers: { 'Content-Type': 'application/json', 'apikey': evo.key },
       body: JSON.stringify({ number, text }),
     });
     const data = await r.json();
@@ -2213,20 +2246,22 @@ async function pushCatalogoAgora() {
     const produtos = listarProdutos();
     const categorias = listarCategorias();
     const adicionais = listarAdicionais();
+    const cardapios = listarCardapios(); // inclui .categorias e .adicionais (vínculos)
     const hash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
-      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(",") });
+      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(","),
+      cards: cardapios.map(c => `${c.id}:${c.nome}:${c.ativo}:${(c.categorias || []).length}:${(c.adicionais || []).length}`).sort().join(",") });
     if (hash === syncCatalogoHash) return;
     const r = await fetch(`${url}/api/sync/push-catalogo`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ produtos, categorias, adicionais }),
+      body: JSON.stringify({ produtos, categorias, adicionais, cardapios }),
       signal: AbortSignal.timeout(15000),
     });
     if (r.ok) {
       syncCatalogoHash = hash;
       salvarConfig("sync_last", new Date().toISOString());
-      salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais`);
-      console.log(`[sync-catalogo] push ok — ${produtos.length} prod, ${categorias.length} cat, ${adicionais.length} adic`);
+      salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais, ${cardapios.length} cardápios`);
+      console.log(`[sync-catalogo] push ok — ${produtos.length} prod, ${categorias.length} cat, ${adicionais.length} adic, ${cardapios.length} card`);
     }
   } catch { /* offline — próximo tick tenta de novo */ }
 }

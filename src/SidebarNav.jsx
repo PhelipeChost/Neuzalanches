@@ -157,8 +157,10 @@ export default function SidebarNav({
           </div>
 
           <div className="nx-sb-actions">
-            {loginNecessario && onLogout && (
-              <button className="nx-sb-btn" onClick={onLogout}>Sair da conta</button>
+            {onLogout && (
+              <button className="nx-sb-btn" onClick={onLogout}>
+                {usuario?.email ? "Sair da conta" : "Entrar com conta (admin)"}
+              </button>
             )}
             {onResetLicenca && (
               <button className="nx-sb-btn danger" onClick={onResetLicenca}>Resetar licença</button>

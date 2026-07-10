@@ -271,6 +271,13 @@ export default function App() {
     localStorage.removeItem("usuario");
     setUsuario(null);
     setToken(null);
+    setSuporteLiberado(false);
+  };
+
+  // Volta pra sessão de operador local (PDV com login desligado) sem reiniciar
+  const voltarComoOperador = () => {
+    setLoginErro("");
+    setUsuario({ id: "local", nome: "Operador", email: null, tipo: "admin", setores: null });
   };
 
   if (loading) return null;
@@ -313,6 +320,12 @@ export default function App() {
               {loginLoading ? "Entrando..." : "Entrar"}
             </button>
           </form>
+          {!loginNecessario && (
+            <button onClick={voltarComoOperador}
+              style={{ marginTop: 16, width: "100%", padding: "10px 16px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fafaf9", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>
+              ← Continuar como operador (sem conta)
+            </button>
+          )}
           {IS_DESKTOP && window.licenca?.reset && (
             <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
               style={{ marginTop: 16, padding: "7px 16px", border: "1.5px solid #fecaca", borderRadius: 8, background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
@@ -411,7 +424,7 @@ export default function App() {
         <SidebarNav
           setorAtivo={setor}
           onNavegar={navegar}
-          onLogout={loginNecessario ? handleLogout : null}
+          onLogout={handleLogout}
           onResetLicenca={handleResetLicenca}
           usuario={usuario}
           perfil={perfil}
