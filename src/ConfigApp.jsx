@@ -548,7 +548,9 @@ function BotWhatsAppCard({ showToast }) {
         <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: badge.bg, color: badge.cor }}>{badge.txt}</span>
       </div>
       <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-        O bot responde os clientes no WhatsApp com a saudação do estabelecimento e envia as notificações de pedido.
+        O bot responde os clientes no WhatsApp com a saudação do estabelecimento, envia as notificações de cada
+        atualização de pedido e — quando o cliente escolhe <b>Pix</b> como pagamento — manda a chave Pix (definida em
+        "Dados do Estabelecimento") junto da confirmação.
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>

@@ -115,6 +115,21 @@ export async function enviarMensagem(telefone, texto) {
   }
 }
 
+// Bloco de instruções de Pix — só quando forma de pagamento é Pix e a chave
+// está configurada. Mostra a chave copiável e o nome do recebedor.
+function blocoPix(pedido) {
+  if (pedido.metodo_pagamento !== 'pix') return '';
+  const chave = (obterConfig('pix_key') || '').trim();
+  if (!chave) return '';
+  const nomeRec = (obterConfig('pix_nome') || obterConfig('nome_estabelecimento') || '').trim();
+  return (
+    `\n\n💠 *Pague pelo Pix — copie a chave abaixo:*\n` +
+    `\`${chave}\`\n` +
+    (nomeRec ? `_Recebedor:_ ${nomeRec}\n` : '') +
+    `\n_Envie o comprovante por aqui pra confirmarmos o pedido._ 🙏`
+  );
+}
+
 // ─── Mensagem 1: Pedido recebido (status pendente) ───────────────────────────
 export async function notificarPedidoConfirmado(pedido) {
   if (!pedido.cliente_telefone) return;
@@ -137,6 +152,7 @@ export async function notificarPedidoConfirmado(pedido) {
     `💰 *Total:* ${fmtBRL(pedido.total)}\n` +
     `💳 *Pagamento:* ${pagamento}\n` +
     `${linhaEntrega}` +
+    blocoPix(pedido) +
     (linhaLink() ? `\n\n_Acompanhe seu pedido em:_${linhaLink()}` : '');
 
   await enviarMensagem(pedido.cliente_telefone, texto);
