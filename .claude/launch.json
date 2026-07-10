@@ -24,6 +24,13 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["_serve-online-test.mjs"],
       "port": 5512
+    },
+    {
+      "name": "Mercado backend (porta 3202)",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["backend/src/index.js"],
+      "port": 3202,
+      "env": { "PORT": "3202" }
     }
   ]
 }

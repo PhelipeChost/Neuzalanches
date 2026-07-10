@@ -274,11 +274,12 @@ function DesempenhoTab() {
   const [ranking, setRanking] = useState(null);
   const [loading, setLoading] = useState(true);
   const [catSel, setCatSel] = useState("__todas__");
+  const [criterio, setCriterio] = useState("quantidade"); // quantidade | faturamento | margem | menor_margem
 
   useEffect(() => {
     Promise.all([
       api.cardapio.stats().catch(() => null),
-      api.cardapio.ranking().catch(() => null),
+      api.relatorios.ranking().catch(() => null),
     ]).then(([s, r]) => { setStats(s); setRanking(r); }).finally(() => setLoading(false));
   }, []);
 
@@ -343,13 +344,23 @@ function DesempenhoTab() {
         💡 As visitas são contadas uma vez por sessão de cada cliente que abre o cardápio público.
       </div>
 
-      {/* ── Ranking de vendas (item 5) ── */}
+      {/* ── Ranking de vendas ── */}
       {ranking && ranking.produtos && ranking.produtos.length > 0 && (() => {
-        const cats = Object.keys(ranking.porCategoria || {});
-        const lista = catSel === "__todas__" ? ranking.produtos : (ranking.porCategoria[catSel] || []);
-        const maxQtd = lista[0]?.qtd || 1;
-        const mais = lista.slice(0, 8);
-        const menos = lista.length > 1 ? lista.slice().reverse().slice(0, 5) : [];
+        const cats = ranking.categorias || [];
+        const CRITERIOS = [
+          { key: "quantidade",   label: "🔥 Mais vendidos",     campo: "quantidade",  desc: false },
+          { key: "faturamento",  label: "💰 Maior faturamento", campo: "faturamento", desc: false },
+          { key: "margem",       label: "📈 Maior lucro",       campo: "margem",      desc: false },
+          { key: "menor_margem", label: "📉 Menor lucro",       campo: "margem",      desc: true },
+        ];
+        const crit = CRITERIOS.find(c => c.key === criterio) || CRITERIOS[0];
+        const filtrados = catSel === "__todas__" ? ranking.produtos : ranking.produtos.filter(p => p.categoria === catSel);
+        const lista = filtrados.slice().sort((a, b) => crit.desc
+          ? (Number(a[crit.campo]) || 0) - (Number(b[crit.campo]) || 0)
+          : (Number(b[crit.campo]) || 0) - (Number(a[crit.campo]) || 0));
+        const maxVal = Math.max(...lista.map(p => Math.abs(Number(p[crit.campo]) || 0)), 1);
+        const totalUnidades = filtrados.reduce((s, p) => s + (Number(p.quantidade) || 0), 0);
+        const ehDinheiro = crit.campo !== "quantidade";
         const Linha = ({ p, pos, cor }) => (
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid #f5f5f4" }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: "#a8a29e", minWidth: 24 }}>{pos}º</span>
@@ -357,12 +368,16 @@ function DesempenhoTab() {
               <div style={{ fontSize: 13, fontWeight: 600, color: "#1c1917", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.nome}</div>
               {catSel === "__todas__" && <div style={{ fontSize: 10, color: "#a8a29e" }}>{p.categoria}</div>}
               <div style={{ height: 5, background: "#f5f5f4", borderRadius: 3, marginTop: 4, overflow: "hidden" }}>
-                <div style={{ width: `${Math.max(4, (p.qtd / maxQtd) * 100)}%`, height: "100%", background: cor, borderRadius: 3 }} />
+                <div style={{ width: `${Math.max(4, (Math.abs(Number(p[crit.campo]) || 0) / maxVal) * 100)}%`, height: "100%", background: cor, borderRadius: 3 }} />
               </div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: "#1c1917" }}>{p.qtd}</div>
-              <div style={{ fontSize: 10, color: "#a8a29e" }}>{fmtR(p.receita)}</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: (crit.campo === "margem" && p.margem < 0) ? "#dc2626" : "#1c1917" }}>
+                {ehDinheiro ? fmtR(p[crit.campo]) : p.quantidade}
+              </div>
+              <div style={{ fontSize: 10, color: "#a8a29e" }}>
+                {ehDinheiro ? `${p.quantidade} un` : fmtR(p.faturamento)}
+              </div>
             </div>
           </div>
         );
@@ -371,33 +386,38 @@ function DesempenhoTab() {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div>
                 <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700 }}>Ranking de vendas</div>
-                <div style={{ fontSize: 12, color: "#a8a29e" }}>{ranking.totalUnidades} unidades vendidas · {ranking.totalProdutosDistintos} produtos diferentes</div>
+                <div style={{ fontSize: 12, color: "#a8a29e" }}>{totalUnidades} unidades vendidas · {filtrados.length} produto(s)</div>
               </div>
-              <select value={catSel} onChange={e => setCatSel(e.target.value)} style={{ ...cfgInp, cursor: "pointer", minWidth: 180 }}>
-                <option value="__todas__">Todas as categorias</option>
-                {cats.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <select value={criterio} onChange={e => setCriterio(e.target.value)} style={{ ...cfgInp, cursor: "pointer", minWidth: 170 }}>
+                  {CRITERIOS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                </select>
+                <select value={catSel} onChange={e => setCatSel(e.target.value)} style={{ ...cfgInp, cursor: "pointer", minWidth: 180 }}>
+                  <option value="__todas__">Todas as categorias</option>
+                  {cats.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
               <div className="card">
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#15803d" }}>🔥 Mais vendidos</div>
-                {mais.map((p, i) => <Linha key={p.produto_id} p={p} pos={i + 1} cor="#15803d" />)}
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#15803d" }}>{crit.label}</div>
+                {lista.slice(0, 8).map((p, i) => <Linha key={p.produto_id || p.nome} p={p} pos={i + 1} cor={crit.desc ? "#d97706" : "#15803d"} />)}
               </div>
               <div className="card">
-                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#d97706" }}>🐢 Menos vendidos</div>
-                {menos.length === 0 ? <div style={{ fontSize: 12, color: "#a8a29e" }}>Poucos dados ainda.</div>
-                  : menos.map((p, k) => <Linha key={p.produto_id} p={p} pos={lista.length - k} cor="#d97706" />)}
+                <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#d97706" }}>🐢 Fim do ranking</div>
+                {lista.length <= 1 ? <div style={{ fontSize: 12, color: "#a8a29e" }}>Poucos dados ainda.</div>
+                  : lista.slice().reverse().slice(0, 5).map((p, k) => <Linha key={p.produto_id || p.nome} p={p} pos={lista.length - k} cor="#d97706" />)}
               </div>
             </div>
             {ranking.adicionais && ranking.adicionais.length > 0 && (
               <div className="card" style={{ marginTop: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10, color: "#2563eb" }}>➕ Adicionais mais pedidos</div>
-                {ranking.adicionais.slice(0, 6).map((a, i) => (
+                {ranking.adicionais.slice().sort((a, b) => (b.quantidade || 0) - (a.quantidade || 0)).slice(0, 6).map((a, i) => (
                   <div key={a.nome} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid #f5f5f4" }}>
                     <span style={{ fontSize: 12, fontWeight: 800, color: "#a8a29e", minWidth: 24 }}>{i + 1}º</span>
                     <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#1c1917" }}>{a.nome}</span>
-                    <span style={{ fontSize: 14, fontWeight: 800, color: "#1c1917" }}>{a.qtd}</span>
-                    <span style={{ fontSize: 10, color: "#a8a29e", minWidth: 72, textAlign: "right" }}>{fmtR(a.receita)}</span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: "#1c1917" }}>{a.quantidade}</span>
+                    <span style={{ fontSize: 10, color: "#a8a29e", minWidth: 72, textAlign: "right" }}>{fmtR(a.faturamento)}</span>
                   </div>
                 ))}
               </div>

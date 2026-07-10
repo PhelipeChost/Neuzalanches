@@ -15,6 +15,7 @@ import SuporteApp from "./SuporteApp";
 import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
 import Logo from "./Logo";
 import NexusLogo from "./NexusLogo";
+import TipoEstabelecimento from "./TipoEstabelecimento";
 
 const SENHA_MANUTENCAO = "31076hibridos";
 const SENHA_SUPORTE = "31076hibridos";
@@ -138,6 +139,8 @@ export default function App() {
   // Perfil do estabelecimento (modo mesas/balcão, módulos habilitados)
   const [perfil, setPerfil] = useState(null);
   const [perfilLoading, setPerfilLoading] = useState(false);
+  // Tipos de estabelecimento: undefined = carregando, null = nunca escolheu, [] preenchido
+  const [tiposEstab, setTiposEstab] = useState(undefined);
 
   // Admin login form
   const [loginEmail, setLoginEmail] = useState("");
@@ -243,6 +246,12 @@ export default function App() {
       .then(p => setPerfil(p))
       .catch(() => setPerfil({ modo: "", modulos: [], configurado: false, nome_estabelecimento: "" }))
       .finally(() => setPerfilLoading(false));
+    // Tipos de estabelecimento (multi-stack) — só interessa no PDV desktop
+    if (IS_DESKTOP) {
+      api.tiposEstabelecimento.obter()
+        .then(r => setTiposEstab(r.definido ? r.tipos : null))
+        .catch(() => setTiposEstab(null));
+    }
   }, [usuario]);
 
   const handleAdminLogin = async (e) => {
@@ -437,6 +446,44 @@ export default function App() {
   // ─── SETUP WIZARD (primeiro acesso — perfil não configurado) ──────────────
   // No cardápio online o wizard não roda (a configuração estrutural vive no PDV).
   if (perfilLoading) return null;
+
+  // ─── 1º ACESSO NO DESKTOP: escolher tipo(s) de estabelecimento ────────────
+  // Antes do SetupWizard. PDVs já configurados (clientes antigos) pulam a tela
+  // e são tratados como lanchonete. undefined = ainda carregando.
+  if (IS_DESKTOP && perfil && !perfil.configurado && tiposEstab !== undefined) {
+    if (tiposEstab === null) {
+      return <TipoEstabelecimento onConfirmado={(tipos) => setTiposEstab(tipos)} />;
+    }
+    // Só mercado (sem lanchonete): este stack não tem o que configurar —
+    // aponta pro PDV Mercado (stack próprio) em vez do SetupWizard.
+    if (tiposEstab.length > 0 && !tiposEstab.includes("lanchonete")) {
+      return (
+        <div style={{
+          fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh",
+          background: "radial-gradient(1200px 700px at 15% 10%, #0f2b1e 0%, #0a1712 45%, #050a08 100%)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#f5f5f4", textAlign: "center",
+        }}>
+          <div style={{ width: 480, maxWidth: "94vw", padding: "42px 40px", borderRadius: 22, background: "rgba(20,32,26,0.75)", border: "1px solid rgba(255,255,255,0.06)" }}>
+            <div style={{ fontSize: 52, marginBottom: 14 }}>🛒</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#fff", marginBottom: 10 }}>PDV Mercado</div>
+            <div style={{ fontSize: 13, color: "#a8a29e", lineHeight: 1.6, marginBottom: 24 }}>
+              Seu estabelecimento usa o <b style={{ color: "#4ade80" }}>PDV Mercado</b> — um sistema separado,
+              com caixa por código de barras, estoque por setor e inventário.
+            </div>
+            <button onClick={() => { window.location.href = "http://localhost:3202"; }}
+              style={{ width: "100%", padding: "14px 20px", border: "none", borderRadius: 12, cursor: "pointer", fontSize: 15, fontWeight: 700, fontFamily: "inherit", color: "#fff", background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)" }}>
+              🛒 Abrir o PDV Mercado
+            </button>
+            <button onClick={() => setTiposEstab(null)}
+              style={{ width: "100%", marginTop: 12, padding: "11px 16px", borderRadius: 10, background: "transparent", border: "1.5px solid rgba(255,255,255,0.09)", color: "#d6d3d1", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              ← Trocar os tipos de estabelecimento
+            </button>
+          </div>
+        </div>
+      );
+    }
+  }
+
   if (!IS_ONLINE && perfil && !perfil.configurado) {
     return <SetupWizard onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
   }

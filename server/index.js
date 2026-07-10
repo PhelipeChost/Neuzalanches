@@ -332,6 +332,25 @@ app.get("/api/config/login-status", (req, res) => {
   });
 });
 
+// ─── TIPOS DE ESTABELECIMENTO (multi-stack: lanchonete / mercado) ────────────
+// O PDV atende mais de um ramo: no 1º acesso o cliente escolhe os tipos que
+// usa (pode ser mais de um — mundos separados, mesma licença). A lanchonete
+// roda neste stack; o mercado roda no stack próprio (backend/ + frontend/).
+app.get("/api/config/tipos-estabelecimento", authMiddleware, (req, res) => {
+  const raw = obterConfig("tipos_estabelecimento");
+  let tipos = [];
+  try { tipos = JSON.parse(raw || "[]"); } catch { tipos = []; }
+  res.json({ tipos, definido: raw != null && raw !== "" });
+});
+
+app.put("/api/config/tipos-estabelecimento", authMiddleware, adminOnly, (req, res) => {
+  const VALIDOS = ["lanchonete", "mercado"];
+  const tipos = (Array.isArray(req.body?.tipos) ? req.body.tipos : []).filter(t => VALIDOS.includes(t));
+  if (tipos.length === 0) return res.status(400).json({ error: "Selecione ao menos um tipo de estabelecimento" });
+  salvarConfig("tipos_estabelecimento", JSON.stringify(tipos));
+  res.json({ tipos });
+});
+
 // Liga/desliga a exigência de login no PDV (aba "Login" das Configurações).
 app.put("/api/config/login", authMiddleware, adminOnly, (req, res) => {
   salvarConfig("login_ativo", req.body?.ativo ? "1" : "0");
@@ -966,15 +985,28 @@ app.get("/api/sync/pull", syncTokenOrAdmin, (req, res) => {
   }
 });
 
-// PUSH: recebe um lote de pedidos e faz upsert (last-write-wins), sem efeitos
-// colaterais. Idempotente por id.
+// PUSH: recebe um lote de pedidos e faz upsert (last-write-wins). Idempotente
+// por id. Efeito colateral ÚNICO: se o status de um pedido mudou (ex.: cozinha
+// do PDV marcou "pronto"/"entregue"), notifica o cliente no WhatsApp — sem isso
+// o cliente só recebia mensagens de status alterados diretamente no online.
 app.post("/api/sync/push", syncTokenOrAdmin, (req, res) => {
   try {
     const lote = Array.isArray(req.body?.pedidos) ? req.body.pedidos : [];
     const resultado = { inserido: 0, atualizado: 0, ignorado: 0 };
     for (const p of lote) {
+      const anterior = p?.id ? buscarPedido(p.id) : null;
       const r = upsertPedidoSync(p);
       resultado[r] = (resultado[r] || 0) + 1;
+      // Só notifica mudança REAL de status: compara o que ficou gravado no
+      // banco com o valor anterior (o upsert pode ter ignorado o lote se a
+      // versão local era mais nova, e o push reenvia lotes idempotentes).
+      if (r === "atualizado" && anterior) {
+        const atualizado = buscarPedido(p.id);
+        if (atualizado && atualizado.status !== anterior.status && atualizado.status !== "pendente") {
+          atualizado.itens = buscarItensPedido(p.id);
+          notificarStatusPedido(atualizado, atualizado.status).catch(() => {});
+        }
+      }
     }
     res.json({ ok: true, ...resultado, recebidos: lote.length });
   } catch (err) {
@@ -1288,10 +1320,10 @@ app.get("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo } = req.body;
   if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
   try {
-    res.status(201).json(criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual }));
+    res.status(201).json(criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo }));
   } catch (err) {
     if (err.message.includes("UNIQUE")) return res.status(409).json({ error: "Código já existe" });
     throw err;
@@ -1299,9 +1331,9 @@ app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.put("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo } = req.body;
   if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
-  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual });
+  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo });
   if (!item) return res.status(404).json({ error: "Não encontrado" });
   res.json(item);
 });

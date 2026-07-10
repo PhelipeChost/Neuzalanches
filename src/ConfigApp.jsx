@@ -372,7 +372,7 @@ function GeralTab() {
 // tudo num só lugar para cada estabelecimento preencher e o bot capturar.
 function BotWhatsAppCard({ showToast }) {
   const [cfg, setCfg] = useState({
-    nome_estabelecimento: "", whatsapp: "", logo: "",
+    nome_estabelecimento: "", whatsapp: "", logo: "", link_exibicao: "",
     pix_key: "", pix_nome: "", mensagem_alerta: "",
   });
   const [status, setStatus] = useState(null);
@@ -388,6 +388,7 @@ function BotWhatsAppCard({ showToast }) {
         nome_estabelecimento: c.nome_estabelecimento || "",
         whatsapp: c.whatsapp || "",
         logo: c.logo || "",
+        link_exibicao: c.link_exibicao || "",
         pix_key: c.pix_key || "",
         pix_nome: c.pix_nome || "",
         mensagem_alerta: c.mensagem_alerta || "",
@@ -502,6 +503,15 @@ function BotWhatsAppCard({ showToast }) {
               <input value={cfg.whatsapp} onChange={e => setCfg(c => ({ ...c, whatsapp: e.target.value }))}
                 placeholder="(11) 99999-9999" maxLength={30} style={{ ...cfgInp, width: "100%" }} />
               <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Aparece como ícone clicável no cardápio digital.</div>
+            </div>
+
+            <div>
+              <label style={lblStyle}>LINK DO CARDÁPIO</label>
+              <input value={cfg.link_exibicao} onChange={e => setCfg(c => ({ ...c, link_exibicao: e.target.value }))}
+                placeholder="https://seudominio.com.br" maxLength={200} style={{ ...cfgInp, width: "100%" }} />
+              <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
+                O bot envia esse link na saudação e nas notificações — é como o cliente acessa o cardápio pra pedir.
+              </div>
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>

@@ -84,6 +84,12 @@ export const api = {
     salvar: (data) => request("/perfil", { method: "PUT", body: JSON.stringify(data) }),
   },
 
+  // Tipos de estabelecimento (multi-stack: lanchonete / mercado)
+  tiposEstabelecimento: {
+    obter: () => request("/config/tipos-estabelecimento"),
+    salvar: (tipos) => request("/config/tipos-estabelecimento", { method: "PUT", body: JSON.stringify({ tipos }) }),
+  },
+
   // Sessão de caixa (abrir/fechar/sangria/suprimento)
   caixa: {
     sessao: () => request("/caixa/sessao"),

@@ -7,6 +7,13 @@ const MODULOS_OPCIONAIS = [
   { id: "fiscal",  icon: "🧾", label: "Fiscal / NFC-e",    desc: "Emissão de nota fiscal ao consumidor" },
 ];
 
+// Tipos de estabelecimento que este PDV atende (multi-stack, mesma licença).
+// Cada tipo é um mundo separado: financeiro, estoque e vendas independentes.
+const TIPOS_ESTABELECIMENTO = [
+  { id: "lanchonete", icon: "🍔", label: "Lanchonete / Pizzaria / Hamburgueria", desc: "Mesas e balcão, comandas, cozinha e cardápio online (este sistema)" },
+  { id: "mercado",    icon: "🛒", label: "Mercado",                              desc: "Caixa por código de barras, estoque por setor e inventário (stack próprio)" },
+];
+
 const cardStyle = { background: "#fff", borderRadius: 14, border: "1px solid #e7e5e4", padding: 22 };
 const btnBase = { padding: "10px 18px", borderRadius: 9, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
 
@@ -19,6 +26,7 @@ export default function SuporteApp({ perfil, onPerfilChange }) {
   const [sincStat, setSincStat] = useState(null);
   const [pdvVer, setPdvVer] = useState("");
   const [statusServidor, setStatusServidor] = useState(null);
+  const [tipos, setTipos] = useState([]);
 
   const showToast = (msg, cor = "#15803d") => { setToast({ msg, cor }); setTimeout(() => setToast(null), 3000); };
 
@@ -28,6 +36,9 @@ export default function SuporteApp({ perfil, onPerfilChange }) {
       setModo(p.modo || "mesas");
       setNome(p.nome_estabelecimento || "");
     }).catch(() => {});
+    api.tiposEstabelecimento.obter()
+      .then(r => setTipos(r.definido ? r.tipos : ["lanchonete"]))
+      .catch(() => setTipos(["lanchonete"]));
     api.sync.config().then(c => setSincStat(c)).catch(() => {});
     try {
       if (window.pdvInfo?.getVersao) {
@@ -38,6 +49,21 @@ export default function SuporteApp({ perfil, onPerfilChange }) {
   }, []);
 
   const toggleModulo = (id) => setModulos(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
+
+  const toggleTipo = async (id) => {
+    const novo = tipos.includes(id) ? tipos.filter(t => t !== id) : [...tipos, id];
+    if (novo.length === 0) { showToast("Ao menos um tipo precisa ficar ativo", "#dc2626"); return; }
+    const rotulo = TIPOS_ESTABELECIMENTO.find(t => t.id === id)?.label || id;
+    const acao = tipos.includes(id) ? "DESABILITAR" : "habilitar";
+    if (!confirm(`${acao === "DESABILITAR" ? "Desabilitar" : "Habilitar"} o tipo "${rotulo}" neste PDV?\n\nOs dados do tipo não são apagados — só deixam de aparecer.`)) return;
+    setSalvando(true);
+    try {
+      const r = await api.tiposEstabelecimento.salvar(novo);
+      setTipos(r.tipos);
+      showToast("Tipos de estabelecimento atualizados!");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
 
   const salvarModulos = async () => {
     setSalvando(true);
@@ -153,6 +179,44 @@ export default function SuporteApp({ perfil, onPerfilChange }) {
                 {salvando ? "Salvando..." : "Salvar módulos"}
               </button>
             </div>
+          </div>
+
+          {/* Tipos de estabelecimento (multi-stack) */}
+          <div style={cardStyle}>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Tipos de estabelecimento</div>
+            <div style={{ fontSize: 12.5, color: "#78716c", marginBottom: 16 }}>
+              O cliente pode usar mais de um tipo no mesmo PDV (mesma licença) — cada um é um mundo
+              separado: financeiro, estoque e vendas independentes. Desabilitar não apaga dados.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {TIPOS_ESTABELECIMENTO.map(t => {
+                const ativo = tipos.includes(t.id);
+                return (
+                  <label key={t.id}
+                    onClick={() => !salvando && toggleTipo(t.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 12, cursor: "pointer",
+                      border: `1.5px solid ${ativo ? "#15803d" : "#e7e5e4"}`, background: ativo ? "#f0fdf4" : "#fafaf9", opacity: salvando ? 0.6 : 1 }}>
+                    <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{t.icon}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: ativo ? "#15803d" : "#1c1917" }}>{t.label}</div>
+                      <div style={{ fontSize: 12, color: "#78716c" }}>{t.desc}</div>
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20,
+                      background: ativo ? "#dcfce7" : "#f5f5f4", color: ativo ? "#16a34a" : "#a8a29e" }}>
+                      {ativo ? "ATIVO" : "DESABILITADO"}
+                    </span>
+                    <div style={{ width: 42, height: 24, borderRadius: 12, background: ativo ? "#15803d" : "#d6d3d1", position: "relative", transition: "background 0.2s" }}>
+                      <div style={{ position: "absolute", top: 2, left: ativo ? 20 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            {tipos.includes("mercado") && (
+              <div style={{ marginTop: 12, padding: "10px 14px", background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, color: "#1e40af" }}>
+                🛒 O PDV Mercado roda como sistema separado. Acesso: <b>http://localhost:3202</b> (backend <code>backend/</code> precisa estar em execução).
+              </div>
+            )}
           </div>
 
           {/* Modo Mesas/Balcão */}

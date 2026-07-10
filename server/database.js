@@ -2457,7 +2457,7 @@ export function listarInsumos() {
     SELECT ei.id, ei.nome, ei.unidade, ${CUSTO_EFETIVO_SQL} AS preco_unitario,
            ei.custo_medio, ei.custo_manual, ei.saldo_atual
     FROM estoque_itens ei
-    WHERE ei.deleted_at IS NULL
+    WHERE ei.deleted_at IS NULL AND ei.eh_insumo = 1
     ORDER BY ei.nome
   `).all();
 }
@@ -2614,26 +2614,29 @@ export function buscarEstoqueItemPorCodigo(codigo) {
   return db.prepare("SELECT * FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(codigo);
 }
 
-export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual }) {
+export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo }) {
   const id = gerarId();
   db.prepare(`
-    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
-    estoque_minimo || 0, estoque_maximo || 0, Number(custo_manual) || 0);
+    estoque_minimo || 0, estoque_maximo || 0, Number(custo_manual) || 0,
+    eh_insumo === undefined ? 1 : (eh_insumo ? 1 : 0));
   return buscarEstoqueItem(id);
 }
 
-export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual }) {
-  // custo_manual é opcional: só atualiza se vier no payload
+export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo }) {
+  // custo_manual e eh_insumo são opcionais: só atualizam se vierem no payload
   const setCusto = custo_manual !== undefined ? ", custo_manual=?" : "";
+  const setInsumo = eh_insumo !== undefined ? ", eh_insumo=?" : "";
   const params = [codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
     estoque_minimo || 0, estoque_maximo || 0, ativo !== false ? 1 : 0];
   if (custo_manual !== undefined) params.push(Number(custo_manual) || 0);
+  if (eh_insumo !== undefined) params.push(eh_insumo ? 1 : 0);
   params.push(id);
   const r = db.prepare(`
     UPDATE estoque_itens SET codigo=?, nome=?, unidade=?, categoria_id=?, fornecedor_id=?,
-    estoque_minimo=?, estoque_maximo=?, ativo=?${setCusto} WHERE id=? AND deleted_at IS NULL
+    estoque_minimo=?, estoque_maximo=?, ativo=?${setCusto}${setInsumo} WHERE id=? AND deleted_at IS NULL
   `).run(...params);
   if (r.changes === 0) return null;
   recalcularCMVPorInsumo(id); // mantém o CMV dos produtos em dia com o custo do item
@@ -3084,6 +3087,33 @@ db.exec(`
     } finally {
       db.pragma("foreign_keys = ON");
     }
+  }
+}
+
+// ─── MIGRAÇÃO: nem todo item de estoque é insumo ──────────────────────────────
+// eh_insumo controla se o item aparece na ficha técnica (Insumos). Itens antigos
+// continuam como insumo (comportamento anterior); novos escolhem no cadastro.
+{
+  const cols = db.prepare("PRAGMA table_info(estoque_itens)").all();
+  if (!cols.some(c => c.name === "eh_insumo")) {
+    db.exec("ALTER TABLE estoque_itens ADD COLUMN eh_insumo INTEGER DEFAULT 1");
+  }
+}
+
+// ─── SEED: categorias padrão do estoque (ramo alimentício) ───────────────────
+// Roda uma única vez (flag em config) — o admin pode apagar/criar as dele depois.
+{
+  const flag = db.prepare("SELECT 1 FROM config WHERE key = 'seed_estoque_categorias'").get();
+  if (!flag) {
+    const CATEGORIAS_PADRAO = [
+      "Proteínas e Carnes", "Pães e Massas", "Hortifruti", "Frios e Laticínios",
+      "Molhos e Condimentos", "Bebidas", "Congelados", "Embalagens e Descartáveis",
+      "Limpeza e Higiene", "Outros",
+    ];
+    const insCat = db.prepare("INSERT OR IGNORE INTO estoque_categorias (id, nome) VALUES (?, ?)");
+    for (const nome of CATEGORIAS_PADRAO) insCat.run(gerarId(), nome);
+    db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('seed_estoque_categorias', 'done')").run();
+    console.log("Categorias padrão do estoque criadas.");
   }
 }
 

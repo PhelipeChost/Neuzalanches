@@ -147,7 +147,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
   const [busca, setBusca] = useState("");
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
-  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "" });
+  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", eh_insumo: false });
   const [saving, setSaving] = useState(false);
 
   const itensFiltrados = useMemo(() => {
@@ -157,7 +157,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
 
   const abrirNovo = () => {
     setEditando(null);
-    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "" });
+    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", eh_insumo: false });
     setModalAberto(true);
   };
 
@@ -167,7 +167,8 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
       codigo: item.codigo, nome: item.nome, unidade: item.unidade,
       categoria_id: item.categoria_id || "", fornecedor_id: item.fornecedor_id || "",
       estoque_minimo: item.estoque_minimo || "", estoque_maximo: item.estoque_maximo || "",
-      custo_manual: (item.custo_manual != null && item.custo_manual !== 0) ? item.custo_manual : ""
+      custo_manual: (item.custo_manual != null && item.custo_manual !== 0) ? item.custo_manual : "",
+      eh_insumo: item.eh_insumo !== 0,
     });
     setModalAberto(true);
   };
@@ -183,6 +184,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
         estoque_minimo: parseFloat(form.estoque_minimo) || 0,
         estoque_maximo: parseFloat(form.estoque_maximo) || 0,
         custo_manual: parseFloat(form.custo_manual) || 0,
+        eh_insumo: !!form.eh_insumo,
       };
       if (editando) {
         await api.estoque.itens.atualizar(editando.id, { ...data, ativo: editando.ativo });
@@ -253,7 +255,10 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
               {itensFiltrados.map(i => (
                 <tr key={i.id} style={{ borderBottom: "1px solid #f5f5f4" }}>
                   <td style={{ padding: "10px 10px", fontWeight: 600, fontFamily: "monospace", fontSize: 12 }}>{i.codigo}</td>
-                  <td style={{ padding: "10px 10px", fontWeight: 500 }}>{i.nome}</td>
+                  <td style={{ padding: "10px 10px", fontWeight: 500 }}>
+                    {i.nome}
+                    {i.eh_insumo !== 0 && <span title="Este item é um insumo (ficha técnica)" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: "#f0fdf4", color: "#15803d", verticalAlign: "middle" }}>INSUMO</span>}
+                  </td>
                   <td style={{ padding: "10px 10px", color: "#78716c" }}>{i.unidade}</td>
                   <td style={{ padding: "10px 10px", color: "#78716c" }}>{i.categoria_nome || "—"}</td>
                   <td style={{ padding: "10px 10px", fontWeight: 600, color: i.saldo_atual <= 0 ? "#dc2626" : i.estoque_minimo > 0 && i.saldo_atual <= i.estoque_minimo ? "#d97706" : "#15803d" }}>
@@ -337,6 +342,18 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
                   Usado na ficha técnica enquanto não houver entradas. Após registrar entradas, vale o custo médio.
                 </div>
               </div>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 10, cursor: "pointer",
+                border: `1.5px solid ${form.eh_insumo ? "#15803d" : "#e7e5e4"}`, background: form.eh_insumo ? "#f0fdf4" : "#fafaf9" }}>
+                <input type="checkbox" checked={!!form.eh_insumo} onChange={e => setForm({ ...form, eh_insumo: e.target.checked })}
+                  style={{ accentColor: "#15803d", marginTop: 2 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: form.eh_insumo ? "#15803d" : "#1c1917" }}>Este item é um insumo?</div>
+                  <div style={{ fontSize: 11, color: "#78716c", marginTop: 2 }}>
+                    Insumos aparecem na ficha técnica dos produtos (cálculo de CMV). Itens de uso
+                    geral (ex: material de limpeza) não precisam ser insumos.
+                  </div>
+                </div>
+              </label>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
               <button onClick={() => setModalAberto(false)} style={btnSecondary}>Cancelar</button>
@@ -1133,31 +1150,26 @@ export default function Estoque() {
         </div>
       </div>
 
-      {/* Nav — escondida até existir ao menos 1 item (T3: progressive disclosure) */}
-      {itens.length > 0 && (
-        <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", marginBottom: 24, overflowX: "auto" }}>
-          {nav.map(n => (
-            <button key={n.key} className={`est-nav-pill ${tab === n.key ? "active" : ""}`} onClick={() => setTab(n.key)}>
-              {n.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Nav — sempre visível: Fornecedores e Categorias precisam ser acessíveis
+          ANTES do primeiro item existir (o cadastro de item usa os dois). */}
+      <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 10, padding: 3, flexWrap: "wrap", marginBottom: 24, overflowX: "auto" }}>
+        {nav.map(n => (
+          <button key={n.key} className={`est-nav-pill ${tab === n.key ? "active" : ""}`} onClick={() => setTab(n.key)}>
+            {n.label}
+          </button>
+        ))}
+      </div>
 
-      {itens.length === 0 ? (
-        <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />
-      ) : (
-        <>
-          {tab === "dashboard" && <Dashboard onTabChange={setTab} />}
-          {tab === "itens" && <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-          {tab === "rapida" && <EntradaRapida itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-          {tab === "lote" && <EntradaLote itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-          {tab === "saidas" && <Saidas itens={itens} onReload={carregarDados} showToast={showToast} />}
-          {tab === "ajustes" && <Ajustes itens={itens} onReload={carregarDados} showToast={showToast} />}
-          {tab === "fornecedores" && <FornecedoresTab fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
-          {tab === "categorias" && <CategoriasTab categorias={categorias} onReload={carregarDados} showToast={showToast} />}
-        </>
-      )}
+      {tab === "dashboard" && (itens.length === 0
+        ? <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />
+        : <Dashboard onTabChange={setTab} />)}
+      {tab === "itens" && <Itens itens={itens} categorias={categorias} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+      {tab === "rapida" && <EntradaRapida itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+      {tab === "lote" && <EntradaLote itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+      {tab === "saidas" && <Saidas itens={itens} onReload={carregarDados} showToast={showToast} />}
+      {tab === "ajustes" && <Ajustes itens={itens} onReload={carregarDados} showToast={showToast} />}
+      {tab === "fornecedores" && <FornecedoresTab fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
+      {tab === "categorias" && <CategoriasTab categorias={categorias} onReload={carregarDados} showToast={showToast} />}
 
       {toast && (
         <div className="toast" style={{ background: toast.cor }}>{toast.msg}</div>
