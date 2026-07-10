@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "./api";
+import Logo from "./Logo";
 
 const ETAPAS = ["boas_vindas", "modo", "modulos", "nome", "pronto"];
 
@@ -9,7 +10,7 @@ const MODULOS_OPCIONAIS = [
   { id: "fiscal",   icon: "🧾", label: "Fiscal / NFC-e",   desc: "Emissão de notas fiscais de consumidor" },
 ];
 
-export default function SetupWizard({ onComplete, logoUrl }) {
+export default function SetupWizard({ onComplete }) {
   const [etapa, setEtapa] = useState(0);
   const [modo, setModo] = useState("");
   const [modulos, setModulos] = useState(["cozinha", "estoque"]);
@@ -56,7 +57,7 @@ export default function SetupWizard({ onComplete, logoUrl }) {
 
         {/* Boas-vindas */}
         {etapa === 0 && (<>
-          {logoUrl && <img src={logoUrl} alt="" style={{ width: 72, height: 72, borderRadius: "50%", objectFit: "cover", marginBottom: 16 }} onError={e => { e.currentTarget.style.display = "none"; }} />}
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}><Logo size={72} /></div>
           <div style={title}>Bem-vindo ao Nexus PDV</div>
           <div style={sub}>Vamos configurar o sistema para o seu estabelecimento. Leva menos de um minuto.</div>
           <button style={btn(true)} onClick={avancar}>Começar</button>

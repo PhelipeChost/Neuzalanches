@@ -1672,7 +1672,15 @@ export function getRankingVendas() {
 
 // ─── CATEGORIAS ─────────────────────────────────────────────────────────────
 
-export function listarCategorias() {
+export function listarCategorias({ cardapio_id } = {}) {
+  if (cardapio_id) {
+    return db.prepare(`
+      SELECT c.* FROM categorias c
+      INNER JOIN cardapio_categorias cc ON cc.categoria_id = c.id
+      WHERE cc.cardapio_id = ? AND c.deleted_at IS NULL
+      ORDER BY c.ordem ASC, c.nome ASC
+    `).all(cardapio_id);
+  }
   return db.prepare("SELECT * FROM categorias WHERE deleted_at IS NULL ORDER BY ordem ASC, nome ASC").all();
 }
 
@@ -1684,13 +1692,19 @@ export function buscarCategoriaPorNome(nome) {
   return db.prepare("SELECT * FROM categorias WHERE nome = ? AND deleted_at IS NULL").get(nome);
 }
 
-export function criarCategoria({ nome, permite_adicionais }) {
+export function criarCategoria({ nome, permite_adicionais, cardapio_id }) {
   const id = gerarId();
   // Nova categoria entra no fim
   const max = db.prepare("SELECT COALESCE(MAX(ordem), -1) AS m FROM categorias WHERE deleted_at IS NULL").get().m;
   db.prepare(
     "INSERT INTO categorias (id, nome, permite_adicionais, ordem) VALUES (?, ?, ?, ?)"
   ).run(id, nome, permite_adicionais ? 1 : 0, max + 1);
+  // Vincula automaticamente ao cardápio ativo se enviado
+  if (cardapio_id) {
+    try {
+      db.prepare("INSERT OR IGNORE INTO cardapio_categorias (cardapio_id, categoria_id) VALUES (?, ?)").run(cardapio_id, id);
+    } catch { /* ignore */ }
+  }
   return buscarCategoria(id);
 }
 
@@ -1727,10 +1741,19 @@ export function excluirCategoria(id) {
 
 // ─── ADICIONAIS ─────────────────────────────────────────────────────────────
 
-export function listarAdicionais(apenasDisponiveis = false) {
+export function listarAdicionais(apenasDisponiveis = false, { cardapio_id } = {}) {
+  const filtroDisp = apenasDisponiveis ? "AND a.disponivel = 1" : "";
+  if (cardapio_id) {
+    return db.prepare(`
+      SELECT a.* FROM adicionais a
+      INNER JOIN cardapio_adicionais ca ON ca.adicional_id = a.id
+      WHERE ca.cardapio_id = ? AND a.deleted_at IS NULL ${filtroDisp}
+      ORDER BY a.nome
+    `).all(cardapio_id);
+  }
   const sql = apenasDisponiveis
-    ? "SELECT * FROM adicionais WHERE disponivel = 1 AND deleted_at IS NULL ORDER BY nome"
-    : "SELECT * FROM adicionais WHERE deleted_at IS NULL ORDER BY nome";
+    ? "SELECT * FROM adicionais a WHERE a.disponivel = 1 AND a.deleted_at IS NULL ORDER BY a.nome"
+    : "SELECT * FROM adicionais a WHERE a.deleted_at IS NULL ORDER BY a.nome";
   return db.prepare(sql).all();
 }
 
@@ -1738,7 +1761,7 @@ export function buscarAdicional(id) {
   return db.prepare("SELECT * FROM adicionais WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
-export function criarAdicional({ nome, preco, custo, disponivel, max_quantidade, categoria_id }) {
+export function criarAdicional({ nome, preco, custo, disponivel, max_quantidade, categoria_id, cardapio_id }) {
   const id = gerarId();
   db.prepare(
     "INSERT INTO adicionais (id, nome, preco, custo, disponivel, max_quantidade, categoria_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
@@ -1748,6 +1771,12 @@ export function criarAdicional({ nome, preco, custo, disponivel, max_quantidade,
     Math.max(0, parseInt(max_quantidade, 10) || 0),
     categoria_id || null
   );
+  // Vincula automaticamente ao cardápio ativo se enviado
+  if (cardapio_id) {
+    try {
+      db.prepare("INSERT OR IGNORE INTO cardapio_adicionais (cardapio_id, adicional_id) VALUES (?, ?)").run(cardapio_id, id);
+    } catch { /* ignore */ }
+  }
   return buscarAdicional(id);
 }
 

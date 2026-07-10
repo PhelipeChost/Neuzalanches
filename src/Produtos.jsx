@@ -653,7 +653,9 @@ function ModalImportarCSV({ onImport, onClose }) {
 }
 
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
-export default function Produtos() {
+// cardapioAtivo: id do cardápio ativo (recebido do ProdutosApp). Se presente,
+// filtra produtos pelas categorias desse cardápio e força a criação vinculada.
+export default function Produtos({ cardapioAtivo, cardapioNome } = {}) {
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -671,7 +673,7 @@ export default function Produtos() {
     try {
       const [prods, cats, ins] = await Promise.all([
         api.produtos.listar(),
-        api.categorias.listar(),
+        api.categorias.listar({ cardapio_id: cardapioAtivo }),
         api.insumos.listar(),
       ]);
       setProdutos(prods);
@@ -682,7 +684,7 @@ export default function Produtos() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [cardapioAtivo]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -738,8 +740,14 @@ export default function Produtos() {
   // Não mostra promoções na aba de produtos — promoções vivem em sua própria sub-aba
   const produtosSemPromo = produtos.filter(p => !p.eh_promocao);
 
-  const filtrados = produtosSemPromo.filter(p =>
-    !busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || p.categoria.toLowerCase().includes(busca.toLowerCase())
+  // Só produtos cujo campo "categoria" (nome) está nas categorias do cardápio ativo
+  const nomesCatDoCardapio = new Set(categorias.map(c => c.nome));
+  const produtosDoCardapio = cardapioAtivo
+    ? produtosSemPromo.filter(p => nomesCatDoCardapio.has(p.categoria))
+    : produtosSemPromo;
+
+  const filtrados = produtosDoCardapio.filter(p =>
+    !busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || (p.categoria || "").toLowerCase().includes(busca.toLowerCase())
   );
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando produtos...</div>;
@@ -748,8 +756,8 @@ export default function Produtos() {
     <div className="anim">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Produtos</div>
-          <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{produtosSemPromo.length} produtos cadastrados</div>
+          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Produtos {cardapioNome ? `— ${cardapioNome}` : ""}</div>
+          <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2 }}>{produtosDoCardapio.length} produto{produtosDoCardapio.length !== 1 ? "s" : ""} neste cardápio</div>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
           <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} style={{ flex: 1, minWidth: 0, width: "100%" }} />

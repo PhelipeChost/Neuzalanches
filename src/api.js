@@ -105,7 +105,10 @@ export const api = {
 
   // Categorias
   categorias: {
-    listar: () => request("/categorias"),
+    listar: (opts = {}) => {
+      const q = opts.cardapio_id ? `?cardapio_id=${encodeURIComponent(opts.cardapio_id)}` : "";
+      return request(`/categorias${q}`);
+    },
     criar: (data) => request("/categorias", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/categorias/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     reordenar: (ids) => request("/categorias/reordenar", { method: "PUT", body: JSON.stringify({ ids }) }),
@@ -114,7 +117,10 @@ export const api = {
 
   // Adicionais
   adicionais: {
-    listar: () => request("/adicionais"),
+    listar: (opts = {}) => {
+      const q = opts.cardapio_id ? `?cardapio_id=${encodeURIComponent(opts.cardapio_id)}` : "";
+      return request(`/adicionais${q}`);
+    },
     criar: (data) => request("/adicionais", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/adicionais/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     excluir: (id) => request(`/adicionais/${id}`, { method: "DELETE" }),

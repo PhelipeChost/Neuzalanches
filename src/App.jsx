@@ -13,6 +13,7 @@ import PedidosOnlineApp from "./PedidosOnlineApp";
 import MesaApp from "./MesaApp";
 import SuporteApp from "./SuporteApp";
 import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
+import Logo from "./Logo";
 
 const SENHA_MANUTENCAO = "31076hibridos";
 const SENHA_SUPORTE = "31076hibridos";
@@ -119,6 +120,9 @@ export default function App() {
   });
   const [pendentesCount, setPendentesCount] = useState(0);
   const [suporteLiberado, setSuporteLiberado] = useState(false);
+  const [modalSuporte, setModalSuporte] = useState(false);
+  const [senhaSuporte, setSenhaSuporte] = useState("");
+  const [erroSuporte, setErroSuporte] = useState("");
   const [syncStatus, setSyncStatus] = useState("sem-config");
 
   // T5 — onboarding (primeiro acesso)
@@ -288,7 +292,7 @@ export default function App() {
         `}</style>
         <div style={{ background: "#fff", borderRadius: 16, padding: "40px 36px", width: 400, maxWidth: "92vw", boxShadow: "0 8px 30px rgba(0,0,0,0.08)" }}>
           <div style={{ textAlign: "center", marginBottom: 28 }}>
-            <img src="/logo.png" alt="Logo" style={{ width: 72, height: 72, borderRadius: "50%", objectFit: "cover", marginBottom: 12 }} />
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}><Logo size={72} /></div>
             <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700 }}>Painel Admin</div>
             <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 4 }}>Acesse com suas credenciais</div>
           </div>
@@ -324,7 +328,7 @@ export default function App() {
   // No cardápio online o wizard não roda (a configuração estrutural vive no PDV).
   if (perfilLoading) return null;
   if (!IS_ONLINE && perfil && !perfil.configurado) {
-    return <SetupWizard logoUrl="/logo.png" onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
+    return <SetupWizard onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
   }
 
   // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config, Suporte = sempre.
@@ -343,9 +347,11 @@ export default function App() {
     if (destino === "suporte") {
       if (!podeAcessar("suporte")) return;
       if (!suporteLiberado) {
-        const senha = prompt("Senha de suporte Nexus:");
-        if (senha !== SENHA_SUPORTE) { alert("Senha incorreta."); return; }
-        setSuporteLiberado(true);
+        // window.prompt() no Electron retorna null sem mostrar UI — modal customizado
+        setSenhaSuporte("");
+        setErroSuporte("");
+        setModalSuporte(true);
+        return;
       }
       setSetor("suporte");
       return;
@@ -387,6 +393,19 @@ export default function App() {
     const handleResetLicenca = (IS_DESKTOP && window.licenca?.reset)
       ? () => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }
       : null;
+
+    const confirmarSenhaSuporte = () => {
+      if (senhaSuporte === SENHA_SUPORTE) {
+        setSuporteLiberado(true);
+        setModalSuporte(false);
+        setSenhaSuporte("");
+        setErroSuporte("");
+        setSetor("suporte");
+      } else {
+        setErroSuporte("Senha incorreta");
+      }
+    };
+
     return (
       <div style={{ minHeight: "100vh", paddingLeft: SIDEBAR_LAYOUT_WIDTH, background: "#f5f5f4" }}>
         <SidebarNav
@@ -402,6 +421,41 @@ export default function App() {
           syncStatus={syncStatus}
         />
         <div style={{ minHeight: "100vh" }}>{conteudoSetor}</div>
+
+        {/* Modal de senha do Suporte */}
+        {modalSuporte && (
+          <div onClick={() => setModalSuporte(false)}
+            style={{ position: "fixed", inset: 0, background: "rgba(15,26,23,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
+            <div onClick={e => e.stopPropagation()}
+              style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 400, maxWidth: "92vw", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🛟</div>
+                <div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 800 }}>Área do Suporte Nexus</div>
+                  <div style={{ fontSize: 12, color: "#78716c" }}>Digite a senha de suporte para continuar</div>
+                </div>
+              </div>
+              <input type="password" autoFocus value={senhaSuporte}
+                onChange={e => { setSenhaSuporte(e.target.value); setErroSuporte(""); }}
+                onKeyDown={e => { if (e.key === "Enter") confirmarSenhaSuporte(); if (e.key === "Escape") setModalSuporte(false); }}
+                placeholder="Senha de suporte"
+                style={{ width: "100%", padding: "12px 14px", border: `1.5px solid ${erroSuporte ? "#fecaca" : "#e7e5e4"}`, borderRadius: 10, fontSize: 14, outline: "none", fontFamily: "inherit", marginTop: 18 }} />
+              {erroSuporte && (
+                <div style={{ marginTop: 8, fontSize: 12, color: "#dc2626", fontWeight: 600 }}>❌ {erroSuporte}</div>
+              )}
+              <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
+                <button onClick={() => setModalSuporte(false)}
+                  style={{ padding: "10px 18px", border: "1.5px solid #e7e5e4", borderRadius: 9, background: "#fff", color: "#78716c", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  Cancelar
+                </button>
+                <button onClick={confirmarSenhaSuporte}
+                  style={{ padding: "10px 22px", border: "none", borderRadius: 9, background: "#15803d", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  Entrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

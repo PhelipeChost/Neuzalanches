@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { ImagemProduto } from "./Produtos";
+import Logo from "./Logo";
 
 // ─── CONFIGURAÇÕES DA MARCA ───────────────────────────────────────────────────
 const WHATSAPP_NUMERO = "5518991589923"; // número do bot conectado
@@ -1827,14 +1828,7 @@ export default function ClienteApp() {
         }}>
           <div style={{ maxWidth: 720, width: "100%", textAlign: "center" }}>
             <div style={{ marginBottom: 32 }}>
-              <div style={{
-                width: 72, height: 72, borderRadius: 16, background: "var(--brand)",
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                marginBottom: 16, overflow: "hidden",
-              }}>
-                <img src="/logo.png" alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = "🍔"; }} />
-              </div>
+              <div style={{ marginBottom: 16 }}><Logo size={72} radius={16} /></div>
               <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.5px" }}>
                 Escolha seu cardápio
               </h1>
@@ -1901,15 +1895,9 @@ export default function ClienteApp() {
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{
-            width: 38, height: 38,
-            background: "var(--brand)",
-            borderRadius: 10,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 20, flexShrink: 0,
-            overflow: "hidden",
+            flexShrink: 0,
           }}>
-            <img src="/logo.png" alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }}
-              onError={e => { e.currentTarget.style.display = "none"; e.currentTarget.parentElement.innerHTML = "🍔"; }} />
+            <Logo size={38} radius={10} />
           </div>
           <span className="nl-logo-name" style={{
             fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 17,

@@ -1,4 +1,5 @@
 import FluxoCaixa from "./fluxo-de-caixa";
+import Logo from "./Logo";
 
 export default function FinanceiroApp({ onNavegar }) {
   return (
@@ -33,7 +34,7 @@ export default function FinanceiroApp({ onNavegar }) {
 
       <header className="ns-header">
         <div className="ns-header-brand" style={{ cursor: "default" }}>
-          <img src="/logo.png" alt="Logo" onError={e => { e.currentTarget.style.display = "none"; }} />
+          <Logo size={32} />
           <span>Financeiro</span>
         </div>
         <div style={{ flex: 1 }} />

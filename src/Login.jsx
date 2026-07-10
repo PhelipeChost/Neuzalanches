@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "./api";
+import Logo from "./Logo";
 
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
 const inp = { width: "100%", padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917", background: "#fff" };
@@ -57,7 +58,7 @@ export default function ModalAuth({ onLogin, onClose, defaultMode = "registro" }
 
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 20 }}>
-          <img src="/logo.png" alt="Logo" style={{ width: 64, height: 64, borderRadius: "50%", objectFit: "cover", marginBottom: 8 }} />
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}><Logo size={64} /></div>
           <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700 }}>
             {modo === "login" ? "Entrar na conta" : "Crie sua conta"}
           </div>

@@ -64,7 +64,11 @@ function calcularDesconto(preco, precoDe) {
 }
 
 // ──────────────── FORMULÁRIO DE PROMOÇÃO ────────────────
-function FormPromocao({ inicial, onSalvar, onCancelar }) {
+// cardapioAtivo restringe a busca de produtos vinculados aos que pertencem
+// a categorias do cardápio ativo (ex.: promoção no cardápio "Lanches" só
+// oferece produtos cadastrados nesse cardápio).
+function FormPromocao({ inicial, onSalvar, onCancelar, cardapioAtivo, cardapioNome }) {
+  const [buscaProduto, setBuscaProduto] = useState("");
   const [nome, setNome]               = useState(inicial?.nome || "");
   const [descricao, setDescricao]     = useState(inicial?.promo_descricao || inicial?.descricao || "");
   const [precoDe, setPrecoDe]         = useState(inicial?.preco_de ?? "");
@@ -84,10 +88,24 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
   const [produtos, setProdutos] = useState([]);
   const [produtoVinculadoId, setProdutoVinculadoId] = useState("");
   useEffect(() => {
-    api.produtos.listar()
-      .then(list => setProdutos(list.filter(p => !p.eh_promocao)))
-      .catch(() => {});
-  }, []);
+    (async () => {
+      try {
+        const [prods, cats] = await Promise.all([
+          api.produtos.listar(),
+          cardapioAtivo ? api.categorias.listar({ cardapio_id: cardapioAtivo }) : Promise.resolve(null),
+        ]);
+        let base = prods.filter(p => !p.eh_promocao);
+        if (cats) {
+          const nomes = new Set(cats.map(c => c.nome));
+          base = base.filter(p => nomes.has(p.categoria));
+        }
+        setProdutos(base);
+      } catch { /* ignore */ }
+    })();
+  }, [cardapioAtivo]);
+
+  // Filtro por busca — o cliente pode ter dezenas de produtos por cardápio
+  const produtosBusca = produtos.filter(p => !buscaProduto || p.nome.toLowerCase().includes(buscaProduto.toLowerCase()));
 
   const aoSelecionarProduto = (id) => {
     setProdutoVinculadoId(id);
@@ -177,21 +195,38 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
           border: "1.5px solid #93C5FD", borderRadius: 10, padding: "12px 16px",
         }}>
           <label style={{ ...lbl, color: "#1E40AF", marginBottom: 6 }}>
-            🔗 Vincular a um produto existente?
+            🔗 Vincular a um produto existente? {cardapioNome && <span style={{ fontWeight: 400 }}>(do cardápio {cardapioNome})</span>}
           </label>
-          <select style={{ ...inp, background: "#fff", borderColor: "#93C5FD" }}
-            value={produtoVinculadoId} onChange={e => aoSelecionarProduto(e.target.value)}>
-            <option value="">— Nenhum (criar promoção do zero) —</option>
-            {produtos.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.nome} — {fmtBRL(p.preco)}{p.custo > 0 ? ` (CMV ${fmtBRL(p.custo)})` : ""}
-              </option>
-            ))}
-          </select>
+          <input style={{ ...inp, background: "#fff", borderColor: "#93C5FD", marginBottom: 8 }}
+            type="search" placeholder="Buscar produto pelo nome…"
+            value={buscaProduto} onChange={e => setBuscaProduto(e.target.value)} />
+          <div style={{ maxHeight: 180, overflowY: "auto", background: "#fff", border: "1.5px solid #93C5FD", borderRadius: 8 }}>
+            <button type="button" onClick={() => aoSelecionarProduto("")}
+              style={{ display: "flex", width: "100%", padding: "9px 12px", background: !produtoVinculadoId ? "#DBEAFE" : "transparent", border: "none", borderBottom: "1px solid #DBEAFE", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "#1E40AF", fontFamily: "inherit" }}>
+              — Nenhum (criar promoção do zero) —
+            </button>
+            {produtosBusca.length === 0 && (
+              <div style={{ padding: 14, textAlign: "center", fontSize: 12, color: "#93C5FD" }}>
+                {produtos.length === 0
+                  ? (cardapioNome ? `Nenhum produto no cardápio "${cardapioNome}".` : "Nenhum produto cadastrado.")
+                  : "Nenhum produto bate com essa busca."}
+              </div>
+            )}
+            {produtosBusca.map(p => {
+              const sel = String(produtoVinculadoId) === String(p.id);
+              return (
+                <button type="button" key={p.id} onClick={() => { aoSelecionarProduto(p.id); setBuscaProduto(""); }}
+                  style={{ display: "flex", justifyContent: "space-between", width: "100%", padding: "9px 12px", background: sel ? "#DBEAFE" : "transparent", border: "none", borderBottom: "1px solid #f5f5f4", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "#1c1917", fontFamily: "inherit", gap: 10 }}>
+                  <span>{p.nome}</span>
+                  <span style={{ color: "#78716c", flexShrink: 0 }}>{fmtBRL(p.preco)}{p.custo > 0 ? ` · CMV ${fmtBRL(p.custo)}` : ""}</span>
+                </button>
+              );
+            })}
+          </div>
           <div style={{ fontSize: 11, color: "#1E40AF", marginTop: 6, lineHeight: 1.4 }}>
             {produtoVinculadoId
               ? "✓ Preenchi o nome, o preço de referência (riscado) e o CMV. Falta digitar o preço promocional."
-              : "Selecione um produto pra colocar em promoção, ou deixe em branco se for um combo novo."}
+              : "Escolha um produto pra colocar em promoção, ou deixe em Nenhum se for um combo novo."}
           </div>
         </div>
       )}
@@ -347,8 +382,11 @@ function FormPromocao({ inicial, onSalvar, onCancelar }) {
 }
 
 // ──────────────── COMPONENTE PRINCIPAL ────────────────
-export default function Promocoes() {
+// cardapioAtivo restringe a lista de promoções às que estão vinculadas a
+// produtos de categorias do cardápio ativo. Passado para o form também.
+export default function Promocoes({ cardapioAtivo, cardapioNome } = {}) {
   const [promocoes, setPromocoes] = useState([]);
+  const [categoriasDoCardapio, setCategoriasDoCardapio] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [editando, setEditando] = useState(null);
@@ -360,14 +398,24 @@ export default function Promocoes() {
 
   const carregar = useCallback(async () => {
     try {
-      const lista = await api.promocoes.listar();
+      const [lista, cats] = await Promise.all([
+        api.promocoes.listar(),
+        cardapioAtivo ? api.categorias.listar({ cardapio_id: cardapioAtivo }) : Promise.resolve([]),
+      ]);
       setPromocoes(lista);
+      setCategoriasDoCardapio(cats);
     } catch (err) {
       showToast("Erro: " + err.message, "#dc2626");
     } finally { setLoading(false); }
-  }, []);
+  }, [cardapioAtivo]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Filtra promoções pelo cardápio ativo (mesma lógica de produtos: pela categoria)
+  const nomesCatDoCardapio = new Set(categoriasDoCardapio.map(c => c.nome));
+  const promocoesDoCardapio = cardapioAtivo
+    ? promocoes.filter(p => nomesCatDoCardapio.has(p.categoria))
+    : promocoes;
 
   async function salvar(dados) {
     if (editando?.id) {
@@ -405,7 +453,7 @@ export default function Promocoes() {
     setModal(true);
   }
 
-  const com_status = promocoes.map(p => ({ ...p, _status: vigenciaAgora(p) }));
+  const com_status = promocoesDoCardapio.map(p => ({ ...p, _status: vigenciaAgora(p) }));
   const filtradas = com_status.filter(p => filtroStatus === "todas" || p._status === filtroStatus);
 
   const counts = {
@@ -430,7 +478,9 @@ export default function Promocoes() {
         }}>
           <div style={{ fontSize: 36 }}>🔥</div>
           <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 19, fontWeight: 700, color: "#78350F" }}>Promoções & Destaques</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 19, fontWeight: 700, color: "#78350F" }}>
+              Promoções & Destaques {cardapioNome ? `— ${cardapioNome}` : ""}
+            </div>
             <div style={{ fontSize: 12, color: "#92400E", marginTop: 2 }}>
               Engaje os clientes com promoções semanais, mensais ou em datas específicas. Aparecem no topo do cardápio como <b>"Destaques do dia"</b>.
             </div>
@@ -582,6 +632,8 @@ export default function Promocoes() {
               inicial={editando}
               onSalvar={salvar}
               onCancelar={() => { setModal(false); setEditando(null); }}
+              cardapioAtivo={cardapioAtivo}
+              cardapioNome={cardapioNome}
             />
           </div>
         </div>

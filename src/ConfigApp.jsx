@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "./api";
 import Lixeira from "./Lixeira";
+import Logo from "./Logo";
 
 const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
 
@@ -784,11 +785,10 @@ export default function ConfigApp({ onNavegar }) {
 
       {/* Header */}
       <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", minHeight: 56, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 50 }}>
-        <button onClick={() => onNavegar(null)} style={{ display: "flex", alignItems: "center", gap: 9, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-          <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }}
-            onError={e => { e.currentTarget.style.display = "none"; }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <Logo size={32} />
           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Configurações</span>
-        </button>
+        </div>
 
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 

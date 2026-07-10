@@ -499,14 +499,15 @@ app.put("/api/cardapios/:id/adicionais", authMiddleware, adminOnly, (req, res) =
 
 // Público: listar categorias (clientes precisam ver para o cardápio)
 app.get("/api/categorias", (req, res) => {
-  res.json(listarCategorias());
+  const cardapio_id = req.query.cardapio_id || undefined;
+  res.json(listarCategorias({ cardapio_id }));
 });
 
 app.post("/api/categorias", authMiddleware, adminOnly, (req, res) => {
-  const { nome, permite_adicionais } = req.body;
+  const { nome, permite_adicionais, cardapio_id } = req.body;
   if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
   try {
-    const c = criarCategoria({ nome, permite_adicionais });
+    const c = criarCategoria({ nome, permite_adicionais, cardapio_id });
     agendarSyncCatalogo();
     res.status(201).json(c);
   } catch (err) {
@@ -551,14 +552,15 @@ app.get("/api/adicionais", (req, res) => {
       isAdmin = decoded.tipo === "admin";
     } catch { /* ignore */ }
   }
-  res.json(listarAdicionais(!isAdmin));
+  const cardapio_id = req.query.cardapio_id || undefined;
+  res.json(listarAdicionais(!isAdmin, { cardapio_id }));
 });
 
 app.post("/api/adicionais", authMiddleware, adminOnly, (req, res) => {
-  const { nome, preco, custo, disponivel, max_quantidade, categoria_id } = req.body;
+  const { nome, preco, custo, disponivel, max_quantidade, categoria_id, cardapio_id } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  const a = criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id });
+  const a = criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id, cardapio_id });
   agendarSyncCatalogo();
   res.status(201).json(a);
 });

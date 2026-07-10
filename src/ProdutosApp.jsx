@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "./api";
 import Produtos from "./Produtos";
 import Promocoes from "./Promocoes";
+import Logo from "./Logo";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
 const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
@@ -9,7 +10,7 @@ const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 
 const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
 
 // ─── CATEGORIAS ──────────────────────────────────────────────────────────────
-function CategoriasTab() {
+function CategoriasTab({ cardapioAtivo, cardapioNome }) {
   const [categorias, setCategorias] = useState([]);
   const [novaCat, setNovaCat] = useState("");
   const [novaCatAdicionais, setNovaCatAdicionais] = useState(false);
@@ -19,18 +20,22 @@ function CategoriasTab() {
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
   useEffect(() => {
-    api.categorias.listar().then(setCategorias).catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
-  }, []);
+    setLoading(true);
+    api.categorias.listar({ cardapio_id: cardapioAtivo })
+      .then(setCategorias)
+      .catch(() => showToast("Erro ao carregar", "#dc2626"))
+      .finally(() => setLoading(false));
+  }, [cardapioAtivo]);
 
   const adicionar = async () => {
     const nome = novaCat.trim();
     if (!nome) return showToast("Digite o nome da categoria", "#dc2626");
     try {
-      const nova = await api.categorias.criar({ nome, permite_adicionais: novaCatAdicionais });
+      const nova = await api.categorias.criar({ nome, permite_adicionais: novaCatAdicionais, cardapio_id: cardapioAtivo });
       setCategorias(cs => [...cs, nova]);
       setNovaCat("");
       setNovaCatAdicionais(false);
-      showToast("Categoria criada!");
+      showToast(`Categoria criada no cardápio ${cardapioNome || ""}!`);
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
@@ -79,9 +84,11 @@ function CategoriasTab() {
   return (
     <div className="anim">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Categorias de Produtos</div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Categorias {cardapioNome ? `— ${cardapioNome}` : ""}</div>
       </div>
-      <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>{categorias.length} categorias cadastradas</div>
+      <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>
+        {categorias.length} categoria{categorias.length !== 1 ? "s" : ""} deste cardápio
+      </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
@@ -148,7 +155,7 @@ function CategoriasTab() {
 }
 
 // ─── ADICIONAIS ──────────────────────────────────────────────────────────────
-function AdicionaisTab() {
+function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
   const [adicionais, setAdicionais] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "", categoria: "" });
@@ -159,10 +166,15 @@ function AdicionaisTab() {
   const fmtPreco = (v) => Number(v).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   useEffect(() => {
-    Promise.all([api.adicionais.listar(), api.categorias.listar()])
+    setLoading(true);
+    Promise.all([
+      api.adicionais.listar({ cardapio_id: cardapioAtivo }),
+      api.categorias.listar({ cardapio_id: cardapioAtivo }),
+    ])
       .then(([ads, cats]) => { setAdicionais(ads); setCategorias(cats); })
-      .catch(() => showToast("Erro ao carregar", "#dc2626")).finally(() => setLoading(false));
-  }, []);
+      .catch(() => showToast("Erro ao carregar", "#dc2626"))
+      .finally(() => setLoading(false));
+  }, [cardapioAtivo]);
 
   const adicionar = async () => {
     const nome = novoAd.nome.trim();
@@ -170,10 +182,10 @@ function AdicionaisTab() {
     const custo = parseFloat(novoAd.custo) || 0;
     if (!nome || isNaN(preco) || preco < 0) return showToast("Preencha nome e preco valido", "#dc2626");
     try {
-      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true, categoria: novoAd.categoria });
+      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true, categoria: novoAd.categoria, cardapio_id: cardapioAtivo });
       setAdicionais(ads => [...ads, novo]);
       setNovoAd({ nome: "", preco: "", custo: "", categoria: "" });
-      showToast("Adicional criado!");
+      showToast(`Adicional criado no cardápio ${cardapioNome || ""}!`);
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
@@ -197,9 +209,9 @@ function AdicionaisTab() {
   return (
     <div className="anim">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Adicionais (Acompanhamentos)</div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Adicionais {cardapioNome ? `— ${cardapioNome}` : ""}</div>
       </div>
-      <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>{adicionais.length} adicionais cadastrados</div>
+      <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>{adicionais.length} adicional{adicionais.length !== 1 ? "es" : ""} deste cardápio</div>
 
       <div className="card" style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
@@ -398,7 +410,7 @@ function DesempenhoTab() {
 }
 
 // ─── CARDÁPIOS (multi-menu) ──────────────────────────────────────────────────
-function CardapiosTab() {
+function CardapiosTab({ onChange }) {
   const [cardapios, setCardapios] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [adicionais, setAdicionais] = useState([]);
@@ -432,13 +444,14 @@ function CardapiosTab() {
       await api.cardapios.criar({ nome: novoNome.trim(), icone: novoIcone, cor: novoCor });
       setNovoNome(""); setNovoIcone("📋"); setNovoCor("#15803d");
       await carregar();
+      onChange?.();
       showToast("Cardápio criado!");
     } catch (e) { showToast(e.message, "#dc2626"); }
   };
 
   const excluir = async (id) => {
     if (!confirm("Excluir este cardápio?")) return;
-    try { await api.cardapios.excluir(id); await carregar(); showToast("Excluído"); }
+    try { await api.cardapios.excluir(id); await carregar(); onChange?.(); showToast("Excluído"); }
     catch (e) { showToast(e.message, "#dc2626"); }
   };
 
@@ -450,6 +463,7 @@ function CardapiosTab() {
       await api.cardapios.definirAdicionais(editando.id, editando.adicionais || []);
       setEditando(null);
       await carregar();
+      onChange?.();
       showToast("Salvo!");
     } catch (e) { showToast(e.message, "#dc2626"); }
   };
@@ -615,17 +629,55 @@ function CardapiosTab() {
   );
 }
 
+// Cardápios como raiz do fluxo: o cliente cria um cardápio (Lanches, Pastéis),
+// depois cadastra categorias/adicionais/produtos/promoções DENTRO desse cardápio.
 const NAV_TABS = [
-  { key: "produtos", label: "Produtos", icon: "\u{1F354}" },
-  { key: "promocoes", label: "Promoções", icon: "\u{1F525}" },
-  { key: "cardapios", label: "Cardápios", icon: "\u{1F4CB}" },
+  { key: "cardapios",  label: "Cardápios",  icon: "\u{1F4CB}" },
+  { key: "produtos",   label: "Produtos",   icon: "\u{1F354}" },
   { key: "categorias", label: "Categorias", icon: "\u{1F4C2}" },
   { key: "adicionais", label: "Adicionais", icon: "\u{2795}" },
+  { key: "promocoes",  label: "Promoções",  icon: "\u{1F525}" },
   { key: "desempenho", label: "Desempenho", icon: "\u{1F4CA}" },
 ];
 
+// Abas que precisam de um cardápio selecionado (as demais são globais)
+const ABAS_POR_CARDAPIO = new Set(["produtos", "categorias", "adicionais", "promocoes"]);
+
 export default function ProdutosApp({ onNavegar }) {
-  const [aba, setAba] = useState("produtos");
+  const [aba, setAba] = useState("cardapios");
+  const [cardapios, setCardapios] = useState([]);
+  const [cardapioAtivo, setCardapioAtivo] = useState(() => localStorage.getItem("nl_cardapio_ativo") || "");
+
+  // Carrega cardápios pra o seletor; se não há ativo salvo, escolhe o primeiro.
+  useEffect(() => {
+    api.cardapios.listar().then(cs => {
+      setCardapios(cs);
+      if (!cardapioAtivo && cs.length > 0) {
+        setCardapioAtivo(cs[0].id);
+        localStorage.setItem("nl_cardapio_ativo", cs[0].id);
+      }
+      // Cardápio salvo não existe mais? Reseta.
+      if (cardapioAtivo && !cs.find(c => c.id === cardapioAtivo)) {
+        const novo = cs[0]?.id || "";
+        setCardapioAtivo(novo);
+        if (novo) localStorage.setItem("nl_cardapio_ativo", novo); else localStorage.removeItem("nl_cardapio_ativo");
+      }
+    }).catch(() => {});
+  }, []);
+
+  const trocarCardapio = (id) => {
+    setCardapioAtivo(id);
+    if (id) localStorage.setItem("nl_cardapio_ativo", id);
+    else localStorage.removeItem("nl_cardapio_ativo");
+  };
+
+  // Callback pra sub-abas avisarem que criaram/deletaram cardápio → recarrega
+  const recarregarCardapios = async () => {
+    try { setCardapios(await api.cardapios.listar()); } catch {}
+  };
+
+  const cardapioAtual = cardapios.find(c => c.id === cardapioAtivo);
+  const precisaCardapio = ABAS_POR_CARDAPIO.has(aba);
 
   return (
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", color: "#1c1917" }}>
@@ -655,11 +707,10 @@ export default function ProdutosApp({ onNavegar }) {
 
       {/* Header */}
       <header style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "0 32px", minHeight: 56, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", position: "sticky", top: 0, zIndex: 50 }}>
-        <button onClick={() => onNavegar(null)} style={{ display: "flex", alignItems: "center", gap: 9, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-          <img src="/logo.png" alt="Logo" style={{ width: 32, height: 32, borderRadius: "50%", objectFit: "cover" }}
-            onError={e => { e.currentTarget.style.display = "none"; }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <Logo size={32} />
           <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 700, color: "#1c1917" }}>Produtos e Promoções</span>
-        </button>
+        </div>
 
         <div style={{ width: 1, height: 22, background: "#e7e5e4" }} />
 
@@ -674,15 +725,66 @@ export default function ProdutosApp({ onNavegar }) {
         <div style={{ flex: 1 }} />
       </header>
 
+      {/* Seletor de cardápio ativo (visível nas abas que filtram por cardápio) */}
+      {precisaCardapio && cardapios.length > 0 && (
+        <div style={{ background: "#fff", borderBottom: "1px solid #e7e5e4", padding: "10px 32px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Cardápio ativo:</span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {cardapios.map(c => (
+              <button key={c.id} onClick={() => trocarCardapio(c.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 14px", borderRadius: 999,
+                  border: `1.5px solid ${cardapioAtivo === c.id ? c.cor : "#e7e5e4"}`,
+                  background: cardapioAtivo === c.id ? (c.cor + "18") : "#fafaf9",
+                  color: cardapioAtivo === c.id ? c.cor : "#78716c",
+                  fontWeight: cardapioAtivo === c.id ? 700 : 500,
+                  fontSize: 12.5, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                }}>
+                <span>{c.icone}</span>
+                <span>{c.nome}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => setAba("cardapios")}
+            style={{ fontSize: 11, color: "#78716c", background: "none", border: "1px solid #e7e5e4", padding: "5px 12px", borderRadius: 999, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+            + gerenciar cardápios
+          </button>
+        </div>
+      )}
+
       {/* Content */}
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
-        {aba === "produtos" && <Produtos />}
-        {aba === "promocoes" && <Promocoes />}
-        {aba === "cardapios" && <CardapiosTab />}
-        {aba === "categorias" && <CategoriasTab />}
-        {aba === "adicionais" && <AdicionaisTab />}
-        {aba === "desempenho" && <DesempenhoTab />}
+        {precisaCardapio && cardapios.length === 0 ? (
+          <SemCardapios onCriar={() => setAba("cardapios")} />
+        ) : (
+          <>
+            {aba === "cardapios" && <CardapiosTab onChange={recarregarCardapios} />}
+            {aba === "produtos" && <Produtos cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
+            {aba === "categorias" && <CategoriasTab cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
+            {aba === "adicionais" && <AdicionaisTab cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
+            {aba === "promocoes" && <Promocoes cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
+            {aba === "desempenho" && <DesempenhoTab />}
+          </>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Placeholder quando o usuário abre uma aba antes de criar qualquer cardápio.
+function SemCardapios({ onCriar }) {
+  return (
+    <div className="card anim" style={{ textAlign: "center", padding: "48px 24px" }}>
+      <div style={{ fontSize: 44, marginBottom: 12 }}>📋</div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 700, marginBottom: 6 }}>Você ainda não tem cardápios</div>
+      <div style={{ fontSize: 13, color: "#78716c", marginBottom: 20, maxWidth: 460, margin: "0 auto 20px" }}>
+        No Nexus PDV, produtos, categorias, adicionais e promoções vivem dentro de um cardápio. Comece criando o primeiro (ex: "Lanches", "Pastéis", "Bebidas").
+      </div>
+      <button onClick={onCriar} style={{ background: "#15803d", color: "#fff", border: "none", padding: "11px 24px", borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+        Criar meu primeiro cardápio →
+      </button>
     </div>
   );
 }

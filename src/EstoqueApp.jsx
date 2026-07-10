@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Estoque from "./Estoque";
 import Insumos from "./Insumos";
+import Logo from "./Logo";
 
 const NAV_TABS = [
   { key: "estoque", label: "Estoque" },
@@ -33,7 +34,7 @@ export default function EstoqueApp({ onNavegar }) {
 
       <header className="ns-header">
         <div className="ns-header-brand" style={{ cursor: "default" }}>
-          <img src="/logo.png" alt="Logo" onError={e => { e.currentTarget.style.display = "none"; }} />
+          <Logo size={32} />
           <span>Estoque e Insumos</span>
         </div>
         <div style={{ flex: 1 }} />
