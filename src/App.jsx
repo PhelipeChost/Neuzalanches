@@ -197,6 +197,9 @@ export default function App() {
     return () => clearInterval(interval);
   }, [usuario]);
 
+  // No build online (mercadolojo), a sidebar reflete "isso é o painel online"
+  useEffect(() => { if (IS_ONLINE) setSyncStatus("online-panel"); }, []);
+
   // Polling do status de sincronização com o cardápio online (rodapé da sidebar)
   useEffect(() => {
     if (!usuario || usuario.tipo !== "admin" || IS_ONLINE) return;
@@ -377,9 +380,10 @@ export default function App() {
     return null;
   })();
 
-  // ─── Layout: sidebar + conteúdo (PDV = sidebar sempre visível) ────────────
-  // No build online (mercadolojo) mantém layout antigo sem sidebar tipo PDV.
-  if (!IS_ONLINE && conteudoSetor) {
+  // ─── Layout: sidebar + conteúdo — vale pro PDV e pro online. No online
+  // a sidebar mostra só Pedidos + Configurações (que é tudo que o admin do
+  // cardápio tem). No PDV mostra todas as seções.
+  if (conteudoSetor) {
     const handleResetLicenca = (IS_DESKTOP && window.licenca?.reset)
       ? () => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }
       : null;
@@ -401,8 +405,6 @@ export default function App() {
       </div>
     );
   }
-
-  if (conteudoSetor) return conteudoSetor;
 
   // Sem conteúdo → fallback pra home. Nunca deveria chegar aqui.
   const home = IS_ONLINE ? "pedidos" : "caixa";

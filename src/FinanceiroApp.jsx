@@ -32,12 +32,11 @@ export default function FinanceiroApp({ onNavegar }) {
       `}</style>
 
       <header className="ns-header">
-        <button onClick={() => onNavegar(null)} className="ns-header-brand">
+        <div className="ns-header-brand" style={{ cursor: "default" }}>
           <img src="/logo.png" alt="Logo" onError={e => { e.currentTarget.style.display = "none"; }} />
           <span>Financeiro</span>
-        </button>
+        </div>
         <div style={{ flex: 1 }} />
-        <button onClick={() => onNavegar(null)} className="ns-header-btn">← Início</button>
       </header>
 
       <div className="ns-content">

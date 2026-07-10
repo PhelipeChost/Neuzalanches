@@ -860,7 +860,6 @@ export default function CozinhaApp({ onNavegar }) {
 
       {/* ─── TOP BAR ───────────────────────────────────────────────────────── */}
       <header className="cz-topbar">
-        <button onClick={() => onNavegar(null)} style={{ background: "none", border: "1.5px solid #333", borderRadius: 10, padding: "8px 14px", color: "#aaa", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>{"←"} Início</button>
         <button onClick={() => setModalManual(true)} style={{ background: "#15803d", border: "none", borderRadius: 10, padding: "8px 16px", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>{"+"} Pedido Manual</button>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{"\u{1F525}"}</div>

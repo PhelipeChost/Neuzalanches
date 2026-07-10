@@ -672,10 +672,6 @@ export default function ProdutosApp({ onNavegar }) {
         </div>
 
         <div style={{ flex: 1 }} />
-
-        <button onClick={() => onNavegar(null)} style={{ padding: "6px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>
-          {"←"} Início
-        </button>
       </header>
 
       {/* Content */}

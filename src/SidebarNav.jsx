@@ -44,10 +44,12 @@ export default function SidebarNav({
   const statusLabel =
     syncStatus === "ok" ? "Tudo sincronizado · funciona offline" :
     syncStatus === "offline" ? "Sem conexão com o cardápio online" :
+    syncStatus === "online-panel" ? "Painel do cardápio online" :
     "Cardápio online não conectado";
   const statusCor =
     syncStatus === "ok" ? "#22c55e" :
-    syncStatus === "offline" ? "#f59e0b" : "#a8a29e";
+    syncStatus === "offline" ? "#f59e0b" :
+    syncStatus === "online-panel" ? "#22c55e" : "#a8a29e";
 
   return (
     <>

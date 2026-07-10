@@ -55,6 +55,15 @@ async function main() {
       { cwd: join(process.cwd(), "node_modules", "better-sqlite3"), stdio: "inherit", shell: true });
     if (rb.status !== 0) { console.error("\n✗ prebuild-install falhou."); process.exit(1); }
 
+    // 🔧 CRÍTICO: buildar o frontend antes do electron-builder — senão o
+    // app-dist/ empacotado fica do build anterior (bug: v1.4.x foi publicado
+    // com React antigo). VITE_DESKTOP=1 pra pegar as flags corretas.
+    console.log("\n→ Buildando o frontend (Vite → desktop/app-dist)…\n");
+    const fe = spawnSync("npx",
+      ["vite", "build", "--base=/", "--outDir", "desktop/app-dist", "--emptyOutDir"],
+      { stdio: "inherit", shell: true, env: { ...process.env, VITE_DESKTOP: "1", MSYS_NO_PATHCONV: "1" } });
+    if (fe.status !== 0) { console.error("\n✗ Build do frontend falhou."); process.exit(1); }
+
     console.log(`\n→ Buildando instalador em ${OUT}… isso leva alguns minutos.\n`);
     const r = spawnSync("npx", ["electron-builder", `-c.directories.output=${OUT}`],
       { cwd: DESKTOP, stdio: "inherit", shell: true });

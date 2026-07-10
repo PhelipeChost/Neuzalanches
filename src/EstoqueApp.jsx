@@ -32,12 +32,11 @@ export default function EstoqueApp({ onNavegar }) {
       `}</style>
 
       <header className="ns-header">
-        <button onClick={() => onNavegar(null)} className="ns-header-brand">
+        <div className="ns-header-brand" style={{ cursor: "default" }}>
           <img src="/logo.png" alt="Logo" onError={e => { e.currentTarget.style.display = "none"; }} />
           <span>Estoque e Insumos</span>
-        </button>
+        </div>
         <div style={{ flex: 1 }} />
-        <button onClick={() => onNavegar(null)} className="ns-header-btn">← Início</button>
       </header>
 
       <div className="ns-content">
