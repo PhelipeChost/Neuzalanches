@@ -246,6 +246,8 @@ app.get("/api/config", authMiddleware, adminOnly, (req, res) => {
     evolution_url: obterConfig("evolution_url") || "",
     evolution_key: obterConfig("evolution_key") || "",
     evolution_instance: obterConfig("evolution_instance") || "",
+    pix_key: obterConfig("pix_key") || "",
+    pix_nome: obterConfig("pix_nome") || "",
   });
 });
 
@@ -294,8 +296,6 @@ app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
     evolution_url: obterConfig("evolution_url") || "",
     evolution_key: obterConfig("evolution_key") || "",
     evolution_instance: obterConfig("evolution_instance") || "",
-    pix_key: obterConfig("pix_key") || "",
-    pix_nome: obterConfig("pix_nome") || "",
     pix_key: obterConfig("pix_key") || "",
     pix_nome: obterConfig("pix_nome") || "",
   });

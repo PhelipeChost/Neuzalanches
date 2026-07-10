@@ -1,7 +1,11 @@
 // Sidebar de navegação do PDV — todas as seções sempre visíveis à esquerda.
 // Frente de Caixa é o setor default (a plataforma vive orbitando em torno do caixa).
+import NexusLogo from "./NexusLogo";
 
 const SIDEBAR_WIDTH = 240;
+// Email da conta admin irremovível da Nexus — quando é essa conta logada,
+// a sidebar mostra a logo Nexus como avatar em vez das iniciais.
+const NEXUS_ADMIN_EMAIL = "reinonexusideal@gmail.com";
 
 const SECOES = [
   { grupo: "operação",  key: "caixa",       icon: "🧾", label: "Frente de Caixa" },
@@ -31,12 +35,9 @@ export default function SidebarNav({
   syncStatus, // "ok" | "offline" | "sem-config"
 }) {
   const nome = perfil?.nome_estabelecimento || "Nexus PDV";
-  const iniciais = (usuario?.nome || "N")
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(s => s[0].toUpperCase())
-    .join("") || "N";
+  const ehNexus = (usuario?.email || "").toLowerCase() === NEXUS_ADMIN_EMAIL;
+  // Só a primeira inicial pra funcionários (mais limpo que "MC", "FN" etc.)
+  const iniciais = ((usuario?.nome || "N").trim()[0] || "N").toUpperCase();
 
   const secoesVisiveis = SECOES.filter(s => podeAcessar(s.key));
   const gruposComItens = GRUPOS.filter(g => secoesVisiveis.some(s => s.grupo === g));
@@ -147,12 +148,16 @@ export default function SidebarNav({
             <span>{statusLabel}</span>
           </div>
           <div className="nx-sb-user">
-            <div className="nx-sb-avatar">{iniciais}</div>
+            {ehNexus
+              ? <NexusLogo size={34} style={{ borderRadius: 10 }} />
+              : <div className="nx-sb-avatar">{iniciais}</div>}
             <div style={{ minWidth: 0, flex: 1 }}>
               <div className="nx-sb-user-name" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {usuario?.nome || "Operador"}
               </div>
-              <div className="nx-sb-user-role">{usuario?.tipo === "admin" ? "Administrador" : "Operador"}</div>
+              <div className="nx-sb-user-role">
+                {ehNexus ? "Nexus · Suporte" : (usuario?.tipo === "admin" ? "Administrador" : "Operador")}
+              </div>
             </div>
           </div>
 

@@ -14,6 +14,7 @@ import MesaApp from "./MesaApp";
 import SuporteApp from "./SuporteApp";
 import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
 import Logo from "./Logo";
+import NexusLogo from "./NexusLogo";
 
 const SENHA_MANUTENCAO = "31076hibridos";
 const SENHA_SUPORTE = "31076hibridos";
@@ -289,6 +290,108 @@ export default function App() {
 
   // ─── ROTA /admin: Login do admin ─────────────────────────────────────────
   if (!usuario || usuario.tipo !== "admin") {
+    // PDV desktop: tela de login premium com identidade Nexus (fundo escuro
+    // gradient + glass card + logo Nexus). Online: mantém o design light
+    // padrão com a logo do estabelecimento.
+    if (IS_DESKTOP) return (
+      <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh",
+        background: "radial-gradient(1200px 700px at 15% 10%, #0f2b1e 0%, #0a1712 45%, #050a08 100%)",
+        color: "#f5f5f4", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px",
+        position: "relative", overflow: "hidden" }}>
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@500;600;700;800&family=Fraunces:wght@300;500&display=swap');
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          .nx-bg-orb-a, .nx-bg-orb-b {
+            position: absolute; border-radius: 50%; filter: blur(120px); pointer-events: none; z-index: 0;
+          }
+          .nx-bg-orb-a { width: 520px; height: 520px; top: -140px; right: -80px; background: rgba(21,128,61,0.35); }
+          .nx-bg-orb-b { width: 400px; height: 400px; bottom: -120px; left: -100px; background: rgba(245,158,11,0.10); }
+          .nx-glass-card {
+            background: rgba(20,32,26,0.72);
+            border: 1px solid rgba(255,255,255,0.06);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border-radius: 22px;
+            box-shadow: 0 30px 90px rgba(0,0,0,0.55), 0 0 0 1px rgba(21,128,61,0.14) inset;
+          }
+          .nx-inp {
+            width: 100%; padding: 13px 16px;
+            background: rgba(255,255,255,0.04); border: 1.5px solid rgba(255,255,255,0.08);
+            border-radius: 12px; color: #f5f5f4; font-size: 14px; outline: none;
+            font-family: 'DM Sans', sans-serif; transition: border-color 0.15s, background 0.15s;
+          }
+          .nx-inp:focus { border-color: rgba(21,128,61,0.85); background: rgba(255,255,255,0.06); }
+          .nx-inp::placeholder { color: #78716c; }
+          .nx-btn {
+            padding: 13px 20px; border: none; border-radius: 12px; cursor: pointer;
+            font-size: 14px; font-weight: 700; font-family: 'DM Sans', sans-serif;
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            color: #fff; transition: transform 0.12s, box-shadow 0.15s;
+            box-shadow: 0 8px 24px rgba(21,128,61,0.30);
+          }
+          .nx-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(21,128,61,0.40); }
+          .nx-btn:disabled { opacity: 0.6; cursor: wait; }
+          .nx-link-btn {
+            width: 100%; padding: 12px 16px; border-radius: 12px; cursor: pointer;
+            background: transparent; border: 1.5px solid rgba(255,255,255,0.08);
+            color: #d6d3d1; font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif;
+            transition: background 0.15s, border-color 0.15s;
+          }
+          .nx-link-btn:hover { background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.14); }
+          .nx-danger-btn {
+            padding: 8px 16px; border-radius: 10px; cursor: pointer;
+            background: transparent; border: 1.5px solid rgba(220,38,38,0.35);
+            color: #f87171; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif;
+          }
+          .nx-danger-btn:hover { background: rgba(220,38,38,0.08); }
+        `}</style>
+        <div className="nx-bg-orb-a" />
+        <div className="nx-bg-orb-b" />
+
+        <div className="nx-glass-card" style={{ position: "relative", zIndex: 1, width: 440, maxWidth: "92vw", padding: "44px 40px" }}>
+          <div style={{ textAlign: "center", marginBottom: 30 }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><NexusLogo size={84} /></div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 24, fontWeight: 800, letterSpacing: -0.5, color: "#fff" }}>Nexus PDV</div>
+            <div style={{ fontSize: 12.5, color: "#78716c", marginTop: 6, letterSpacing: "0.03em" }}>
+              Plataforma de gestão · Reino Nexus Ideal
+            </div>
+          </div>
+
+          <form onSubmit={handleAdminLogin} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 10.5, color: "#a8a29e", fontWeight: 700, letterSpacing: "0.10em", marginBottom: 6 }}>EMAIL</label>
+              <input value={loginEmail} onChange={e => setLoginEmail(e.target.value)} type="email" required placeholder="seu@email.com" className="nx-inp" />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 10.5, color: "#a8a29e", fontWeight: 700, letterSpacing: "0.10em", marginBottom: 6 }}>SENHA</label>
+              <input value={loginSenha} onChange={e => setLoginSenha(e.target.value)} type="password" required placeholder="••••••••" minLength={4} className="nx-inp" />
+            </div>
+            {loginErro && (
+              <div style={{ background: "rgba(220,38,38,0.10)", border: "1px solid rgba(220,38,38,0.30)", borderRadius: 10, padding: "10px 14px", fontSize: 12.5, color: "#fca5a5" }}>
+                {loginErro}
+              </div>
+            )}
+            <button type="submit" disabled={loginLoading} className="nx-btn" style={{ marginTop: 6 }}>
+              {loginLoading ? "Entrando..." : "Entrar no PDV"}
+            </button>
+          </form>
+
+          {!loginNecessario && (
+            <button onClick={voltarComoOperador} className="nx-link-btn" style={{ marginTop: 14 }}>
+              ← Continuar como operador (sem conta)
+            </button>
+          )}
+
+          {window.licenca?.reset && (
+            <div style={{ textAlign: "center", marginTop: 22 }}>
+              <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
+                className="nx-danger-btn">Resetar licença</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+
+    // Online: tela padrão light
     const lblStyle = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
     const inpStyle = { width: "100%", padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, outline: "none", fontFamily: "'DM Sans', sans-serif", color: "#1c1917" };
     return (
@@ -324,12 +427,6 @@ export default function App() {
             <button onClick={voltarComoOperador}
               style={{ marginTop: 16, width: "100%", padding: "10px 16px", border: "1.5px solid #e7e5e4", borderRadius: 8, background: "#fafaf9", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>
               ← Continuar como operador (sem conta)
-            </button>
-          )}
-          {IS_DESKTOP && window.licenca?.reset && (
-            <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
-              style={{ marginTop: 16, padding: "7px 16px", border: "1.5px solid #fecaca", borderRadius: 8, background: "#fff", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" }}>
-              Resetar licença
             </button>
           )}
         </div>
