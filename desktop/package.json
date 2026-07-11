@@ -1,7 +1,7 @@
 {
   "name": "nexus-pdv-desktop",
   "productName": "Nexus PDV",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "Versão desktop offline-first da plataforma Nexus (Frente de Caixa), com gate de licença RS256.",
   "type": "module",
   "main": "main.js",
@@ -32,6 +32,7 @@
       "main.js",
       "preload.cjs",
       "atualizacao.js",
+      "agente-impressao.js",
       "licenca/**/*",
       "sync/**/*",
       "ui/**/*",

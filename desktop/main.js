@@ -15,6 +15,7 @@ import { lerLicenca, salvarLicenca, removerLicenca } from "./licenca/armazenamen
 import { ativarOnline, heartbeatOnline, lerChave, salvarChave, aplicarConfigSync } from "./licenca/online.js";
 import { criarMotorSync, criarAuthVps } from "./sync/motor.js";
 import { configurarAutoUpdate } from "./atualizacao.js";
+import { iniciarAgenteImpressao } from "./agente-impressao.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");          // pasta principal (server/, etc.)
@@ -346,6 +347,7 @@ async function main() {
     console.log("[boot] servidor no ar, abrindo janela.");
     // PDV Mercado em paralelo — nunca bloqueia nem derruba o boot do PDV
     iniciarMercado().catch(e => console.error("[mercado] falha ao iniciar:", e && e.message));
+    iniciarAgenteImpressao().catch(e => console.error("[agente-impressao] falha ao iniciar:", e && e.message));
     abrirApp(resultado);   // esta chama fecharSplash() no ready-to-show
     iniciarSync(dirDados).catch(e => console.error("[sync] falha ao iniciar:", e.message));
     iniciarHeartbeat(dirDados);           // renova licença + config de sync em segundo plano

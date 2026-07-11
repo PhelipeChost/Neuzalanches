@@ -525,6 +525,10 @@ if (!colsPedidos.includes("updated_at")) {
   db.exec("ALTER TABLE pedidos ADD COLUMN updated_at TEXT");
   db.exec("UPDATE pedidos SET updated_at = COALESCE(updated_at, created_at, datetime('now'))");
 }
+// Desconto do pedido (R$) — subtraído do total. Aplicável na Frente de Caixa (F3).
+if (!colsPedidos.includes("desconto")) {
+  db.exec("ALTER TABLE pedidos ADD COLUMN desconto REAL DEFAULT 0");
+}
 
 // Migração: remover a FK produto_id de pedido_itens. Os dados do item já são
 // denormalizados (nome/preço/custo na própria linha), então a FK não é necessária
@@ -639,6 +643,7 @@ const PROMO_COLS = [
   ["promo_hora_fim",    "TEXT DEFAULT NULL"],            // HH:MM
   ["promo_destaque",    "INTEGER DEFAULT 1"],            // aparece em "Destaques do dia"
   ["promo_descricao",   "TEXT DEFAULT NULL"],            // descrição própria da promo (opcional, sobrescreve descricao base)
+  ["codigo",            "TEXT DEFAULT ''"],              // código próprio (SKU/EAN) usado pela busca do PDV
 ];
 const colsProdutosAtuais = db.prepare("PRAGMA table_info(produtos)").all().map(c => c.name);
 for (const [col, def] of PROMO_COLS) {
@@ -1834,20 +1839,26 @@ export function buscarProduto(id) {
   return db.prepare("SELECT * FROM produtos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
-export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel }) {
+export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel, codigo }) {
   const id = gerarId();
   db.prepare(
-    "INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel !== undefined ? (disponivel ? 1 : 0) : 1);
+    "INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel !== undefined ? (disponivel ? 1 : 0) : 1, (codigo || "").trim());
   return buscarProduto(id);
 }
 
-export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel }) {
+export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo }) {
   const result = db.prepare(
-    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ? WHERE id = ? AND deleted_at IS NULL"
-  ).run(nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0, id);
+    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo) WHERE id = ? AND deleted_at IS NULL"
+  ).run(nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0, codigo != null ? String(codigo).trim() : null, id);
   if (result.changes === 0) return null;
   return buscarProduto(id);
+}
+
+export function buscarProdutoPorCodigo(codigo) {
+  const c = (codigo || "").trim();
+  if (!c) return null;
+  return db.prepare("SELECT * FROM produtos WHERE codigo = ? AND deleted_at IS NULL AND disponivel = 1").get(c);
 }
 
 export function excluirProduto(id) {
@@ -2047,19 +2058,21 @@ export function contarPedidosPendentes() {
   return row.count;
 }
 
-export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco }) {
+export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco, desconto }) {
   const id = gerarId();
 
   // Calcular total considerando adicionais
-  const total = itens.reduce((s, item) => {
+  const bruto = itens.reduce((s, item) => {
     const adicionaisTotal = (item.adicionais || []).reduce((a, ad) => a + ad.preco * (ad.quantidade || 1), 0);
     return s + (item.preco_unitario + adicionaisTotal) * item.quantidade;
   }, 0);
+  const desc = Math.max(0, Math.min(Number(desconto) || 0, bruto));
+  const total = Math.max(0, bruto - desc);
 
   const end = endereco || {};
 
   const inserirPedido = db.prepare(
-    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))"
+    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, desconto, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))"
   );
   const inserirItem = db.prepare(
     "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -2067,7 +2080,7 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
 
   const transaction = db.transaction(() => {
     const tipoEnt = ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega';
-    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
+    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, desc, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
     for (const item of itens) {
       // Buscar custo do produto no banco
       const produtoDB = buscarProduto(item.produto_id);
@@ -2167,6 +2180,119 @@ export function upsertPedidoSync(p) {
   return tx();
 }
 
+// ─── SINCRONIZAÇÃO local ↔ nuvem — COMANDAS + ITENS DE MESA ─────────────────
+// Necessário porque o QR das mesas aponta para a URL da nuvem — quando o cliente
+// escaneia, o pedido é criado no banco da nuvem. Sem esse sync, o PDV local
+// nunca vê a comanda nem os itens.
+
+export function comandasAlteradasDesde(desdeIso) {
+  const desde = desdeIso || "1970-01-01T00:00:00";
+  const rows = db.prepare(
+    `SELECT c.*, m.numero AS mesa_numero
+     FROM comandas c
+     JOIN mesas m ON m.id = c.mesa_id
+     WHERE COALESCE(c.updated_at, c.opened_at) > ?
+     ORDER BY COALESCE(c.updated_at, c.opened_at) ASC LIMIT 300`
+  ).all(desde);
+  return rows.map(c => ({
+    ...c,
+    deleted: !!c.deleted_at,
+    itens: db.prepare(
+      "SELECT * FROM comanda_itens WHERE comanda_id = ? ORDER BY created_at ASC"
+    ).all(c.id).map(i => ({ ...i, deleted: !!i.deleted_at })),
+  }));
+}
+
+// Upsert de uma comanda vinda do outro lado. Resolve mesa_id pelo mesa_numero
+// (os IDs de mesa divergem entre instalações). Last-write-wins pela comanda,
+// mas itens são upsertados individualmente também (a comanda ganha itens novos
+// depois de aberta — o sync precisa acompanhar).
+export function upsertComandaSync(c) {
+  if (!c || !c.id || !c.mesa_numero) return "ignorado";
+  const mesa = db.prepare("SELECT id FROM mesas WHERE numero = ?").get(c.mesa_numero);
+  if (!mesa) return "ignorado"; // mesa não existe nesta instalação
+  const mesaId = mesa.id;
+
+  const incomingTs = c.updated_at || c.opened_at || "1970-01-01T00:00:00";
+  const existente = db.prepare("SELECT id, updated_at, opened_at, status FROM comandas WHERE id = ?").get(c.id);
+
+  const upsertItens = () => {
+    if (!Array.isArray(c.itens)) return;
+    const jaExiste = db.prepare("SELECT id, updated_at, created_at FROM comanda_itens WHERE id = ?");
+    const insertItem = db.prepare(
+      `INSERT INTO comanda_itens (id, comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, status, origem, created_at, updated_at, deleted_at)
+       VALUES (@id, @comanda_id, @produto_id, @produto_nome, @quantidade, @preco_unitario, @adicionais, @obs, @status, @origem, @created_at, @updated_at, @deleted_at)`
+    );
+    const updateItem = db.prepare(
+      `UPDATE comanda_itens SET quantidade=@quantidade, preco_unitario=@preco_unitario, adicionais=@adicionais,
+              obs=@obs, status=@status, updated_at=@updated_at, deleted_at=@deleted_at WHERE id=@id`
+    );
+    for (const it of c.itens) {
+      if (!it || !it.id) continue;
+      const itemTs = it.updated_at || it.created_at || incomingTs;
+      const payload = {
+        id: it.id,
+        comanda_id: c.id,
+        produto_id: it.produto_id || null,
+        produto_nome: it.produto_nome || "",
+        quantidade: it.quantidade || 1,
+        preco_unitario: it.preco_unitario || 0,
+        adicionais: typeof it.adicionais === "string" ? it.adicionais : JSON.stringify(it.adicionais || []),
+        obs: it.obs || "",
+        status: it.status || "pendente",
+        origem: it.origem || "qr",
+        created_at: it.created_at || itemTs,
+        updated_at: itemTs,
+        deleted_at: it.deleted ? (it.deleted_at || itemTs) : null,
+      };
+      const existe = jaExiste.get(it.id);
+      if (!existe) {
+        insertItem.run(payload);
+      } else {
+        const localTs = existe.updated_at || existe.created_at || "1970-01-01T00:00:00";
+        if (itemTs >= localTs) updateItem.run(payload);
+      }
+    }
+  };
+
+  const tx = db.transaction(() => {
+    if (!existente) {
+      db.prepare(
+        `INSERT INTO comandas (id, mesa_id, numero, cliente_nome, pessoas, status, opened_at, closed_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(c.id, mesaId, c.numero || 0, c.cliente_nome || "", c.pessoas || 1,
+            c.status || "aberta", c.opened_at || incomingTs, c.closed_at || null,
+            incomingTs, c.deleted ? (c.deleted_at || incomingTs) : null);
+      // Marca a mesa como ocupada quando a comanda vem aberta.
+      if ((c.status || "aberta") === "aberta" && !c.deleted) {
+        db.prepare("UPDATE mesas SET status = 'ocupada' WHERE id = ?").run(mesaId);
+      }
+      upsertItens();
+      return "inserido";
+    }
+    const localTs = existente.updated_at || existente.opened_at || "1970-01-01T00:00:00";
+    if (incomingTs < localTs) {
+      // Mesmo que a comanda seja "mais antiga" que a local, ainda pode trazer
+      // itens novos (o QR adicionou um item enquanto a comanda local também
+      // mudou). Faz upsert dos itens independentemente.
+      upsertItens();
+      return "ignorado";
+    }
+    db.prepare(
+      `UPDATE comandas SET mesa_id=?, numero=?, cliente_nome=?, pessoas=?, status=?, opened_at=?, closed_at=?, updated_at=?, deleted_at=? WHERE id=?`
+    ).run(mesaId, c.numero || 0, c.cliente_nome || "", c.pessoas || 1,
+          c.status || "aberta", c.opened_at || incomingTs, c.closed_at || null,
+          incomingTs, c.deleted ? (c.deleted_at || incomingTs) : null, c.id);
+    // Refleti mudanças de status no mesa (fechada/cancelada libera a mesa)
+    if (c.status && c.status !== "aberta") {
+      db.prepare("UPDATE mesas SET status = 'livre', reserva_nome='', reserva_hora='', reserva_pessoas=0 WHERE id = ? AND status != 'reservada'").run(mesaId);
+    }
+    upsertItens();
+    return "atualizado";
+  });
+  return tx();
+}
+
 // ─── SINCRONIZAÇÃO DE CATÁLOGO (push-catalogo) ──────────────────────────────
 // Recebe categorias, adicionais e produtos do PDV remoto e faz upsert local.
 // Last-write-wins por ID. Transacional para consistência.
@@ -2219,12 +2345,12 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
       prodIdsRecebidos.add(p.id);
       const existe = db.prepare("SELECT id FROM produtos WHERE id = ?").get(p.id);
       if (existe) {
-        db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ? WHERE id = ?")
-          .run(p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, p.id);
+        db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo) WHERE id = ?")
+          .run(p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, p.codigo != null ? String(p.codigo).trim() : null, p.id);
         resultado.produtos.atualizado++;
       } else {
-        db.prepare("INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(p.id, p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1);
+        db.prepare("INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(p.id, p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, (p.codigo || "").trim());
         resultado.produtos.inserido++;
       }
     }
@@ -3031,6 +3157,27 @@ db.exec(`
   );
 `);
 
+// Migração: updated_at em comandas e comanda_itens — usados pelo sync nuvem↔local.
+// Sem isso, pedidos feitos pelo QR (que caem na nuvem) nunca chegam no PDV local.
+{
+  const colsComandas = db.prepare("PRAGMA table_info(comandas)").all().map(c => c.name);
+  if (!colsComandas.includes("updated_at")) {
+    db.exec("ALTER TABLE comandas ADD COLUMN updated_at TEXT");
+    db.exec("UPDATE comandas SET updated_at = COALESCE(updated_at, opened_at, datetime('now'))");
+  }
+  if (!colsComandas.includes("deleted_at")) {
+    db.exec("ALTER TABLE comandas ADD COLUMN deleted_at TEXT DEFAULT NULL");
+  }
+  const colsItens = db.prepare("PRAGMA table_info(comanda_itens)").all().map(c => c.name);
+  if (!colsItens.includes("updated_at")) {
+    db.exec("ALTER TABLE comanda_itens ADD COLUMN updated_at TEXT");
+    db.exec("UPDATE comanda_itens SET updated_at = COALESCE(updated_at, created_at, datetime('now'))");
+  }
+  if (!colsItens.includes("deleted_at")) {
+    db.exec("ALTER TABLE comanda_itens ADD COLUMN deleted_at TEXT DEFAULT NULL");
+  }
+}
+
 // Seed mesas padrão (12 mesas) se tabela vazia
 {
   const count = db.prepare("SELECT COUNT(*) AS c FROM mesas").get().c;
@@ -3298,7 +3445,7 @@ export function abrirComanda({ mesa_id, cliente_nome, pessoas }) {
   const id = gerarId();
   const numero = proximoNumeroComanda();
   db.prepare(
-    "INSERT INTO comandas (id, mesa_id, numero, cliente_nome, pessoas) VALUES (?, ?, ?, ?, ?)"
+    "INSERT INTO comandas (id, mesa_id, numero, cliente_nome, pessoas, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))"
   ).run(id, mesa_id, numero, cliente_nome || "", pessoas || 1);
   db.prepare("UPDATE mesas SET status = 'ocupada' WHERE id = ?").run(mesa_id);
   return buscarComanda(id);
@@ -3311,8 +3458,8 @@ export function buscarComanda(id) {
             COUNT(ci.id) AS total_itens
      FROM comandas c
      JOIN mesas m ON m.id = c.mesa_id
-     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
-     WHERE c.id = ?
+     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado' AND ci.deleted_at IS NULL
+     WHERE c.id = ? AND c.deleted_at IS NULL
      GROUP BY c.id`
   ).get(id);
   return c || null;
@@ -3325,8 +3472,8 @@ export function buscarComandaPorMesa(mesa_id) {
             COUNT(ci.id) AS total_itens
      FROM comandas c
      JOIN mesas m ON m.id = c.mesa_id
-     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
-     WHERE c.mesa_id = ? AND c.status = 'aberta'
+     LEFT JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado' AND ci.deleted_at IS NULL
+     WHERE c.mesa_id = ? AND c.status = 'aberta' AND c.deleted_at IS NULL
      GROUP BY c.id`
   ).get(mesa_id);
   return c || null;
@@ -3335,7 +3482,7 @@ export function buscarComandaPorMesa(mesa_id) {
 export function fecharComanda(id) {
   const c = buscarComanda(id);
   if (!c) throw new Error("Comanda não encontrada");
-  db.prepare("UPDATE comandas SET status = 'fechada', closed_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare("UPDATE comandas SET status = 'fechada', closed_at = datetime('now'), updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(id);
   db.prepare("UPDATE mesas SET status = 'livre', reserva_nome = '', reserva_hora = '', reserva_pessoas = 0 WHERE id = ?").run(c.mesa_id);
   return buscarComanda(id);
 }
@@ -3343,7 +3490,7 @@ export function fecharComanda(id) {
 export function cancelarComanda(id) {
   const c = buscarComanda(id);
   if (!c) throw new Error("Comanda não encontrada");
-  db.prepare("UPDATE comandas SET status = 'cancelada', closed_at = datetime('now') WHERE id = ?").run(id);
+  db.prepare("UPDATE comandas SET status = 'cancelada', closed_at = datetime('now'), updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(id);
   db.prepare("UPDATE mesas SET status = 'livre', reserva_nome = '', reserva_hora = '', reserva_pessoas = 0 WHERE id = ?").run(c.mesa_id);
   return buscarComanda(id);
 }
@@ -3356,25 +3503,33 @@ export function pedirConta(mesa_id) {
 // ─── COMANDA ITENS ──────────────────────────────────────────────────────────
 
 export function listarItensComanda(comanda_id) {
-  return db.prepare("SELECT * FROM comanda_itens WHERE comanda_id = ? ORDER BY created_at ASC").all(comanda_id);
+  return db.prepare("SELECT * FROM comanda_itens WHERE comanda_id = ? AND deleted_at IS NULL ORDER BY created_at ASC").all(comanda_id);
 }
 
 export function adicionarItemComanda({ comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem }) {
   const id = gerarId();
   db.prepare(
-    `INSERT INTO comanda_itens (id, comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO comanda_itens (id, comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))`
   ).run(id, comanda_id, produto_id || null, produto_nome, quantidade || 1, preco_unitario, JSON.stringify(adicionais || []), obs || "", origem || "caixa");
+  // Marca a comanda como alterada — sync leva itens novos junto no próximo tick.
+  db.prepare("UPDATE comandas SET updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(comanda_id);
   return db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
 }
 
 export function atualizarStatusItemComanda(id, status) {
-  db.prepare("UPDATE comanda_itens SET status = ? WHERE id = ?").run(status, id);
-  return db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
+  db.prepare("UPDATE comanda_itens SET status = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(status, id);
+  const item = db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
+  if (item) db.prepare("UPDATE comandas SET updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(item.comanda_id);
+  return item;
 }
 
 export function removerItemComanda(id) {
-  return db.prepare("DELETE FROM comanda_itens WHERE id = ?").run(id).changes > 0;
+  const item = db.prepare("SELECT comanda_id FROM comanda_itens WHERE id = ?").get(id);
+  // Soft delete pra sync propagar remoção
+  const ok = db.prepare("UPDATE comanda_itens SET deleted_at = datetime('now'), updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
+  if (ok && item) db.prepare("UPDATE comandas SET updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(item.comanda_id);
+  return ok;
 }
 
 export function listarFilaCozinha() {
@@ -3384,6 +3539,7 @@ export function listarFilaCozinha() {
      JOIN comandas c ON c.id = ci.comanda_id
      JOIN mesas m ON m.id = c.mesa_id
      WHERE ci.status IN ('pendente', 'preparando') AND c.status = 'aberta'
+       AND ci.deleted_at IS NULL AND c.deleted_at IS NULL
      ORDER BY ci.created_at ASC`
   ).all();
 }
@@ -3397,6 +3553,7 @@ export function listarFilaCozinhaUnificada() {
      JOIN comandas c ON c.id = ci.comanda_id
      JOIN mesas m ON m.id = c.mesa_id
      WHERE ci.status IN ('pendente', 'preparando') AND c.status = 'aberta'
+       AND ci.deleted_at IS NULL AND c.deleted_at IS NULL
      ORDER BY ci.created_at ASC`
   ).all();
 

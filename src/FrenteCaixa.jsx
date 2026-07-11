@@ -84,6 +84,22 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [balcaoPedidos, setBalcaoPedidos] = useState([]);
   const [balcaoSel, setBalcaoSel] = useState(null);
   const [balcaoBusca, setBalcaoBusca] = useState("");
+  // Desconto do carrinho de balcão (F3) — pode ser valor R$ ou percentual
+  const [balcaoDesconto, setBalcaoDesconto] = useState({ tipo: "valor", valor: 0 });
+  // Modal buscar produto (F2): entrada por nome/código + resultado da lista
+  const [modalBuscarProduto, setModalBuscarProduto] = useState(false);
+  const [buscaProdutoTermo, setBuscaProdutoTermo] = useState("");
+  // Modal desconto (F3)
+  const [modalDesconto, setModalDesconto] = useState(false);
+  // Modal últimas vendas (F9)
+  const [modalUltimasVendas, setModalUltimasVendas] = useState(false);
+  // Modal alterar qtd (F5): guarda o item que será editado
+  const [modalAlterarQtd, setModalAlterarQtd] = useState(null);
+  // Vendas suspensas (F7) — persistem em localStorage entre reinícios
+  const [vendasSuspensas, setVendasSuspensas] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("fc_vendas_suspensas") || "[]"); } catch { return []; }
+  });
+  const [modalRetomarVenda, setModalRetomarVenda] = useState(false);
 
   // Modal abrir comanda
   const [modalAbrir, setModalAbrir] = useState(null);
@@ -406,9 +422,11 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         tipo: "presencial",
         tipo_entrega: "retirada",
         metodo_pagamento: "",
+        desconto: balcaoDescontoValor,
       });
       setBalcaoItens([]);
       setBalcaoCliente("");
+      setBalcaoDesconto({ tipo: "valor", valor: 0 });
       await carregarTudo();
       showToast(`Pedido #${pedido.id.slice(0, 6)} criado!`);
     } catch (err) { showToast(err.message, "var(--danger)"); }
@@ -432,7 +450,113 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     setBalcaoItens(prev => prev.filter(it => it.produto_id !== produtoId));
   };
 
-  const balcaoTotal = balcaoItens.reduce((s, it) => s + it.preco * it.qtd, 0);
+  const balcaoSubtotal = balcaoItens.reduce((s, it) => s + it.preco * it.qtd, 0);
+  const balcaoDescontoValor = balcaoDesconto.tipo === "percentual"
+    ? (balcaoSubtotal * Number(balcaoDesconto.valor || 0)) / 100
+    : Number(balcaoDesconto.valor || 0);
+  const balcaoTotal = Math.max(0, balcaoSubtotal - balcaoDescontoValor);
+
+  // ─── ATALHOS DE TECLADO (F1-F10 + ESC) ─── só quando o balcão está ativo
+  const novaVenda = useCallback(() => {
+    setBalcaoItens([]); setBalcaoCliente(""); setBalcaoSel(null);
+    setBalcaoDesconto({ tipo: "valor", valor: 0 });
+    setModalDesconto(false); setModalBuscarProduto(false); setModalUltimasVendas(false);
+    setModalAlterarQtd(null); setModalRetomarVenda(false);
+    setModalPagamento(null);
+  }, []);
+
+  const suspenderVenda = useCallback(() => {
+    if (balcaoItens.length === 0) return showToast("Nada para suspender", "var(--warning)");
+    const nova = { id: `sus_${Date.now()}`, criada_em: new Date().toISOString(), cliente: balcaoCliente, itens: balcaoItens, desconto: balcaoDesconto };
+    const lista = [nova, ...vendasSuspensas].slice(0, 20);
+    setVendasSuspensas(lista);
+    try { localStorage.setItem("fc_vendas_suspensas", JSON.stringify(lista)); } catch {}
+    novaVenda();
+    showToast("Venda suspensa — retome com F7");
+  }, [balcaoItens, balcaoCliente, balcaoDesconto, vendasSuspensas, novaVenda]);
+
+  const retomarVenda = useCallback((venda) => {
+    setBalcaoItens(venda.itens || []);
+    setBalcaoCliente(venda.cliente || "");
+    setBalcaoDesconto(venda.desconto || { tipo: "valor", valor: 0 });
+    const restantes = vendasSuspensas.filter(v => v.id !== venda.id);
+    setVendasSuspensas(restantes);
+    try { localStorage.setItem("fc_vendas_suspensas", JSON.stringify(restantes)); } catch {}
+    setModalRetomarVenda(false);
+    showToast("Venda retomada");
+  }, [vendasSuspensas]);
+
+  // Busca produto por código exato (leitor de código de barras) e joga no carrinho
+  const buscarPorCodigoEAdicionar = useCallback(async (codigo) => {
+    const cod = (codigo || "").trim();
+    if (!cod) return;
+    try {
+      const p = await api.produtos.porCodigo(cod);
+      handleAddBalcaoItem(p);
+      showToast(`✓ ${p.nome}`);
+      return p;
+    } catch {
+      showToast(`✗ Código "${cod}" não encontrado`, "var(--danger)");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (modoPerfil !== "balcao") return;
+    const onKey = (e) => {
+      // Não intercepta quando está digitando num input/textarea (exceto F1/F8/F10/ESC)
+      const tag = (e.target && e.target.tagName || "").toLowerCase();
+      const digitando = tag === "input" || tag === "textarea" || tag === "select";
+      // ESC sempre passa (fecha modais)
+      if (e.key === "Escape") {
+        if (modalBuscarProduto) { e.preventDefault(); setModalBuscarProduto(false); return; }
+        if (modalDesconto) { e.preventDefault(); setModalDesconto(false); return; }
+        if (modalUltimasVendas) { e.preventDefault(); setModalUltimasVendas(false); return; }
+        if (modalRetomarVenda) { e.preventDefault(); setModalRetomarVenda(false); return; }
+        if (modalAlterarQtd) { e.preventDefault(); setModalAlterarQtd(null); return; }
+        if (modalPagamento) { e.preventDefault(); setModalPagamento(null); return; }
+        if (modalCaixa) { e.preventDefault(); setModalCaixa(null); return; }
+        return;
+      }
+      // Se está digitando, só aceita F-keys, não outras
+      if (digitando && !/^F(1|2|3|5|6|7|8|9|10)$/.test(e.key)) return;
+      switch (e.key) {
+        case "F1": e.preventDefault(); novaVenda(); showToast("Nova venda (F1)"); break;
+        case "F2": e.preventDefault(); setModalBuscarProduto(true); setBuscaProdutoTermo(""); break;
+        case "F3": e.preventDefault(); setModalDesconto(true); break;
+        case "F5":
+          e.preventDefault();
+          if (balcaoItens.length === 0) { showToast("Carrinho vazio", "var(--warning)"); break; }
+          setModalAlterarQtd(balcaoItens[balcaoItens.length - 1]);
+          break;
+        case "F6":
+          e.preventDefault();
+          if (balcaoItens.length === 0) { showToast("Carrinho vazio", "var(--warning)"); break; }
+          setBalcaoItens(prev => prev.slice(0, -1));
+          showToast("Último item removido (F6)");
+          break;
+        case "F7": e.preventDefault(); suspenderVenda(); break;
+        case "F8":
+          e.preventDefault();
+          if (balcaoItens.length === 0) { showToast("Carrinho vazio", "var(--warning)"); break; }
+          handleCriarPedidoBalcao().then(() => setTimeout(() => {
+            // Depois de criar, seleciona o mais novo e abre modal de pagamento
+            const p = balcaoPedidos[0];
+            if (p) setModalPagamento({ id: p.id, total: p.total, _tipo: "pedido", label: `Pedido #${p.id.slice(0, 6)}` });
+          }, 500));
+          break;
+        case "F9": e.preventDefault(); setModalUltimasVendas(true); break;
+        case "F10":
+          e.preventDefault();
+          setModalCaixa(sessao ? "sangria" : "abrir");
+          break;
+        default: break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modoPerfil, balcaoItens, balcaoPedidos, sessao, modalBuscarProduto, modalDesconto,
+      modalUltimasVendas, modalRetomarVenda, modalAlterarQtd, modalPagamento, modalCaixa,
+      novaVenda, suspenderVenda]);
 
   // Marcar item da fila como pronto
   const handleItemPronto = async (itemId) => {
@@ -978,20 +1102,75 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
           <div className="fc-map-card">
             <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: -0.2, flex: 1 }}>Produtos</div>
-              <input className="fc-input" value={balcaoBusca} onChange={e => setBalcaoBusca(e.target.value)} placeholder="Buscar produto..." style={{ width: 220, fontSize: 12 }} />
+              <input
+                className="fc-input"
+                value={balcaoBusca}
+                onChange={e => setBalcaoBusca(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && balcaoBusca.trim()) {
+                    // Enter: se casa código exato, adiciona direto; senão adiciona o primeiro do filtro
+                    const codMatch = produtos.find(p => (p.codigo || "").trim() === balcaoBusca.trim());
+                    if (codMatch) {
+                      handleAddBalcaoItem(codMatch);
+                      showToast(`✓ ${codMatch.nome}`);
+                      setBalcaoBusca("");
+                    } else {
+                      const primeiro = produtos.find(p => p.nome.toLowerCase().includes(balcaoBusca.toLowerCase()));
+                      if (primeiro) { handleAddBalcaoItem(primeiro); setBalcaoBusca(""); }
+                    }
+                  }
+                }}
+                placeholder="Buscar produto / código (Enter) — F2 abre busca"
+                style={{ width: 320, fontSize: 12 }}
+              />
             </div>
             <div style={{ padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10, maxHeight: 420, overflowY: "auto" }}>
-              {produtos.filter(p => !balcaoBusca || p.nome.toLowerCase().includes(balcaoBusca.toLowerCase())).map(prod => (
+              {produtos.filter(p => {
+                if (!balcaoBusca) return true;
+                const q = balcaoBusca.toLowerCase();
+                return p.nome.toLowerCase().includes(q)
+                    || (p.codigo || "").toLowerCase().includes(q)
+                    || (p.categoria || "").toLowerCase().includes(q);
+              }).map(prod => (
                 <div key={prod.id} className="fc-prod-item" onClick={() => handleAddBalcaoItem(prod)}>
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>{prod.nome}</div>
                   <div style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(prod.preco)}</div>
-                  {prod.categoria && <div style={{ fontSize: 10, color: "var(--text-soft)", marginTop: 2 }}>{prod.categoria}</div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+                    {prod.categoria && <div style={{ fontSize: 10, color: "var(--text-soft)" }}>{prod.categoria}</div>}
+                    {prod.codigo && <div style={{ fontSize: 10, color: "var(--text-soft)", fontFamily: "monospace" }}>{prod.codigo}</div>}
+                  </div>
                 </div>
               ))}
-              {produtos.filter(p => !balcaoBusca || p.nome.toLowerCase().includes(balcaoBusca.toLowerCase())).length === 0 && (
+              {produtos.filter(p => {
+                if (!balcaoBusca) return true;
+                const q = balcaoBusca.toLowerCase();
+                return p.nome.toLowerCase().includes(q) || (p.codigo || "").toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q);
+              }).length === 0 && (
                 <div style={{ gridColumn: "1/-1", textAlign: "center", padding: 20, color: "var(--text-soft)", fontSize: 13 }}>Nenhum produto encontrado</div>
               )}
             </div>
+          </div>
+
+          {/* BARRA DE ATALHOS F1-F10 */}
+          <div style={{ marginTop: 12, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 10, padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[
+              { k: "F1", l: "Nova", act: novaVenda, color: "var(--info)" },
+              { k: "F2", l: "Buscar", act: () => { setModalBuscarProduto(true); setBuscaProdutoTermo(""); }, color: "var(--gold-deep)" },
+              { k: "F3", l: "Desconto", act: () => setModalDesconto(true), color: "var(--warning)" },
+              { k: "F5", l: "Qtd", act: () => balcaoItens.length && setModalAlterarQtd(balcaoItens[balcaoItens.length - 1]), color: "var(--info)" },
+              { k: "F6", l: "Cancelar item", act: () => { if (balcaoItens.length) { setBalcaoItens(prev => prev.slice(0, -1)); showToast("Item removido"); } }, color: "var(--danger)" },
+              { k: "F7", l: "Suspender", act: suspenderVenda, color: "var(--warning)" },
+              { k: "F8", l: "Finalizar", act: () => balcaoItens.length && handleCriarPedidoBalcao(), color: "var(--success)" },
+              { k: "F9", l: "Últimas", act: () => setModalUltimasVendas(true), color: "var(--text-muted)" },
+              { k: "F10", l: sessao ? "Caixa" : "Abrir caixa", act: () => setModalCaixa(sessao ? "sangria" : "abrir"), color: "var(--gold-deep)" },
+              ...(vendasSuspensas.length > 0 ? [{ k: "⏸", l: `${vendasSuspensas.length} suspensa${vendasSuspensas.length > 1 ? "s" : ""}`, act: () => setModalRetomarVenda(true), color: "var(--warning)" }] : []),
+            ].map(a => (
+              <button key={a.k} onClick={a.act}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--surface-2)", border: `1.5px solid var(--border)`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", color: "var(--text)", fontFamily: "inherit" }}>
+                <span style={{ background: a.color, color: "#fff", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 4 }}>{a.k}</span>
+                {a.l}
+              </button>
+            ))}
           </div>
         </main>
 
@@ -1034,13 +1213,23 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                 </div>
                 {balcaoItens.length > 0 && (
                   <>
+                    {balcaoDescontoValor > 0 && (
+                      <div style={{ padding: "8px 18px", borderTop: "1px dashed var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--warning-bg)" }}>
+                        <div style={{ fontSize: 11, color: "var(--warning)", fontWeight: 700 }}>
+                          Subtotal: <span style={{ textDecoration: "line-through" }}>{fmtBRL(balcaoSubtotal)}</span>
+                        </div>
+                        <div style={{ fontSize: 11, color: "var(--warning)", fontWeight: 700 }}>
+                          – {fmtBRL(balcaoDescontoValor)} {balcaoDesconto.tipo === "percentual" ? `(${balcaoDesconto.valor}%)` : ""}
+                        </div>
+                      </div>
+                    )}
                     <div style={{ padding: "12px 18px", borderTop: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 600 }}>Total</div>
                       <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, letterSpacing: -0.4 }}>{fmtBRL(balcaoTotal)}</div>
                     </div>
                     <div style={{ padding: "12px 18px", display: "flex", gap: 8 }}>
-                      <button className="fc-btn fc-btn-secondary" style={{ flex: 1 }} onClick={() => setBalcaoItens([])}>Limpar</button>
-                      <button className="fc-btn fc-btn-primary" style={{ flex: 2, gridColumn: "auto" }} onClick={handleCriarPedidoBalcao}>Criar Pedido</button>
+                      <button className="fc-btn fc-btn-secondary" style={{ flex: 1 }} onClick={() => { setBalcaoItens([]); setBalcaoDesconto({ tipo: "valor", valor: 0 }); }}>Limpar</button>
+                      <button className="fc-btn fc-btn-primary" style={{ flex: 2, gridColumn: "auto" }} onClick={handleCriarPedidoBalcao}>Finalizar (F8)</button>
                     </div>
                   </>
                 )}
@@ -1359,6 +1548,157 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
             <button className="fc-btn fc-btn-primary" style={{ width: "100%", gridColumn: "auto" }} onClick={() => { setModalCaixa(null); setCaixaResultado(null); }}>
               Fechar
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: BUSCAR PRODUTO (F2) ─── */}
+      {modalBuscarProduto && (
+        <div className="fc-modal-overlay" onClick={() => setModalBuscarProduto(false)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 520 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>🔍 Buscar produto (F2)</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Digite o código de barras / SKU (Enter adiciona direto) ou nome</div>
+            <input autoFocus className="fc-input" value={buscaProdutoTermo}
+              onChange={e => setBuscaProdutoTermo(e.target.value)}
+              onKeyDown={async e => {
+                if (e.key === "Enter" && buscaProdutoTermo.trim()) {
+                  const codMatch = produtos.find(p => (p.codigo || "").trim() === buscaProdutoTermo.trim());
+                  if (codMatch) { handleAddBalcaoItem(codMatch); showToast(`✓ ${codMatch.nome}`); setBuscaProdutoTermo(""); return; }
+                  const primeiro = produtos.find(p => p.nome.toLowerCase().includes(buscaProdutoTermo.toLowerCase()));
+                  if (primeiro) { handleAddBalcaoItem(primeiro); showToast(`✓ ${primeiro.nome}`); setBuscaProdutoTermo(""); }
+                }
+              }}
+              placeholder="Nome do produto ou código..." style={{ fontSize: 14, padding: "10px 14px" }} />
+            <div style={{ marginTop: 12, maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              {produtos.filter(p => {
+                if (!buscaProdutoTermo.trim()) return true;
+                const q = buscaProdutoTermo.toLowerCase();
+                return p.nome.toLowerCase().includes(q) || (p.codigo || "").toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q);
+              }).slice(0, 30).map(p => (
+                <div key={p.id} onClick={() => { handleAddBalcaoItem(p); showToast(`✓ ${p.nome}`); setBuscaProdutoTermo(""); }}
+                  style={{ padding: "10px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{p.nome}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.categoria || "—"}{p.codigo ? ` · cód. ${p.codigo}` : ""}</div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(p.preco)}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+              <button className="fc-btn fc-btn-secondary" onClick={() => setModalBuscarProduto(false)}>Fechar (ESC)</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: DESCONTO (F3) ─── */}
+      {modalDesconto && (
+        <div className="fc-modal-overlay" onClick={() => setModalDesconto(false)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 380 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>💸 Aplicar desconto (F3)</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Subtotal: {fmtBRL(balcaoSubtotal)}</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <button className={`fc-btn ${balcaoDesconto.tipo === "valor" ? "fc-btn-primary" : "fc-btn-secondary"}`} style={{ flex: 1 }}
+                onClick={() => setBalcaoDesconto(d => ({ ...d, tipo: "valor" }))}>R$</button>
+              <button className={`fc-btn ${balcaoDesconto.tipo === "percentual" ? "fc-btn-primary" : "fc-btn-secondary"}`} style={{ flex: 1 }}
+                onClick={() => setBalcaoDesconto(d => ({ ...d, tipo: "percentual" }))}>%</button>
+            </div>
+            <input autoFocus className="fc-input" type="number" step="0.01" value={balcaoDesconto.valor}
+              onChange={e => setBalcaoDesconto(d => ({ ...d, valor: parseFloat(e.target.value) || 0 }))}
+              onKeyDown={e => { if (e.key === "Enter") setModalDesconto(false); }}
+              placeholder={balcaoDesconto.tipo === "percentual" ? "Ex: 10 (%)" : "Ex: 5.00 (R$)"}
+              style={{ fontSize: 16, textAlign: "center", padding: "12px 14px" }} />
+            <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--surface-2)", borderRadius: 8, fontSize: 13 }}>
+              Desconto: <strong>{fmtBRL(balcaoDescontoValor)}</strong> · Total final: <strong style={{ color: "var(--success)" }}>{fmtBRL(balcaoTotal)}</strong>
+            </div>
+            <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button className="fc-btn fc-btn-secondary" onClick={() => { setBalcaoDesconto({ tipo: "valor", valor: 0 }); setModalDesconto(false); }}>Limpar</button>
+              <button className="fc-btn fc-btn-primary" onClick={() => setModalDesconto(false)}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: ALTERAR QUANTIDADE (F5) ─── */}
+      {modalAlterarQtd && (
+        <div className="fc-modal-overlay" onClick={() => setModalAlterarQtd(null)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 340 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Alterar quantidade (F5)</div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>{modalAlterarQtd.nome} · {fmtBRL(modalAlterarQtd.preco)} un.</div>
+            <input autoFocus className="fc-input" type="number" min="0" defaultValue={modalAlterarQtd.qtd}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  const novaQtd = parseInt(e.target.value, 10);
+                  if (novaQtd <= 0) setBalcaoItens(prev => prev.filter(i => i.produto_id !== modalAlterarQtd.produto_id));
+                  else setBalcaoItens(prev => prev.map(i => i.produto_id === modalAlterarQtd.produto_id ? { ...i, qtd: novaQtd } : i));
+                  setModalAlterarQtd(null);
+                }
+              }}
+              style={{ fontSize: 22, textAlign: "center", padding: "14px" }} />
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>Enter confirma · ESC cancela</div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: ÚLTIMAS VENDAS (F9) ─── */}
+      {modalUltimasVendas && (
+        <div className="fc-modal-overlay" onClick={() => setModalUltimasVendas(false)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 640 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>🧾 Últimas vendas (F9)</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Hoje · {balcaoPedidos.length} pedido{balcaoPedidos.length !== 1 ? "s" : ""}</div>
+            <div style={{ maxHeight: 440, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              {balcaoPedidos.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "var(--text-soft)" }}>Nenhum pedido hoje.</div>
+              ) : balcaoPedidos.map(p => (
+                <div key={p.id} onClick={() => { setBalcaoSel(p); setModalUltimasVendas(false); }}
+                  style={{ padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer", display: "grid", gridTemplateColumns: "auto 1fr auto auto", alignItems: "center", gap: 12 }}>
+                  <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>#{p.id.slice(0, 6)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{p.cliente_nome || "Balcão"}</span>
+                  <span style={{ fontSize: 10, textTransform: "uppercase", fontWeight: 700, padding: "2px 8px", borderRadius: 4,
+                    background: ({ pendente: "var(--info-bg)", confirmado: "var(--info-bg)", preparando: "var(--warning-bg)", pronto: "var(--success-bg)", entregue: "var(--success-bg)", cancelado: "var(--danger-bg)" })[p.status] || "var(--surface-2)",
+                    color: ({ pendente: "var(--info)", confirmado: "var(--info)", preparando: "var(--warning)", pronto: "var(--success)", entregue: "var(--success)", cancelado: "var(--danger)" })[p.status] || "var(--text-muted)" }}>{p.status}</span>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: "var(--gold-deep)" }}>{fmtBRL(p.total)}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+              <button className="fc-btn fc-btn-secondary" onClick={() => setModalUltimasVendas(false)}>Fechar (ESC)</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: RETOMAR VENDA SUSPENSA (F7 → retomar) ─── */}
+      {modalRetomarVenda && (
+        <div className="fc-modal-overlay" onClick={() => setModalRetomarVenda(false)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 520 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>⏸ Vendas suspensas</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Clique para retomar. Ficam salvas mesmo se o PDV fechar.</div>
+            <div style={{ maxHeight: 400, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+              {vendasSuspensas.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: "var(--text-soft)" }}>Nenhuma venda suspensa.</div>
+              ) : vendasSuspensas.map(v => {
+                const sub = (v.itens || []).reduce((s, it) => s + it.preco * it.qtd, 0);
+                return (
+                  <div key={v.id} style={{ padding: "12px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, display: "flex", gap: 10, alignItems: "center" }}>
+                    <div style={{ flex: 1, cursor: "pointer" }} onClick={() => retomarVenda(v)}>
+                      <div style={{ fontSize: 13, fontWeight: 700 }}>{v.cliente || "Sem cliente"} · {v.itens.length} item{v.itens.length !== 1 ? "s" : ""}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(v.criada_em).toLocaleString("pt-BR")}</div>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800 }}>{fmtBRL(sub)}</div>
+                    <button onClick={() => {
+                      const restantes = vendasSuspensas.filter(x => x.id !== v.id);
+                      setVendasSuspensas(restantes);
+                      try { localStorage.setItem("fc_vendas_suspensas", JSON.stringify(restantes)); } catch {}
+                    }} style={{ width: 26, height: 26, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>×</button>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+              <button className="fc-btn fc-btn-secondary" onClick={() => setModalRetomarVenda(false)}>Fechar (ESC)</button>
+            </div>
           </div>
         </div>
       )}

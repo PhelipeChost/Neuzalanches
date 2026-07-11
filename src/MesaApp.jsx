@@ -61,7 +61,8 @@ function SlideshowModal({ produto }) {
 // ─── CARD PRODUTO ─────────────────────────────────────────────────────────────
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, catIdPorNome, onVerDetalhes, onAdd }) {
   const catId = (catIdPorNome || {})[p.categoria];
-  const adsAplicaveis = (adicionaisDisponiveis || []).filter(a => !a.categoria_id || a.categoria_id === catId);
+  const adsEspecificos = (adicionaisDisponiveis || []).filter(a => !a.categoria_id || a.categoria_id === catId);
+  const adsAplicaveis = adsEspecificos.length > 0 ? adsEspecificos : (adicionaisDisponiveis || []);
   const podePersonalizar = catPermiteAdicionais[p.categoria] && adsAplicaveis.length > 0;
   const cfgPorCat = {
     "Hambúrgueres": { bg: "#5C2A0A", emoji: "🍔" }, "Hamburgueres": { bg: "#5C2A0A", emoji: "🍔" },
@@ -276,7 +277,11 @@ export default function MesaApp({ mesaNumero }) {
   const adicionaisParaProduto = (produto) => {
     if (!produto || !catPermiteAdicionais[produto.categoria]) return [];
     const catId = catIdPorNome[produto.categoria];
-    return adicionaisDisponiveis.filter(a => !a.categoria_id || a.categoria_id === catId);
+    // Filtra por categoria; se ninguém casar (ex.: cliente não configurou o
+    // vínculo categoria×adicional), cai no fallback e mostra TODOS os disponíveis.
+    // Sem isso, o modal abria vazio e o operador do PDV nem descobria por quê.
+    const especificos = adicionaisDisponiveis.filter(a => !a.categoria_id || a.categoria_id === catId);
+    return especificos.length > 0 ? especificos : adicionaisDisponiveis;
   };
 
   const categoriasComProdutos = [
@@ -311,7 +316,8 @@ export default function MesaApp({ mesaNumero }) {
   }, [categoriasComProdutos, busca]);
 
   const handleAddProduto = (produto) => {
-    if (catPermiteAdicionais[produto.categoria] && adicionaisDisponiveis.length > 0) {
+    const ads = adicionaisParaProduto(produto);
+    if (ads.length > 0) {
       setModalAdicional(produto);
     } else {
       addCarrinhoSimples(produto, []);

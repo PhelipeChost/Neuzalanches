@@ -8,3 +8,4 @@ process.env.FLUXO_DB_PATH = "C:/Users/Felipe/AppData/Local/Temp/claude/C--Users-
 process.env.FLUXO_DIST_PATH = fileURLToPath(new URL("./desktop/app-dist", import.meta.url));
 process.env.MERCADO_URL = "http://localhost:3202"; // PDV Mercado do dev (launch.json)
 await import("./server/index.js");
+import("./desktop/agente-impressao.js").then(m => m.iniciarAgenteImpressao()).catch(e => console.error("[agente]", e.message));

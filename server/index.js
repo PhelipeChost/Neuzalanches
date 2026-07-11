@@ -16,10 +16,11 @@ import {
   obterConfig, salvarConfig,
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, reordenarCategorias, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
-  listarProdutos, buscarProduto, criarProduto, atualizarProduto, excluirProduto,
+  listarProdutos, buscarProduto, buscarProdutoPorCodigo, criarProduto, atualizarProduto, excluirProduto,
   listarPromocoes, listarPromocoesAtivas, criarPromocao, atualizarPromocao,
   listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
   pedidosAlteradosDesde, upsertPedidoSync, upsertCatalogoSync,
+  comandasAlteradasDesde, upsertComandaSync,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
   listarInsumos, buscarInsumo, criarInsumo, atualizarInsumo, excluirInsumo,
   listarComposicaoProduto, salvarComposicaoProduto,
@@ -744,6 +745,13 @@ app.get("/api/produtos", (req, res) => {
   res.json(listarProdutos(!isAdmin));
 });
 
+// Busca por código (SKU/EAN) — usada pela busca rápida do PDV
+app.get("/api/produtos/codigo/:codigo", authMiddleware, (req, res) => {
+  const p = buscarProdutoPorCodigo(req.params.codigo);
+  if (!p) return res.status(404).json({ error: "Produto não encontrado" });
+  res.json(p);
+});
+
 app.get("/api/produtos/:id", (req, res) => {
   const p = buscarProduto(req.params.id);
   if (!p) return res.status(404).json({ error: "Produto não encontrado" });
@@ -751,18 +759,18 @@ app.get("/api/produtos/:id", (req, res) => {
 });
 
 app.post("/api/produtos", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel } = req.body;
+  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel });
+  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo });
   agendarSyncCatalogo();
   res.status(201).json(p);
 });
 
 app.put("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel } = req.body;
+  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
-  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel });
+  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo });
   if (!p) return res.status(404).json({ error: "Não encontrado" });
   agendarSyncCatalogo();
   res.json(p);
@@ -976,7 +984,7 @@ app.post("/api/pedidos/publico", (req, res) => {
 });
 
 app.post("/api/pedidos", authMiddleware, (req, res) => {
-  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco, tipo_entrega } = req.body;
+  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco, tipo_entrega, desconto } = req.body;
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
   }
@@ -1011,6 +1019,7 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     troco_para: troco_para || null,
     tipo_entrega: tipo_entrega || "entrega",
     endereco: ["retirada", "casa"].includes(tipo_entrega) ? {} : enderecoFinal,
+    desconto: isAdmin ? Number(desconto || 0) : 0,
   });
   res.status(201).json(pedido);
 });
@@ -1119,6 +1128,39 @@ app.post("/api/sync/push", syncTokenOrAdmin, (req, res) => {
           notificarStatusPedido(atualizado, atualizado.status).catch(() => {});
         }
       }
+    }
+    res.json({ ok: true, ...resultado, recebidos: lote.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── SINCRONIZAÇÃO DE COMANDAS DE MESA (QR das mesas → PDV local) ───────────
+// O QR das mesas aponta pra URL da nuvem (mercadolojo.com.br). Quando o cliente
+// escaneia e faz pedido, a comanda nasce no banco da NUVEM. Sem esse sync, o
+// PDV local nunca vê o pedido no mapa nem na cozinha.
+
+app.get("/api/sync/pull-comandas", syncTokenOrAdmin, (req, res) => {
+  try {
+    const desde = req.query.desde || "1970-01-01T00:00:00";
+    const comandas = comandasAlteradasDesde(desde);
+    const cursor = comandas.reduce((m, c) => {
+      const t = c.updated_at || c.opened_at || "";
+      return t > m ? t : m;
+    }, desde);
+    res.json({ comandas, cursor, servidor_agora: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/sync/push-comandas", syncTokenOrAdmin, (req, res) => {
+  try {
+    const lote = Array.isArray(req.body?.comandas) ? req.body.comandas : [];
+    const resultado = { inserido: 0, atualizado: 0, ignorado: 0 };
+    for (const c of lote) {
+      const r = upsertComandaSync(c);
+      resultado[r] = (resultado[r] || 0) + 1;
     }
     res.json({ ok: true, ...resultado, recebidos: lote.length });
   } catch (err) {
@@ -2336,6 +2378,7 @@ if (fs.existsSync(distIndex)) {
 // de pedidos a cada 5s — cozinha simultânea entre duas instalações via HTTP.
 // Mesma lógica do desktop/sync/motor.js, mas rodando inline no Express.
 let syncPedidosCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
+let syncComandasCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
 let syncPedidosTimer = null;
 
 function iniciarSyncPedidos() {
@@ -2373,6 +2416,32 @@ function iniciarSyncPedidos() {
             return t > m ? t : m;
           }, syncPedidosCursor.push);
           if (novo > syncPedidosCursor.push) syncPedidosCursor.push = novo;
+        }
+      }
+
+      // ─── COMANDAS DE MESA (QR das mesas) ─────────────────────────────────
+      // PULL — baixa comandas + itens novos/alterados do remoto
+      const pullCUrl = `${url}/api/sync/pull-comandas?desde=${encodeURIComponent(syncComandasCursor.pull)}`;
+      const pullCR = await fetch(pullCUrl, { headers, signal: AbortSignal.timeout(8000) });
+      if (pullCR.ok) {
+        const { comandas = [], cursor } = await pullCR.json();
+        for (const c of comandas) upsertComandaSync(c);
+        if (cursor && cursor > syncComandasCursor.pull) syncComandasCursor.pull = cursor;
+      }
+
+      // PUSH — envia comandas locais novas/alteradas para o remoto
+      const locaisC = comandasAlteradasDesde(syncComandasCursor.push);
+      if (locaisC.length > 0) {
+        const pushCR = await fetch(`${url}/api/sync/push-comandas`, {
+          method: "POST", headers, body: JSON.stringify({ comandas: locaisC }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (pushCR.ok) {
+          const novo = locaisC.reduce((m, c) => {
+            const t = c.updated_at || c.opened_at || "";
+            return t > m ? t : m;
+          }, syncComandasCursor.push);
+          if (novo > syncComandasCursor.push) syncComandasCursor.push = novo;
         }
       }
     } catch { /* offline — tenta de novo no próximo tick */ }

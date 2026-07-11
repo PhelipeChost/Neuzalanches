@@ -157,6 +157,7 @@ export const api = {
   // Produtos
   produtos: {
     listar: () => request("/produtos"),
+    porCodigo: (codigo) => request(`/produtos/codigo/${encodeURIComponent(codigo)}`),
     criar: (data) => request("/produtos", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/produtos/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     excluir: (id) => request(`/produtos/${id}`, { method: "DELETE" }),

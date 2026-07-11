@@ -87,7 +87,7 @@ function SlideshowAdmin({ imagens }) {
 
 // ─── MODAL PRODUTO ────────────────────────────────────────────────────────────
 function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, insumos }) {
-  const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true });
+  const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true, codigo: "" });
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef(null);
   const [abaModal, setAbaModal] = useState("produto");
@@ -350,9 +350,15 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
               </div>
               <input ref={fileRef} type="file" accept="image/*" multiple onChange={adicionarFotos} style={{ display: "none" }} />
             </div>
-            <div>
-              <label style={lbl}>Nome do produto</label>
-              <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Ex: Hambúrguer artesanal" />
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+              <div>
+                <label style={lbl}>Nome do produto</label>
+                <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Ex: Hambúrguer artesanal" />
+              </div>
+              <div>
+                <label style={lbl}>Código (SKU/EAN)</label>
+                <input style={inp} value={form.codigo || ""} onChange={e => setForm({ ...form, codigo: e.target.value })} placeholder="Ex: 7891234000010" />
+              </div>
             </div>
             <div>
               <label style={lbl}>Descrição</label>
