@@ -62,6 +62,20 @@ export default function Login() {
           </button>
         )}
       </div>
+
+      {/* Suporte Nexus: volta pro shell do PDV com ?suporte=1 → abre o modal */}
+      {sessionStorage.getItem("nx_pdv_url") && (
+        <button onClick={() => { window.location.href = sessionStorage.getItem("nx_pdv_url") + "?suporte=1"; }}
+          title="Área do Suporte Nexus"
+          style={{
+            position: "fixed", left: 16, bottom: 16, zIndex: 60, display: "flex", alignItems: "center", gap: 8,
+            padding: "9px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+            background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#a8a29e",
+            fontSize: 12, fontWeight: 600, backdropFilter: "blur(8px)",
+          }}>
+          🛟 Suporte
+        </button>
+      )}
     </div>
   );
 }

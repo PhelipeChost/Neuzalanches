@@ -333,7 +333,25 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  -- Trilha de impressão da cozinha (relatório do Suporte).
+  -- Um pedido pode ter várias linhas (tentativa 1 falhou / tentativa 2 OK).
+  CREATE TABLE IF NOT EXISTS impressao_eventos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pedido_id TEXT,
+    status TEXT NOT NULL,       -- ok | erro | enfileirado
+    modo TEXT,                  -- agente | usb | manual | auto
+    impressora TEXT,            -- nome/porta reportado pelo agente
+    tentativa INTEGER DEFAULT 1,
+    bytes INTEGER DEFAULT 0,    -- tamanho do payload ESC/POS
+    erro TEXT,                  -- mensagem quando status = erro
+    detalhes TEXT,              -- JSON extra (opcional)
+    origem TEXT,                -- "cozinha-auto" | "cozinha-manual" | "suporte"
+    created_at TEXT DEFAULT (datetime('now'))
+  );
 `);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_impressao_eventos_pedido ON impressao_eventos(pedido_id)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_impressao_eventos_created ON impressao_eventos(created_at DESC)`);
 
 // Inserir saldo inicial padrão se não existir
 const existeConfig = db.prepare("SELECT 1 FROM config WHERE key = 'saldo_inicial'").get();
@@ -3555,6 +3573,42 @@ export function estatisticasCaixa() {
       pedidos_balcao: pedidosHoje.total,
     },
   };
+}
+
+// ─── IMPRESSÃO: eventos ──────────────────────────────────────────────────────
+// Cada tentativa (sucesso ou falha) da Cozinha vira uma linha aqui — vira base
+// do relatório do Suporte "Lista de Impressão".
+export function registrarImpressaoEvento(dados) {
+  const {
+    pedido_id = null, status, modo = null, impressora = null,
+    tentativa = 1, bytes = 0, erro = null, detalhes = null, origem = "cozinha-auto",
+  } = dados || {};
+  if (!status) throw new Error("status é obrigatório");
+  const info = db.prepare(`
+    INSERT INTO impressao_eventos (
+      pedido_id, status, modo, impressora, tentativa, bytes, erro, detalhes, origem
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    pedido_id, status, modo, impressora, tentativa, bytes,
+    erro || null,
+    detalhes ? (typeof detalhes === "string" ? detalhes : JSON.stringify(detalhes)) : null,
+    origem,
+  );
+  return { id: info.lastInsertRowid };
+}
+
+export function listarImpressaoEventos({ limite = 200, pedido_id = null } = {}) {
+  const conds = [];
+  const params = [];
+  if (pedido_id) { conds.push("pedido_id = ?"); params.push(String(pedido_id)); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const lim = Math.max(1, Math.min(1000, Number(limite) || 200));
+  return db.prepare(`
+    SELECT * FROM impressao_eventos
+    ${where}
+    ORDER BY id DESC
+    LIMIT ${lim}
+  `).all(...params);
 }
 
 export default db;

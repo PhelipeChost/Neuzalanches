@@ -47,6 +47,7 @@ import {
   definirCategoriasCardapio, definirAdicionaisCardapio, garantirCardapioPrincipal,
   listarCardapiosPorCategoria, listarCardapiosPorAdicional,
   caminhoBanco, backupBanco,
+  registrarImpressaoEvento, listarImpressaoEventos,
 } from "./database.js";
 
 const app = express();
@@ -430,6 +431,36 @@ app.post("/api/suporte/backup", authMiddleware, adminOnly, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ─── IMPRESSÃO: trilha de eventos ────────────────────────────────────────────
+// A Cozinha (frontend) reporta cada tentativa via POST. O Suporte lê no GET
+// pra alimentar a "Lista de Impressão". Sem admin — a Cozinha às vezes roda
+// em modo operador (sem login) no PDV desktop, então basta authMiddleware.
+app.post("/api/impressao/eventos", authMiddleware, (req, res) => {
+  try {
+    const r = registrarImpressaoEvento(req.body || {});
+    res.status(201).json(r);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get("/api/impressao/eventos", authMiddleware, adminOnly, (req, res) => {
+  const limite = Number(req.query.limite) || 200;
+  const pedido_id = req.query.pedido_id || null;
+  res.json(listarImpressaoEventos({ limite, pedido_id }));
+});
+
+// Listagem completa de pedidos com itens (pra Lista de Pedidos do Suporte).
+// Aceita ?limite=500&desde=2026-07-01
+app.get("/api/suporte/pedidos", authMiddleware, adminOnly, (req, res) => {
+  const limite = Math.max(1, Math.min(2000, Number(req.query.limite) || 500));
+  const desde = req.query.desde || null;
+  let pedidos = listarPedidos();
+  if (desde) pedidos = pedidos.filter(p => (p.created_at || "") >= String(desde));
+  pedidos = pedidos.slice(0, limite);
+  res.json(pedidos.map(p => ({ ...p, itens: buscarItensPedido(p.id) })));
 });
 
 // Liga/desliga a exigência de login no PDV (aba "Login" das Configurações).

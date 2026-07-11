@@ -95,6 +95,20 @@ export const api = {
     login: (senha) => request("/suporte/login", { method: "POST", body: JSON.stringify({ senha }) }),
     backups: () => request("/suporte/backups"),
     backup: () => request("/suporte/backup", { method: "POST" }),
+    // Relatórios do Suporte
+    pedidos: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/suporte/pedidos${q ? "?" + q : ""}`);
+    },
+  },
+
+  // Impressão da cozinha — trilha de eventos (registrar + listar)
+  impressao: {
+    registrar: (evento) => request("/impressao/eventos", { method: "POST", body: JSON.stringify(evento) }),
+    listar: (params = {}) => {
+      const q = new URLSearchParams(params).toString();
+      return request(`/impressao/eventos${q ? "?" + q : ""}`);
+    },
   },
 
   // Sessão de caixa (abrir/fechar/sangria/suprimento)

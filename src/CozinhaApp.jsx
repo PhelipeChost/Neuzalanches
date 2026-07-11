@@ -7,7 +7,8 @@ import {
   desconectarImpressora as usbDesconectar,
   imprimirCupomUSB,
   agenteStatus,
-  imprimirViaAgente,
+  imprimirBytesViaAgente,
+  gerarCupomCozinhaBytes,
 } from "./cozinhaImpressoraUSB";
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -57,69 +58,9 @@ const STATUS_CORES = {
 };
 
 // ─── IMPRESSÃO TÉRMICA 80mm (XP-80) ──────────────────────────────────────────
-const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const TIPO_CUPOM = { delivery: "DELIVERY", retirada: "RETIRADA", casa: "CONSUMIR NO LOCAL" };
-
-function gerarCupomCozinha(p, marca = "MEU ESTABELECIMENTO") {
-  const tipo = p.tipo_entrega === "retirada" ? "retirada" : p.tipo_entrega === "casa" ? "casa" : "delivery";
-  const hora = fmtHora(p.created_at);
-  const idCurto = String(p.id || "").slice(0, 6).toUpperCase();
-  const origem = p.tipo === "online" ? "ONLINE" : "PRESENCIAL";
-  const marcaTxt = escHtml((marca || "MEU ESTABELECIMENTO").toUpperCase());
-
-  const itensHtml = (p.itens || []).map(it => {
-    const ads = (it.adicionais || []).map(a => `<div class="add">+ ${(a.quantidade || 1) > 1 ? (a.quantidade + "x ") : ""}${escHtml(a.nome)}</div>`).join("");
-    return `<div class="item">${it.quantidade}x ${escHtml(it.produto_nome)}</div>${ads}`;
-  }).join("");
-
-  let blocoEntrega = "";
-  if (tipo === "delivery" && p.endereco_rua) {
-    blocoEntrega = `<div class="hr"></div><div class="b">ENTREGA:</div><div>${escHtml(p.endereco_rua)}${p.endereco_numero ? ", " + escHtml(p.endereco_numero) : ""}</div><div>${escHtml(p.endereco_bairro || "")}</div>${p.endereco_referencia ? `<div>Ref: ${escHtml(p.endereco_referencia)}</div>` : ""}`;
-  }
-
-  let pagamento = "";
-  if (p.metodo_pagamento) {
-    const labels = { pix: "PIX", credito: "CARTAO CREDITO", debito: "CARTAO DEBITO", dinheiro: "DINHEIRO" };
-    const troco = Number(p.troco_para), total = Number(p.total);
-    const trocoTxt = (p.metodo_pagamento === "dinheiro" && troco > total) ? ` (troco p/ ${fmt(troco)})` : "";
-    pagamento = `<div>Pgto: ${labels[p.metodo_pagamento] || escHtml(p.metodo_pagamento)}${trocoTxt}</div>`;
-  }
-
-  const obsHtml = p.obs ? `<div class="obs">OBS: ${escHtml(p.obs)}</div>` : "";
-
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pedido ${idCurto}</title><style>
-    @page { size: 72mm auto; margin: 0; }
-    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    body { width: 72mm; font-family: 'Courier New', monospace; color: #000; padding: 8px 6px 20px; font-size: 12px; line-height: 1.35; }
-    .center { text-align: center; }
-    .b { font-weight: bold; }
-    .huge { font-size: 19px; font-weight: bold; letter-spacing: 1px; }
-    .big { font-size: 14px; font-weight: bold; }
-    .hr { border-top: 1px dashed #000; margin: 7px 0; }
-    .row { display: flex; justify-content: space-between; align-items: baseline; }
-    .item { font-size: 16px; font-weight: bold; margin: 5px 0 2px; }
-    .add { font-size: 12px; padding-left: 16px; font-weight: normal; }
-    .obs { font-size: 14px; font-weight: bold; border: 2px solid #000; padding: 5px; margin-top: 6px; text-align: center; }
-    .tag { display: inline-block; border: 2px solid #000; padding: 2px 8px; font-size: 15px; font-weight: bold; margin: 4px 0; }
-  </style></head><body>
-    <div class="center huge">${marcaTxt}</div>
-    <div class="center big">&gt;&gt; COZINHA &lt;&lt;</div>
-    <div class="hr"></div>
-    <div class="row"><span class="big">#${idCurto}</span><span class="big">${hora}</span></div>
-    <div class="center"><span class="tag">${TIPO_CUPOM[tipo]}</span></div>
-    <div>Cliente: ${escHtml(p.cliente_nome || "-")}</div>
-    <div>Origem: ${origem}</div>
-    <div class="hr"></div>
-    ${itensHtml}
-    ${obsHtml}
-    ${blocoEntrega}
-    <div class="hr"></div>
-    ${pagamento}
-    <div class="row b"><span>TOTAL</span><span>${fmt(p.total || 0)}</span></div>
-    <div class="hr"></div>
-    <div class="center" style="font-size:10px">${new Date().toLocaleString("pt-BR")}</div>
-  </body></html>`;
-}
+// A geração dos bytes ESC/POS mora em ./cozinhaImpressoraUSB.js
+// (gerarCupomCozinhaBytes) e a impressão sai pelo agente local ou USB direto.
+// Sem cupom HTML/iframe — nunca mais abre janela do navegador.
 
 // ─── STATUS PIPELINE COMPONENT (dark) ────────────────────────────────────────
 function StatusPipelineDark({ status }) {
@@ -440,16 +381,29 @@ export default function CozinhaApp({ onNavegar }) {
   const repetirRef = useRef(repetirSom);
 
   // ─── IMPRESSÃO XP-80 ──────────────────────────────────────────────────────
+  // Fluxo automático: pedido novo → tenta imprimir (agente → USB direto).
+  // Se AMBOS falharem (impressora offline, sem bobina, etc), fica em FILA
+  // PERSISTENTE (localStorage) — retry a cada 15s até imprimir com sucesso.
+  // Nunca abre janela de diálogo do navegador.
   const [autoPrint, setAutoPrint] = useState(() => { const v = localStorage.getItem("nl_coz_print"); return v === null ? true : v === "1"; });
   const autoPrintRef = useRef(autoPrint);
-  const printFrameRef = useRef(null);
   const printedRef = useRef(null);
   if (printedRef.current === null) {
     try { printedRef.current = new Set(JSON.parse(localStorage.getItem("nl_coz_printed") || "[]")); } catch { printedRef.current = new Set(); }
   }
   const primeiraCargaImpRef = useRef(true);
-  const printQueueRef = useRef([]);
+  // Fila persistente: [{ pedido, tentativas, ultimoErro, addedAt }]
+  const filaPendenteRef = useRef((() => {
+    try { return JSON.parse(localStorage.getItem("nl_coz_fila_impressao") || "[]"); }
+    catch { return []; }
+  })());
+  const [fila, setFila] = useState(() => filaPendenteRef.current.length);
   const printingRef = useRef(false);
+
+  const salvarFila = () => {
+    try { localStorage.setItem("nl_coz_fila_impressao", JSON.stringify(filaPendenteRef.current.slice(0, 200))); } catch {}
+    setFila(filaPendenteRef.current.length);
+  };
 
   // Impressora USB (Web USB + ESC/POS) — imprime sem caixa de diálogo
   const usbDeviceRef = useRef(null);
@@ -530,45 +484,133 @@ export default function CozinhaApp({ onNavegar }) {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
-  // ─── IMPRESSÃO: USB direto (ESC/POS) com fallback para iframe ────────────
-  const imprimirViaIframe = useCallback((pedido) => {
-    const frame = printFrameRef.current;
-    if (!frame || !frame.contentWindow) return;
-    const doc = frame.contentWindow.document;
-    doc.open(); doc.write(gerarCupomCozinha(pedido, marcaRef.current)); doc.close();
-    setTimeout(() => { try { frame.contentWindow.focus(); frame.contentWindow.print(); } catch {} }, 280);
-  }, []);
-  const imprimirAgora = useCallback(async (pedido) => {
-    // 1º) Agente local (recomendado): ESC/POS direto, sem diálogo, sem driver.
+  // ─── IMPRESSÃO: agente local → USB direto (SEM fallback para iframe) ─────
+  // Retorna { ok: true, modo, impressora, bytes } em sucesso, ou lança Error.
+  // Nunca abre diálogo do navegador — se falhar, o pedido fica na fila.
+  const tentarImprimir = useCallback(async (pedido) => {
+    const bytes = gerarCupomCozinhaBytes(pedido, marcaRef.current);
+
+    // 1º) Agente local (recomendado): ESC/POS direto, sem driver.
     if (agenteRef.current) {
-      try { await imprimirViaAgente(pedido, marcaRef.current); return "agente"; }
-      catch (e) { console.warn("Agente falhou, tentando próximo método:", e); }
+      const r = await imprimirBytesViaAgente(bytes);
+      return { ok: true, modo: "agente", impressora: agenteRef.current, bytes: bytes.length, extra: r };
     }
+
     // 2º) Web USB direto (precisa de driver WinUSB/Zadig).
     if (usbDeviceRef.current) {
-      try { await imprimirCupomUSB(usbDeviceRef.current, pedido); return "usb"; }
-      catch (e) { console.warn("USB falhou, caindo no fallback de iframe:", e); }
+      await imprimirCupomUSB(usbDeviceRef.current, pedido);
+      return { ok: true, modo: "usb", impressora: "USB direta", bytes: bytes.length };
     }
-    // 3º) Fallback: impressão pelo navegador (kiosk-printing / diálogo).
-    try { imprimirViaIframe(pedido); } catch {}
-    return "iframe";
-  }, [imprimirViaIframe]);
+
+    throw new Error("Nenhuma impressora conectada (agente offline e USB não pareada)");
+  }, []);
+
+  const registrarEvento = useCallback((dados) => {
+    // Não bloqueia o fluxo se o servidor estiver indisponível.
+    try { api.impressao.registrar(dados).catch(() => {}); } catch {}
+  }, []);
+
+  // Processa a fila persistente uma vez. Se pedido imprimir OK, sai da fila.
+  // Se falhar, fica na fila e o retry cuida da próxima tentativa.
   const processarFilaImpressao = useCallback(async () => {
     if (printingRef.current) return;
-    const prox = printQueueRef.current.shift();
-    if (!prox) return;
+    if (filaPendenteRef.current.length === 0) return;
+
     printingRef.current = true;
-    let modo = "iframe";
-    try { modo = await imprimirAgora(prox); } catch {}
-    // USB termina em milissegundos; iframe precisa de mais tempo pro Chrome despachar.
-    const delay = (modo === "usb" || modo === "agente") ? 350 : 1700;
-    setTimeout(() => { printingRef.current = false; processarFilaImpressao(); }, delay);
-  }, [imprimirAgora]);
-  const enfileirarImpressao = useCallback((pedido) => {
-    printQueueRef.current.push(pedido);
+    try {
+      // Trabalha uma cópia — se der erro, mantém o item na fila.
+      const proximos = [...filaPendenteRef.current];
+      const restantes = [];
+      for (const item of proximos) {
+        item.tentativas = (item.tentativas || 0) + 1;
+        try {
+          const r = await tentarImprimir(item.pedido);
+          printedRef.current.add(item.pedido.id);
+          registrarEvento({
+            pedido_id: item.pedido.id,
+            status: "ok",
+            modo: r.modo,
+            impressora: r.impressora,
+            tentativa: item.tentativas,
+            bytes: r.bytes,
+            origem: item.origem || "cozinha-auto",
+          });
+        } catch (e) {
+          item.ultimoErro = e.message || String(e);
+          registrarEvento({
+            pedido_id: item.pedido.id,
+            status: "erro",
+            modo: agenteRef.current ? "agente" : (usbDeviceRef.current ? "usb" : null),
+            tentativa: item.tentativas,
+            erro: item.ultimoErro,
+            origem: item.origem || "cozinha-auto",
+          });
+          restantes.push(item);
+          // Para no primeiro erro — provavelmente a impressora está offline
+          // e não faz sentido queimar as próximas tentativas todas seguidas.
+          break;
+        }
+      }
+      // Mantém itens que falharam + os que ainda nem tentei.
+      const tentados = proximos.length - restantes.length;
+      filaPendenteRef.current = [
+        ...restantes,
+        ...filaPendenteRef.current.slice(tentados + restantes.length),
+      ];
+      salvarFila();
+      try { localStorage.setItem("nl_coz_printed", JSON.stringify([...printedRef.current].slice(-400))); } catch {}
+    } finally {
+      printingRef.current = false;
+    }
+  }, [tentarImprimir, registrarEvento]);
+
+  // Enfileira um pedido pra impressão automática. Se a impressora estiver
+  // pronta, imprime imediatamente. Se não, fica esperando o retry.
+  const enfileirarImpressao = useCallback((pedido, origem = "cozinha-auto") => {
+    // Evita duplicar o mesmo pedido na fila (ex.: dois refreshes rápidos).
+    if (filaPendenteRef.current.some(i => i.pedido.id === pedido.id)) return;
+    filaPendenteRef.current.push({ pedido, tentativas: 0, addedAt: Date.now(), origem });
+    salvarFila();
     processarFilaImpressao();
   }, [processarFilaImpressao]);
-  const imprimirManual = (pedido) => { imprimirAgora(pedido); showToast("\u{1F5A8}\u{FE0F} Enviado para impressão"); };
+
+  // Impressão manual (botão do card): não passa pela fila persistente,
+  // tenta na hora e mostra toast com o resultado.
+  const imprimirManual = async (pedido) => {
+    try {
+      const r = await tentarImprimir(pedido);
+      registrarEvento({
+        pedido_id: pedido.id, status: "ok", modo: r.modo, impressora: r.impressora,
+        tentativa: 1, bytes: r.bytes, origem: "cozinha-manual",
+      });
+      showToast("\u{1F5A8}\u{FE0F} Enviado para impressão");
+    } catch (e) {
+      registrarEvento({
+        pedido_id: pedido.id, status: "erro", tentativa: 1,
+        erro: e.message, origem: "cozinha-manual",
+      });
+      // Se falhou, joga na fila persistente pra tentar depois.
+      enfileirarImpressao(pedido, "cozinha-manual");
+      showToast("\u{26A0}\u{FE0F} Impressora inativa — cupom na fila");
+    }
+  };
+
+  // Retry contínuo da fila: a cada 15s tenta imprimir os pendentes.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (filaPendenteRef.current.length === 0) return;
+      // Só tenta se tem alguma impressora conectada — evita queimar tentativas.
+      if (agenteRef.current || usbDeviceRef.current) processarFilaImpressao();
+    }, 15000);
+    return () => clearInterval(iv);
+  }, [processarFilaImpressao]);
+
+  // Quando a impressora VOLTAR (agente ou USB), força uma passada na fila.
+  useEffect(() => {
+    if ((agenteImpressora || usbConectada) && filaPendenteRef.current.length > 0) {
+      processarFilaImpressao();
+    }
+  }, [agenteImpressora, usbConectada, processarFilaImpressao]);
 
   // Auto-reconecta a impressora USB se já foi autorizada antes
   useEffect(() => {
@@ -950,6 +992,43 @@ export default function CozinhaApp({ onNavegar }) {
         </div>
       </header>
 
+      {/* ─── ALERTA: impressora inativa com cupons pendentes ───────────────── */}
+      {fila > 0 && !agenteImpressora && !usbConectada && (
+        <div style={{
+          background: "linear-gradient(90deg, #7f1d1d 0%, #991b1b 100%)",
+          color: "#fff", padding: "14px 28px",
+          display: "flex", alignItems: "center", gap: 14,
+          borderBottom: "2px solid #dc2626", fontFamily: "'Inter', sans-serif",
+        }}>
+          <div style={{ fontSize: 26 }} className="cz-pulse">{"\u{1F5A8}\u{FE0F}"}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800 }}>
+              Impressora inativa — {fila} cupom(ns) esperando
+            </div>
+            <div style={{ fontSize: 12, color: "#fecaca", fontWeight: 500, marginTop: 2 }}>
+              Ligue a impressora, verifique a bobina e o cabo. Assim que voltar, os pedidos parados saem sozinhos.
+            </div>
+          </div>
+          <button onClick={() => processarFilaImpressao()}
+            style={{
+              background: "rgba(255,255,255,0.15)", border: "1.5px solid rgba(255,255,255,0.3)",
+              color: "#fff", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit",
+            }}>
+            Tentar agora
+          </button>
+        </div>
+      )}
+      {/* Info discreta quando há fila E impressora está pronta (retry em curso) */}
+      {fila > 0 && (agenteImpressora || usbConectada) && (
+        <div style={{
+          background: "#1E293B", color: "#93C5FD", padding: "10px 28px",
+          fontSize: 12, fontFamily: "'DM Sans', sans-serif", borderBottom: "1px solid #334155",
+        }}>
+          {"\u{1F5A8}\u{FE0F}"} Imprimindo {fila} cupom(ns) pendente(s)…
+        </div>
+      )}
+
       {/* ─── PENDING ALERT ─────────────────────────────────────────────────── */}
       {pendentesAtual > 0 && (
         <div style={{ background: "#332B00", border: "1.5px solid #854D0E", borderRadius: 12, padding: "12px 18px", margin: "14px 28px 0", display: "flex", gap: 12, alignItems: "center", animation: "cz-fi 0.3s ease" }}>
@@ -1303,10 +1382,6 @@ export default function CozinhaApp({ onNavegar }) {
       )}
 
       {toast && <div className="cz-toast">{toast}</div>}
-
-      {/* iframe oculto usado para imprimir os cupons na XP-80 */}
-      <iframe ref={printFrameRef} title="impressao-cozinha" aria-hidden="true" tabIndex={-1}
-        style={{ position: "fixed", width: 0, height: 0, border: 0, left: -9999, top: -9999, visibility: "hidden" }} />
 
       {/* ─── MODAL PEDIDO MANUAL ──────────────────────────────────────────── */}
       {modalManual && (

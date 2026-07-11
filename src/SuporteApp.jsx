@@ -42,6 +42,7 @@ export default function SuporteApp({ onFechar, mercadoUrl = "http://localhost:41
 
   const SECOES = [
     { key: "operador", icon: "🛟", label: "Operador", sub: "Plataforma Nexus" },
+    { key: "relatorios", icon: "📊", label: "Relatórios", sub: "Impressão e pedidos" },
     ...TIPOS_ESTABELECIMENTO.filter(t => tipos.includes(t.id)).map(t => ({
       key: t.id, icon: t.icon, label: t.label.split(" / ")[0], sub: "Estabelecimento",
     })),
@@ -93,6 +94,7 @@ export default function SuporteApp({ onFechar, mercadoUrl = "http://localhost:41
       <main style={{ flex: 1, padding: "30px 34px 60px", overflowY: "auto" }}>
         <div style={{ maxWidth: 780, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 }}>
           {secao === "operador" && <SecaoOperador tipos={tipos} setTipos={setTipos} showToast={showToast} />}
+          {secao === "relatorios" && <SecaoRelatorios showToast={showToast} />}
           {secao === "lanchonete" && <SecaoLanchonete showToast={showToast} />}
           {secao === "mercado" && <SecaoMercado mercadoUrl={mercadoUrl} showToast={showToast} />}
         </div>
@@ -484,5 +486,302 @@ function SecaoMercado({ mercadoUrl, showToast }) {
         </div>
       </div>
     </>
+  );
+}
+
+// ═══ SEÇÃO: RELATÓRIOS (impressão + pedidos) ═════════════════════════════════
+function SecaoRelatorios({ showToast }) {
+  const [aba, setAba] = useState("impressao");
+  return (
+    <>
+      <div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#1c1917" }}>📊 Relatórios</div>
+        <div style={{ fontSize: 13, color: "#78716c" }}>Trilha das impressões da cozinha e histórico completo de pedidos.</div>
+      </div>
+
+      {/* Sub-abas */}
+      <div style={{ display: "flex", gap: 6, background: "#e7e5e4", padding: 4, borderRadius: 10, width: "fit-content" }}>
+        {[
+          { key: "impressao", icon: "🖨️", label: "Lista de Impressão" },
+          { key: "pedidos", icon: "📋", label: "Lista de Pedidos" },
+        ].map(a => (
+          <button key={a.key} onClick={() => setAba(a.key)}
+            style={{
+              padding: "8px 14px", borderRadius: 7, border: "none",
+              background: aba === a.key ? "#fff" : "transparent",
+              color: aba === a.key ? "#1c1917" : "#78716c",
+              fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              boxShadow: aba === a.key ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+            }}>
+            {a.icon} {a.label}
+          </button>
+        ))}
+      </div>
+
+      {aba === "impressao" && <ListaImpressao showToast={showToast} />}
+      {aba === "pedidos" && <ListaPedidos showToast={showToast} />}
+    </>
+  );
+}
+
+const fmtDataHora = (iso) => {
+  if (!iso) return "—";
+  try {
+    const s = String(iso);
+    const d = /Z$|[+-]\d{2}:?\d{2}$/.test(s) ? new Date(s) : new Date(s.replace(" ", "T") + "Z");
+    return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch { return iso; }
+};
+
+function ListaImpressao({ showToast }) {
+  const [eventos, setEventos] = useState(null);
+  const [filtro, setFiltro] = useState("todos"); // todos | ok | erro
+
+  const carregar = () => {
+    api.impressao.listar({ limite: 500 })
+      .then(setEventos)
+      .catch(e => showToast("Erro ao carregar: " + e.message, "#dc2626"));
+  };
+  useEffect(() => { carregar(); const iv = setInterval(carregar, 15000); return () => clearInterval(iv); }, []);
+
+  if (eventos === null) return <div style={{ fontSize: 13, color: "#a8a29e" }}>Carregando…</div>;
+
+  const filtrados = eventos.filter(e => filtro === "todos" || e.status === filtro);
+  const okCount = eventos.filter(e => e.status === "ok").length;
+  const erroCount = eventos.filter(e => e.status === "erro").length;
+  const modoLabel = { agente: "Agente", usb: "USB direta", manual: "Manual" };
+  const origemLabel = { "cozinha-auto": "🍳 Automática", "cozinha-manual": "👆 Manual", "suporte": "🛟 Suporte" };
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ background: "#fff", padding: "10px 16px", borderRadius: 10, border: "1px solid #e7e5e4", fontSize: 12.5 }}>
+          <b style={{ color: "#16a34a" }}>{okCount}</b> impressos · <b style={{ color: "#dc2626" }}>{erroCount}</b> falhas · <b>{eventos.length}</b> total
+        </div>
+        <div style={{ display: "flex", gap: 4, background: "#e7e5e4", padding: 3, borderRadius: 8 }}>
+          {[
+            { k: "todos", l: "Todos" },
+            { k: "ok", l: "✓ Sucesso" },
+            { k: "erro", l: "✗ Falhas" },
+          ].map(f => (
+            <button key={f.k} onClick={() => setFiltro(f.k)}
+              style={{
+                padding: "6px 12px", borderRadius: 6, border: "none",
+                background: filtro === f.k ? "#fff" : "transparent",
+                color: filtro === f.k ? "#1c1917" : "#78716c",
+                fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+              }}>{f.l}</button>
+          ))}
+        </div>
+        <button onClick={carregar}
+          style={{ ...btnBase, background: "#f5f5f4", color: "#57534e", border: "1px solid #e7e5e4", padding: "8px 14px" }}>
+          🔄 Atualizar
+        </button>
+      </div>
+
+      <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ background: "#fafaf9", borderBottom: "1.5px solid #e7e5e4", textAlign: "left" }}>
+                {["Data/Hora", "Pedido", "Status", "Modo", "Impressora", "Tentativa", "Bytes", "Origem", "Erro"].map(h => (
+                  <th key={h} style={{ padding: "10px 12px", fontWeight: 700, color: "#57534e", fontSize: 11, letterSpacing: "0.04em" }}>{h.toUpperCase()}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.length === 0 && (
+                <tr><td colSpan={9} style={{ padding: 30, textAlign: "center", color: "#a8a29e" }}>
+                  {eventos.length === 0
+                    ? "Nenhuma impressão registrada ainda. Assim que a Cozinha imprimir, aparece aqui."
+                    : "Nenhum evento com esse filtro."}
+                </td></tr>
+              )}
+              {filtrados.map(e => (
+                <tr key={e.id} style={{ borderBottom: "1px solid #f5f5f4" }}>
+                  <td style={{ padding: "9px 12px", whiteSpace: "nowrap", color: "#57534e" }}>{fmtDataHora(e.created_at)}</td>
+                  <td style={{ padding: "9px 12px", fontFamily: "monospace", fontSize: 11.5, color: "#1c1917" }}>
+                    {e.pedido_id ? "#" + String(e.pedido_id).slice(0, 6).toUpperCase() : "—"}
+                  </td>
+                  <td style={{ padding: "9px 12px" }}>
+                    <span style={{
+                      padding: "2px 10px", borderRadius: 20, fontSize: 10.5, fontWeight: 700,
+                      background: e.status === "ok" ? "#dcfce7" : e.status === "erro" ? "#fee2e2" : "#fef3c7",
+                      color: e.status === "ok" ? "#16a34a" : e.status === "erro" ? "#dc2626" : "#92400e",
+                    }}>{e.status === "ok" ? "✓ OK" : e.status === "erro" ? "✗ ERRO" : e.status.toUpperCase()}</span>
+                  </td>
+                  <td style={{ padding: "9px 12px", color: "#57534e" }}>{modoLabel[e.modo] || e.modo || "—"}</td>
+                  <td style={{ padding: "9px 12px", color: "#57534e", fontSize: 11.5 }}>{e.impressora || "—"}</td>
+                  <td style={{ padding: "9px 12px", color: "#57534e" }}>#{e.tentativa}</td>
+                  <td style={{ padding: "9px 12px", color: "#57534e", fontVariantNumeric: "tabular-nums" }}>
+                    {e.bytes ? e.bytes.toLocaleString("pt-BR") : "—"}
+                  </td>
+                  <td style={{ padding: "9px 12px", color: "#57534e", fontSize: 11.5 }}>{origemLabel[e.origem] || e.origem || "—"}</td>
+                  <td style={{ padding: "9px 12px", color: "#dc2626", fontSize: 11.5, maxWidth: 260 }}>
+                    {e.erro ? <span title={e.erro} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.erro}</span> : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function ListaPedidos({ showToast }) {
+  const [pedidos, setPedidos] = useState(null);
+  const [expandido, setExpandido] = useState(null);
+  const [status, setStatus] = useState("todos");
+  const [busca, setBusca] = useState("");
+
+  const carregar = () => {
+    api.suporte.pedidos({ limite: 500 })
+      .then(setPedidos)
+      .catch(e => showToast("Erro ao carregar: " + e.message, "#dc2626"));
+  };
+  useEffect(() => { carregar(); }, []);
+
+  if (pedidos === null) return <div style={{ fontSize: 13, color: "#a8a29e" }}>Carregando…</div>;
+
+  const filtrados = pedidos.filter(p => {
+    if (status !== "todos" && p.status !== status) return false;
+    if (busca) {
+      const q = busca.toLowerCase();
+      return (p.cliente_nome || "").toLowerCase().includes(q)
+        || (p.cliente_telefone || "").includes(q)
+        || String(p.id || "").toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const CORES_STATUS = {
+    pendente: { bg: "#fef3c7", fg: "#92400e" },
+    confirmado: { bg: "#dbeafe", fg: "#1e40af" },
+    preparando: { bg: "#fed7aa", fg: "#c2410c" },
+    pronto: { bg: "#e9d5ff", fg: "#7c3aed" },
+    entregue: { bg: "#dcfce7", fg: "#16a34a" },
+    cancelado: { bg: "#fee2e2", fg: "#dc2626" },
+  };
+  const LABEL_METODO = { pix: "Pix", dinheiro: "Dinheiro", credito: "Cartão crédito", debito: "Cartão débito" };
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input placeholder="Buscar por nome, telefone ou ID…" value={busca} onChange={e => setBusca(e.target.value)}
+          className="sup-inp" style={{ maxWidth: 320 }} />
+        <select value={status} onChange={e => setStatus(e.target.value)}
+          style={{ padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12.5, background: "#fff", cursor: "pointer" }}>
+          <option value="todos">Todos status</option>
+          <option value="pendente">Pendentes</option>
+          <option value="confirmado">Confirmados</option>
+          <option value="preparando">Preparando</option>
+          <option value="pronto">Prontos</option>
+          <option value="entregue">Entregues</option>
+          <option value="cancelado">Cancelados</option>
+        </select>
+        <div style={{ background: "#fff", padding: "8px 14px", borderRadius: 10, border: "1px solid #e7e5e4", fontSize: 12 }}>
+          <b>{filtrados.length}</b> de {pedidos.length}
+        </div>
+        <button onClick={carregar}
+          style={{ ...btnBase, background: "#f5f5f4", color: "#57534e", border: "1px solid #e7e5e4", padding: "8px 14px" }}>
+          🔄 Atualizar
+        </button>
+      </div>
+
+      <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+        {filtrados.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: "#a8a29e", fontSize: 13 }}>
+            {pedidos.length === 0 ? "Nenhum pedido registrado ainda." : "Nenhum pedido com esse filtro."}
+          </div>
+        )}
+        {filtrados.map(p => {
+          const cor = CORES_STATUS[p.status] || { bg: "#f5f5f4", fg: "#57534e" };
+          const isOpen = expandido === p.id;
+          return (
+            <div key={p.id} style={{ borderBottom: "1px solid #f5f5f4" }}>
+              <div onClick={() => setExpandido(isOpen ? null : p.id)}
+                style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 18px", cursor: "pointer" }}>
+                <div style={{ fontFamily: "monospace", fontSize: 12, color: "#78716c", minWidth: 66 }}>
+                  #{String(p.id).slice(0, 6).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#1c1917" }}>
+                    {p.cliente_nome || "—"}
+                    <span style={{ color: "#78716c", fontWeight: 500, marginLeft: 8, fontSize: 11.5 }}>{p.cliente_telefone || ""}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "#78716c" }}>
+                    {fmtDataHora(p.created_at)} · {(p.itens || []).length} item(ns) · {p.tipo === "online" ? "🌐 Online" : "🏪 Presencial"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", minWidth: 80, textAlign: "right" }}>{fmtBRL(p.total)}</div>
+                <span style={{ padding: "3px 12px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: cor.bg, color: cor.fg, whiteSpace: "nowrap" }}>
+                  {p.status.toUpperCase()}
+                </span>
+                <div style={{ color: "#a8a29e", fontSize: 14 }}>{isOpen ? "▲" : "▼"}</div>
+              </div>
+
+              {isOpen && (
+                <div style={{ padding: "0 18px 18px", background: "#fafaf9", borderTop: "1px solid #f5f5f4" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginTop: 14 }}>
+                    <PDado label="ID completo" v={p.id} mono />
+                    <PDado label="Cliente" v={p.cliente_nome} />
+                    <PDado label="Telefone" v={p.cliente_telefone} />
+                    <PDado label="Email" v={p.cliente_email} />
+                    <PDado label="Tipo entrega" v={p.tipo_entrega} />
+                    <PDado label="Pagamento" v={LABEL_METODO[p.metodo_pagamento] || p.metodo_pagamento} />
+                    {p.troco_para && <PDado label="Troco p/" v={fmtBRL(p.troco_para)} />}
+                    <PDado label="Total" v={fmtBRL(p.total)} destaque />
+                    <PDado label="Criado em" v={fmtDataHora(p.created_at)} />
+                    {p.updated_at && <PDado label="Atualizado em" v={fmtDataHora(p.updated_at)} />}
+                    {p.endereco_rua && (
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <PDado label="Endereço" v={`${p.endereco_rua}${p.endereco_numero ? ", " + p.endereco_numero : ""}${p.endereco_bairro ? " · " + p.endereco_bairro : ""}${p.endereco_referencia ? " (Ref: " + p.endereco_referencia + ")" : ""}`} />
+                      </div>
+                    )}
+                    {p.obs && <div style={{ gridColumn: "1 / -1" }}><PDado label="Observação" v={p.obs} /></div>}
+                  </div>
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 8 }}>ITENS</div>
+                    <div style={{ background: "#fff", border: "1px solid #e7e5e4", borderRadius: 10 }}>
+                      {(p.itens || []).map((it, i) => (
+                        <div key={i} style={{ padding: "10px 14px", borderBottom: i < p.itens.length - 1 ? "1px solid #f5f5f4" : "none", display: "flex", justifyContent: "space-between", gap: 12 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{it.quantidade}× {it.produto_nome}</div>
+                            {(it.adicionais || []).length > 0 && (
+                              <div style={{ fontSize: 11.5, color: "#78716c", marginTop: 3 }}>
+                                {it.adicionais.map(a => `+ ${(a.quantidade || 1) > 1 ? a.quantidade + "× " : ""}${a.nome}`).join(", ")}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 12.5, fontWeight: 600, color: "#57534e", whiteSpace: "nowrap" }}>{fmtBRL(it.preco_unitario * it.quantidade)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function PDado({ label, v, mono, destaque }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, color: "#a8a29e", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 2 }}>{label.toUpperCase()}</div>
+      <div style={{
+        fontSize: destaque ? 15 : 12.5,
+        fontWeight: destaque ? 800 : 500,
+        color: destaque ? "#15803d" : "#1c1917",
+        fontFamily: mono ? "monospace" : "inherit",
+        wordBreak: "break-word",
+      }}>{v || "—"}</div>
+    </div>
   );
 }

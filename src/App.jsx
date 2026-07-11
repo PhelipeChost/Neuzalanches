@@ -259,6 +259,22 @@ export default function App() {
     .catch(() => setTiposEstab(null));
   useEffect(() => { if (IS_DESKTOP) carregarTipos(); }, []);
 
+  // Suporte vindo do Mercado: quando o cliente só tem "mercado" habilitado,
+  // o PDV redireciona direto pro Mercado. O botão 🛟 Suporte lá volta pra cá
+  // com ?suporte=1 — abre o modal e evita o redirect automático.
+  const [suporteFromMercado, setSuporteFromMercado] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get("suporte") === "1"; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    if (!IS_DESKTOP) return;
+    if (!suporteFromMercado) return;
+    setModalSuporte(true);
+    setSenhaSuporte("");
+    setErroSuporte("");
+    try { window.history.replaceState({}, "", window.location.pathname); } catch {}
+  }, []);
+
   const handleAdminLogin = async (e) => {
     e.preventDefault();
     setLoginErro("");
@@ -295,13 +311,14 @@ export default function App() {
   };
 
   // ─── Suporte Nexus (pré-login) ─────────────────────────────────────────────
+  const fecharModalSuporte = () => { setModalSuporte(false); setSuporteFromMercado(false); };
   const confirmarSenhaSuporte = async () => {
     try {
       const r = await api.suporte.login(senhaSuporte);
       // O shell usa o token do suporte; guarda o token anterior pra restaurar
       window.__tokenAntesSuporte = localStorage.getItem("token");
       localStorage.setItem("token", r.token);
-      setModalSuporte(false);
+      fecharModalSuporte();
       setSenhaSuporte("");
       setErroSuporte("");
       setSuporteAberto(true);
@@ -345,7 +362,7 @@ export default function App() {
   );
 
   const ModalSenhaSuporte = () => !modalSuporte ? null : (
-    <div onClick={() => setModalSuporte(false)}
+    <div onClick={() => fecharModalSuporte()}
       style={{ position: "fixed", inset: 0, background: "rgba(5,10,8,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
       <div onClick={e => e.stopPropagation()}
         style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 400, maxWidth: "92vw", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }}>
@@ -358,14 +375,14 @@ export default function App() {
         </div>
         <input type="password" autoFocus value={senhaSuporte}
           onChange={e => { setSenhaSuporte(e.target.value); setErroSuporte(""); }}
-          onKeyDown={e => { if (e.key === "Enter") confirmarSenhaSuporte(); if (e.key === "Escape") setModalSuporte(false); }}
+          onKeyDown={e => { if (e.key === "Enter") confirmarSenhaSuporte(); if (e.key === "Escape") fecharModalSuporte(); }}
           placeholder="Senha de suporte"
           style={{ width: "100%", padding: "12px 14px", border: `1.5px solid ${erroSuporte ? "#fecaca" : "#e7e5e4"}`, borderRadius: 10, fontSize: 14, outline: "none", fontFamily: "inherit", marginTop: 18, color: "#1c1917" }} />
         {erroSuporte && (
           <div style={{ marginTop: 8, fontSize: 12, color: "#dc2626", fontWeight: 600 }}>❌ {erroSuporte}</div>
         )}
         <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
-          <button onClick={() => setModalSuporte(false)}
+          <button onClick={() => fecharModalSuporte()}
             style={{ padding: "10px 18px", border: "1.5px solid #e7e5e4", borderRadius: 9, background: "#fff", color: "#78716c", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
             Cancelar
           </button>
@@ -408,8 +425,23 @@ export default function App() {
 
     const tiposAtivos = (tiposEstab && tiposEstab.length > 0) ? tiposEstab : ["lanchonete"];
 
-    // Só mercado habilitado → vai direto pro PDV Mercado
+    // Só mercado habilitado → vai direto pro PDV Mercado.
+    // (exceto quando o usuário voltou do Mercado pra abrir o Suporte: nesse
+    // caso segura na shell até o modal/suporte resolver)
     if (!tiposAtivos.includes("lanchonete")) {
+      if (suporteFromMercado || modalSuporte || suporteAberto) {
+        return (
+          <div style={{ minHeight: "100vh", background: "radial-gradient(1000px 600px at 20% 10%, #0f2b1e 0%, #0a1712 50%, #050a08 100%)",
+            display: "flex", alignItems: "center", justifyContent: "center", color: "#a8a29e", fontFamily: "'DM Sans', sans-serif" }}>
+            <div style={{ textAlign: "center", padding: 40 }}>
+              <div style={{ fontSize: 44, marginBottom: 12 }}>🛟</div>
+              <div style={{ fontSize: 16, fontWeight: 600 }}>Aguardando Suporte Nexus…</div>
+            </div>
+            <BotaoSuporte />
+            <ModalSenhaSuporte />
+          </div>
+        );
+      }
       window.location.href = `${mercadoUrl}?pdv=${encodeURIComponent(window.location.origin)}`;
       return null;
     }

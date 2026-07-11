@@ -115,6 +115,16 @@ export default function App() {
               🏬 Trocar de estabelecimento
             </button>
           )}
+          {/* Suporte Nexus: volta pro shell do PDV com ?suporte=1 → abre o modal.
+              O Operador Nexus é maior que a conta do cliente, então precisa
+              estar acessível também de dentro do Mercado. */}
+          {sessionStorage.getItem("nx_pdv_url") && (
+            <button onClick={() => { window.location.href = sessionStorage.getItem("nx_pdv_url") + "?suporte=1"; }}
+              title="Área do Suporte Nexus"
+              style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 9, background: "transparent", border: "1px solid #1c2622", color: "#e7e5e4", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              🛟 Suporte Nexus
+            </button>
+          )}
         </div>
       </aside>
 
