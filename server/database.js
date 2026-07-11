@@ -15,6 +15,11 @@ const DB_PATH = process.env.FLUXO_DB_PATH || join(__dirname, "..", "fluxo-caixa.
 
 const db = new Database(DB_PATH);
 
+// ─── BACKUP ──────────────────────────────────────────────────────────────────
+// db.backup() do better-sqlite3 é seguro com WAL (snapshot consistente).
+export function caminhoBanco() { return DB_PATH; }
+export function backupBanco(destinoArquivo) { return db.backup(destinoArquivo); }
+
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 

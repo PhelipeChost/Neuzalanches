@@ -15,10 +15,9 @@ import SuporteApp from "./SuporteApp";
 import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
 import Logo from "./Logo";
 import NexusLogo from "./NexusLogo";
-import TipoEstabelecimento from "./TipoEstabelecimento";
+import TipoEstabelecimento, { EscolhaEstabelecimento } from "./TipoEstabelecimento";
 
-const SENHA_MANUTENCAO = "31076hibridos";
-const SENHA_SUPORTE = "31076hibridos";
+// A senha do Suporte Nexus agora é validada no SERVIDOR (POST /api/suporte/login).
 
 // ─── T5: Onboarding em 4 passos (primeiro acesso) ────────────────────────────
 function OnboardingCard({ onNavegar, produtosTem, steps, onStep, onDismiss }) {
@@ -88,7 +87,7 @@ const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
 // Setores que cada build oferece no hub admin.
 const SETORES_BUILD = IS_ONLINE
   ? ["pedidos", "config"]
-  : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config", "suporte"];
+  : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config"];
 
 export default function App() {
   const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
@@ -121,10 +120,15 @@ export default function App() {
     return IS_ONLINE ? "pedidos" : "caixa";
   });
   const [pendentesCount, setPendentesCount] = useState(0);
-  const [suporteLiberado, setSuporteLiberado] = useState(false);
+  // Suporte Nexus: vive FORA do login do estabelecimento (o Operador Nexus é
+  // maior que as contas do cliente). Senha → POST /api/suporte/login → shell.
   const [modalSuporte, setModalSuporte] = useState(false);
   const [senhaSuporte, setSenhaSuporte] = useState("");
   const [erroSuporte, setErroSuporte] = useState("");
+  const [suporteAberto, setSuporteAberto] = useState(false);
+  // Multi-estabelecimento: qual mundo o cliente vai usar nesta sessão
+  const [estabAtivo, setEstabAtivo] = useState(() => sessionStorage.getItem("nx_estab") || "");
+  const [mercadoUrl, setMercadoUrl] = useState("http://localhost:41731");
   const [syncStatus, setSyncStatus] = useState("sem-config");
 
   // T5 — onboarding (primeiro acesso)
@@ -246,13 +250,14 @@ export default function App() {
       .then(p => setPerfil(p))
       .catch(() => setPerfil({ modo: "", modulos: [], configurado: false, nome_estabelecimento: "" }))
       .finally(() => setPerfilLoading(false));
-    // Tipos de estabelecimento (multi-stack) — só interessa no PDV desktop
-    if (IS_DESKTOP) {
-      api.tiposEstabelecimento.obter()
-        .then(r => setTiposEstab(r.definido ? r.tipos : null))
-        .catch(() => setTiposEstab(null));
-    }
   }, [usuario]);
+
+  // Tipos de estabelecimento (multi-stack) — carregados ANTES do login
+  // (o GET é público): o seletor de estabelecimento aparece pré-login.
+  const carregarTipos = () => api.tiposEstabelecimento.obter()
+    .then(r => { setTiposEstab(r.definido ? r.tipos : null); if (r.mercado_url) setMercadoUrl(r.mercado_url); })
+    .catch(() => setTiposEstab(null));
+  useEffect(() => { if (IS_DESKTOP) carregarTipos(); }, []);
 
   const handleAdminLogin = async (e) => {
     e.preventDefault();
@@ -281,7 +286,6 @@ export default function App() {
     localStorage.removeItem("usuario");
     setUsuario(null);
     setToken(null);
-    setSuporteLiberado(false);
   };
 
   // Volta pra sessão de operador local (PDV com login desligado) sem reiniciar
@@ -290,11 +294,136 @@ export default function App() {
     setUsuario({ id: "local", nome: "Operador", email: null, tipo: "admin", setores: null });
   };
 
+  // ─── Suporte Nexus (pré-login) ─────────────────────────────────────────────
+  const confirmarSenhaSuporte = async () => {
+    try {
+      const r = await api.suporte.login(senhaSuporte);
+      // O shell usa o token do suporte; guarda o token anterior pra restaurar
+      window.__tokenAntesSuporte = localStorage.getItem("token");
+      localStorage.setItem("token", r.token);
+      setModalSuporte(false);
+      setSenhaSuporte("");
+      setErroSuporte("");
+      setSuporteAberto(true);
+    } catch {
+      setErroSuporte("Senha incorreta");
+    }
+  };
+
+  const fecharSuporte = () => {
+    if (window.__tokenAntesSuporte) localStorage.setItem("token", window.__tokenAntesSuporte);
+    else localStorage.removeItem("token");
+    window.__tokenAntesSuporte = null;
+    setSuporteAberto(false);
+    carregarTipos(); // tipos podem ter mudado no suporte
+  };
+
+  const escolherEstab = (tipo) => {
+    if (tipo === "mercado") {
+      window.location.href = `${mercadoUrl}?pdv=${encodeURIComponent(window.location.origin)}`;
+      return;
+    }
+    sessionStorage.setItem("nx_estab", tipo);
+    setEstabAtivo(tipo);
+  };
+
+  const trocarEstab = () => {
+    sessionStorage.removeItem("nx_estab");
+    setEstabAtivo("");
+  };
+
+  // Botão 🛟 fixo no canto inferior esquerdo (telas pré-login do desktop)
+  const BotaoSuporte = () => (
+    <button onClick={() => { setSenhaSuporte(""); setErroSuporte(""); setModalSuporte(true); }}
+      title="Área do Suporte Nexus"
+      style={{ position: "fixed", left: 16, bottom: 16, zIndex: 60, display: "flex", alignItems: "center", gap: 8,
+        padding: "9px 14px", borderRadius: 999, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+        background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#a8a29e",
+        fontSize: 12, fontWeight: 600, backdropFilter: "blur(8px)" }}>
+      🛟 Suporte
+    </button>
+  );
+
+  const ModalSenhaSuporte = () => !modalSuporte ? null : (
+    <div onClick={() => setModalSuporte(false)}
+      style={{ position: "fixed", inset: 0, background: "rgba(5,10,8,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 400, maxWidth: "92vw", boxShadow: "0 20px 60px rgba(0,0,0,0.35)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🛟</div>
+          <div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 800, color: "#1c1917" }}>Área do Suporte Nexus</div>
+            <div style={{ fontSize: 12, color: "#78716c" }}>Digite a senha de suporte para continuar</div>
+          </div>
+        </div>
+        <input type="password" autoFocus value={senhaSuporte}
+          onChange={e => { setSenhaSuporte(e.target.value); setErroSuporte(""); }}
+          onKeyDown={e => { if (e.key === "Enter") confirmarSenhaSuporte(); if (e.key === "Escape") setModalSuporte(false); }}
+          placeholder="Senha de suporte"
+          style={{ width: "100%", padding: "12px 14px", border: `1.5px solid ${erroSuporte ? "#fecaca" : "#e7e5e4"}`, borderRadius: 10, fontSize: 14, outline: "none", fontFamily: "inherit", marginTop: 18, color: "#1c1917" }} />
+        {erroSuporte && (
+          <div style={{ marginTop: 8, fontSize: 12, color: "#dc2626", fontWeight: 600 }}>❌ {erroSuporte}</div>
+        )}
+        <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
+          <button onClick={() => setModalSuporte(false)}
+            style={{ padding: "10px 18px", border: "1.5px solid #e7e5e4", borderRadius: 9, background: "#fff", color: "#78716c", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+            Cancelar
+          </button>
+          <button onClick={confirmarSenhaSuporte}
+            style={{ padding: "10px 22px", border: "none", borderRadius: 9, background: "#15803d", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Entrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (loading) return null;
 
   // ─── ROTA PÚBLICA: Cardápio do cliente ───────────────────────────────────
   if (!isAdminRoute) {
     return <ClienteApp />;
+  }
+
+  // ─── SUPORTE NEXUS (fora do login — Operador acima das contas do cliente) ─
+  if (IS_DESKTOP && suporteAberto) {
+    return <SuporteApp onFechar={fecharSuporte} mercadoUrl={mercadoUrl} />;
+  }
+
+  // ─── PRÉ-LOGIN (desktop): tipos de estabelecimento ────────────────────────
+  if (IS_DESKTOP) {
+    if (tiposEstab === undefined) return null; // carregando tipos
+
+    // 1º acesso: nunca escolheu os tipos → seletor multi-select ANTES de tudo.
+    // (clientes antigos com login ativo são tratados como lanchonete)
+    if (tiposEstab === null && !loginNecessario) {
+      return (
+        <>
+          <TipoEstabelecimento onConfirmado={(tipos) => setTiposEstab(tipos)} />
+          <BotaoSuporte />
+          <ModalSenhaSuporte />
+        </>
+      );
+    }
+
+    const tiposAtivos = (tiposEstab && tiposEstab.length > 0) ? tiposEstab : ["lanchonete"];
+
+    // Só mercado habilitado → vai direto pro PDV Mercado
+    if (!tiposAtivos.includes("lanchonete")) {
+      window.location.href = `${mercadoUrl}?pdv=${encodeURIComponent(window.location.origin)}`;
+      return null;
+    }
+
+    // Mais de um tipo → o cliente escolhe qual estabelecimento vai usar agora
+    if (tiposAtivos.length > 1 && !estabAtivo) {
+      return (
+        <>
+          <EscolhaEstabelecimento tipos={tiposAtivos} onEscolher={escolherEstab} />
+          <BotaoSuporte />
+          <ModalSenhaSuporte />
+        </>
+      );
+    }
   }
 
   // ─── ROTA /admin: Login do admin ─────────────────────────────────────────
@@ -390,6 +519,12 @@ export default function App() {
             </button>
           )}
 
+          {(tiposEstab || []).length > 1 && (
+            <button onClick={trocarEstab} className="nx-link-btn" style={{ marginTop: 10 }}>
+              🏬 Trocar de estabelecimento
+            </button>
+          )}
+
           {window.licenca?.reset && (
             <div style={{ textAlign: "center", marginTop: 22 }}>
               <button onClick={() => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }}
@@ -397,6 +532,10 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* Suporte Nexus: fora do login — botão fixo no canto inferior esquerdo */}
+        <BotaoSuporte />
+        <ModalSenhaSuporte />
       </div>
     );
 
@@ -445,53 +584,17 @@ export default function App() {
 
   // ─── SETUP WIZARD (primeiro acesso — perfil não configurado) ──────────────
   // No cardápio online o wizard não roda (a configuração estrutural vive no PDV).
+  // A escolha de tipos de estabelecimento acontece ANTES do login (pré-login).
   if (perfilLoading) return null;
-
-  // ─── 1º ACESSO NO DESKTOP: escolher tipo(s) de estabelecimento ────────────
-  // Antes do SetupWizard. PDVs já configurados (clientes antigos) pulam a tela
-  // e são tratados como lanchonete. undefined = ainda carregando.
-  if (IS_DESKTOP && perfil && !perfil.configurado && tiposEstab !== undefined) {
-    if (tiposEstab === null) {
-      return <TipoEstabelecimento onConfirmado={(tipos) => setTiposEstab(tipos)} />;
-    }
-    // Só mercado (sem lanchonete): este stack não tem o que configurar —
-    // aponta pro PDV Mercado (stack próprio) em vez do SetupWizard.
-    if (tiposEstab.length > 0 && !tiposEstab.includes("lanchonete")) {
-      return (
-        <div style={{
-          fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh",
-          background: "radial-gradient(1200px 700px at 15% 10%, #0f2b1e 0%, #0a1712 45%, #050a08 100%)",
-          display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#f5f5f4", textAlign: "center",
-        }}>
-          <div style={{ width: 480, maxWidth: "94vw", padding: "42px 40px", borderRadius: 22, background: "rgba(20,32,26,0.75)", border: "1px solid rgba(255,255,255,0.06)" }}>
-            <div style={{ fontSize: 52, marginBottom: 14 }}>🛒</div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#fff", marginBottom: 10 }}>PDV Mercado</div>
-            <div style={{ fontSize: 13, color: "#a8a29e", lineHeight: 1.6, marginBottom: 24 }}>
-              Seu estabelecimento usa o <b style={{ color: "#4ade80" }}>PDV Mercado</b> — um sistema separado,
-              com caixa por código de barras, estoque por setor e inventário.
-            </div>
-            <button onClick={() => { window.location.href = "http://localhost:3202"; }}
-              style={{ width: "100%", padding: "14px 20px", border: "none", borderRadius: 12, cursor: "pointer", fontSize: 15, fontWeight: 700, fontFamily: "inherit", color: "#fff", background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)" }}>
-              🛒 Abrir o PDV Mercado
-            </button>
-            <button onClick={() => setTiposEstab(null)}
-              style={{ width: "100%", marginTop: 12, padding: "11px 16px", borderRadius: 10, background: "transparent", border: "1.5px solid rgba(255,255,255,0.09)", color: "#d6d3d1", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-              ← Trocar os tipos de estabelecimento
-            </button>
-          </div>
-        </div>
-      );
-    }
-  }
 
   if (!IS_ONLINE && perfil && !perfil.configurado) {
     return <SetupWizard onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
   }
 
-  // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config, Suporte = sempre.
+  // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config = sempre.
   // Cozinha, Estoque, Fiscal = opcionais (controlados pelo perfil).
   const modulosAtivos = perfil?.modulos || [];
-  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos", "suporte"].includes(m) || modulosAtivos.includes(m);
+  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos"].includes(m) || modulosAtivos.includes(m);
 
   // Setores permitidos para este admin. null/[] = todos.
   const setoresPermitidos = Array.isArray(usuario?.setores) && usuario.setores.length > 0
@@ -501,18 +604,6 @@ export default function App() {
 
   const navegar = (destino) => {
     if (destino === "cardapio") { window.location.href = "/"; return; }
-    if (destino === "suporte") {
-      if (!podeAcessar("suporte")) return;
-      if (!suporteLiberado) {
-        // window.prompt() no Electron retorna null sem mostrar UI — modal customizado
-        setSenhaSuporte("");
-        setErroSuporte("");
-        setModalSuporte(true);
-        return;
-      }
-      setSetor("suporte");
-      return;
-    }
     if (["cozinha", "caixa", "produtos", "estoque", "financeiro", "config", "pedidos"].includes(destino)) {
       if (!podeAcessar(destino)) return;
       setSetor(destino);
@@ -539,7 +630,6 @@ export default function App() {
     if (setor === "estoque")    return <EstoqueApp onNavegar={navegar} />;
     if (setor === "financeiro") return <FinanceiroApp onNavegar={navegar} />;
     if (setor === "config")     return <ConfigApp onNavegar={navegar} />;
-    if (setor === "suporte")    return <SuporteApp onNavegar={navegar} perfil={perfil} onPerfilChange={setPerfil} />;
     return null;
   })();
 
@@ -551,18 +641,6 @@ export default function App() {
       ? () => { if (confirm("Resetar licença? O programa pedirá uma nova ativação.")) window.licenca.reset(); }
       : null;
 
-    const confirmarSenhaSuporte = () => {
-      if (senhaSuporte === SENHA_SUPORTE) {
-        setSuporteLiberado(true);
-        setModalSuporte(false);
-        setSenhaSuporte("");
-        setErroSuporte("");
-        setSetor("suporte");
-      } else {
-        setErroSuporte("Senha incorreta");
-      }
-    };
-
     return (
       <div style={{ minHeight: "100vh", paddingLeft: SIDEBAR_LAYOUT_WIDTH, background: "#f5f5f4" }}>
         <SidebarNav
@@ -570,6 +648,7 @@ export default function App() {
           onNavegar={navegar}
           onLogout={handleLogout}
           onResetLicenca={handleResetLicenca}
+          onTrocarEstab={(tiposEstab || []).length > 1 ? trocarEstab : null}
           usuario={usuario}
           perfil={perfil}
           loginNecessario={loginNecessario}
@@ -578,41 +657,6 @@ export default function App() {
           syncStatus={syncStatus}
         />
         <div style={{ minHeight: "100vh" }}>{conteudoSetor}</div>
-
-        {/* Modal de senha do Suporte */}
-        {modalSuporte && (
-          <div onClick={() => setModalSuporte(false)}
-            style={{ position: "fixed", inset: 0, background: "rgba(15,26,23,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 999, fontFamily: "'DM Sans', 'Segoe UI', sans-serif" }}>
-            <div onClick={e => e.stopPropagation()}
-              style={{ background: "#fff", borderRadius: 16, padding: "28px 30px", width: 400, maxWidth: "92vw", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🛟</div>
-                <div>
-                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 800 }}>Área do Suporte Nexus</div>
-                  <div style={{ fontSize: 12, color: "#78716c" }}>Digite a senha de suporte para continuar</div>
-                </div>
-              </div>
-              <input type="password" autoFocus value={senhaSuporte}
-                onChange={e => { setSenhaSuporte(e.target.value); setErroSuporte(""); }}
-                onKeyDown={e => { if (e.key === "Enter") confirmarSenhaSuporte(); if (e.key === "Escape") setModalSuporte(false); }}
-                placeholder="Senha de suporte"
-                style={{ width: "100%", padding: "12px 14px", border: `1.5px solid ${erroSuporte ? "#fecaca" : "#e7e5e4"}`, borderRadius: 10, fontSize: 14, outline: "none", fontFamily: "inherit", marginTop: 18 }} />
-              {erroSuporte && (
-                <div style={{ marginTop: 8, fontSize: 12, color: "#dc2626", fontWeight: 600 }}>❌ {erroSuporte}</div>
-              )}
-              <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
-                <button onClick={() => setModalSuporte(false)}
-                  style={{ padding: "10px 18px", border: "1.5px solid #e7e5e4", borderRadius: 9, background: "#fff", color: "#78716c", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                  Cancelar
-                </button>
-                <button onClick={confirmarSenhaSuporte}
-                  style={{ padding: "10px 22px", border: "none", borderRadius: 9, background: "#15803d", color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                  Entrar
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     );
   }

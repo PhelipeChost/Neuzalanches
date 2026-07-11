@@ -64,6 +64,12 @@ async function main() {
       { stdio: "inherit", shell: true, env: { ...process.env, VITE_DESKTOP: "1", MSYS_NO_PATHCONV: "1" } });
     if (fe.status !== 0) { console.error("\n✗ Build do frontend falhou."); process.exit(1); }
 
+    // Frontend do PDV Mercado (2º stack) — entra no instalador como frontend-dist
+    console.log("\n→ Buildando o frontend do Mercado (frontend/ → frontend/dist)…\n");
+    const fm = spawnSync("npx", ["vite", "build"],
+      { cwd: join(process.cwd(), "frontend"), stdio: "inherit", shell: true, env: { ...process.env, MSYS_NO_PATHCONV: "1" } });
+    if (fm.status !== 0) { console.error("\n✗ Build do frontend Mercado falhou."); process.exit(1); }
+
     console.log(`\n→ Buildando instalador em ${OUT}… isso leva alguns minutos.\n`);
     const r = spawnSync("npx", ["electron-builder", `-c.directories.output=${OUT}`],
       { cwd: DESKTOP, stdio: "inherit", shell: true });

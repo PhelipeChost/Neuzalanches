@@ -1,6 +1,6 @@
 import "dotenv/config";
 import fs from "fs";
-import { join } from "path";
+import { join, dirname, basename } from "path";
 import { randomBytes } from "crypto";
 import express from "express";
 import cors from "cors";
@@ -10,7 +10,7 @@ import { reportarReceitaNexo } from "./services/nexo.js";
 import { notificarPedidoConfirmado, notificarStatusPedido, enviarMensagem, evolutionCfg } from "./services/whatsapp.js";
 import {
   criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
-  isEmailAdmin, buscarAdminEmail, listarAdminEmails, adicionarAdminEmail, atualizarAdminEmail, removerAdminEmail, isAdminPrincipal,
+  isEmailAdmin, buscarAdminEmail, listarAdminEmails, adicionarAdminEmail, atualizarAdminEmail, removerAdminEmail, isAdminPrincipal, ADMIN_PRINCIPAL,
   listarLancamentos, buscarLancamento, criarLancamento, atualizarLancamento, excluirLancamento,
   listarLixeira, restaurarItemLixeira, excluirDefinitivoLixeira,
   obterConfig, salvarConfig,
@@ -46,6 +46,7 @@ import {
   listarCardapios, criarCardapio, atualizarCardapio, excluirCardapio,
   definirCategoriasCardapio, definirAdicionaisCardapio, garantirCardapioPrincipal,
   listarCardapiosPorCategoria, listarCardapiosPorAdicional,
+  caminhoBanco, backupBanco,
 } from "./database.js";
 
 const app = express();
@@ -336,11 +337,18 @@ app.get("/api/config/login-status", (req, res) => {
 // O PDV atende mais de um ramo: no 1º acesso o cliente escolhe os tipos que
 // usa (pode ser mais de um — mundos separados, mesma licença). A lanchonete
 // roda neste stack; o mercado roda no stack próprio (backend/ + frontend/).
-app.get("/api/config/tipos-estabelecimento", authMiddleware, (req, res) => {
+// GET é PÚBLICO: o seletor de estabelecimento aparece ANTES do login.
+app.get("/api/config/tipos-estabelecimento", (req, res) => {
   const raw = obterConfig("tipos_estabelecimento");
   let tipos = [];
   try { tipos = JSON.parse(raw || "[]"); } catch { tipos = []; }
-  res.json({ tipos, definido: raw != null && raw !== "" });
+  res.json({
+    tipos,
+    definido: raw != null && raw !== "",
+    // URL do PDV Mercado (stack próprio). No Electron o main.js seta a env;
+    // no dev usa o servidor de teste.
+    mercado_url: process.env.MERCADO_URL || "http://localhost:41731",
+  });
 });
 
 app.put("/api/config/tipos-estabelecimento", authMiddleware, adminOnly, (req, res) => {
@@ -349,6 +357,79 @@ app.put("/api/config/tipos-estabelecimento", authMiddleware, adminOnly, (req, re
   if (tipos.length === 0) return res.status(400).json({ error: "Selecione ao menos um tipo de estabelecimento" });
   salvarConfig("tipos_estabelecimento", JSON.stringify(tipos));
   res.json({ tipos });
+});
+
+// ─── SUPORTE NEXUS (fora do login do estabelecimento) ────────────────────────
+// O Operador (Nexus) é maior que as contas do estabelecimento: entra pela
+// senha de suporte SEM login de admin e ganha um token com a identidade da
+// conta principal — isAdminPrincipal() passa (modo, tipos, licença etc).
+const SENHA_SUPORTE_SRV = process.env.SUPORTE_SENHA || "31076hibridos";
+app.post("/api/suporte/login", (req, res) => {
+  const senha = String(req.body?.senha || "");
+  if (senha !== SENHA_SUPORTE_SRV) return res.status(401).json({ error: "Senha de suporte incorreta" });
+  const usuario = { id: "nexus-suporte", nome: "Nexus", email: ADMIN_PRINCIPAL, tipo: "admin", setores: null };
+  const token = jwt.sign(usuario, JWT_SECRET, { expiresIn: "12h" });
+  res.json({ token, usuario });
+});
+
+// ─── BACKUP DO BANCO ─────────────────────────────────────────────────────────
+// Snapshot consistente do SQLite (db.backup, seguro com WAL) na pasta
+// backups/ ao lado do banco. Automático 1x/dia + manual pelo Suporte.
+// Mantém os 7 mais recentes. Roda tanto no PDV (userData) quanto no VPS.
+const dirBackups = () => join(dirname(caminhoBanco()), "backups");
+
+async function fazerBackup() {
+  const dir = dirBackups();
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  const nomeBase = basename(caminhoBanco()).replace(/\.db$/, "");
+  const destino = join(dir, `${nomeBase}-${stamp}.db`);
+  await backupBanco(destino);
+  // rotação: mantém os 7 mais recentes (nome tem timestamp → sort resolve)
+  const arquivos = fs.readdirSync(dir).filter(f => f.endsWith(".db")).sort();
+  for (const f of arquivos.slice(0, Math.max(0, arquivos.length - 7))) {
+    try { fs.unlinkSync(join(dir, f)); } catch { /* em uso: fica pra próxima */ }
+  }
+  return destino;
+}
+
+function listarBackups() {
+  try {
+    return fs.readdirSync(dirBackups())
+      .filter(f => f.endsWith(".db"))
+      .map(f => {
+        const st = fs.statSync(join(dirBackups(), f));
+        return { arquivo: f, tamanho: st.size, criado_em: st.mtime.toISOString() };
+      })
+      .sort((a, b) => b.criado_em.localeCompare(a.criado_em));
+  } catch { return []; }
+}
+
+function backupAutomatico() {
+  try {
+    const ultimo = listarBackups()[0];
+    const idade = ultimo ? Date.now() - new Date(ultimo.criado_em).getTime() : Infinity;
+    if (idade > 24 * 60 * 60 * 1000) {
+      fazerBackup()
+        .then(d => console.log("[backup] automático:", d))
+        .catch(e => console.error("[backup] falhou:", e.message));
+    }
+  } catch (e) { console.error("[backup]", e.message); }
+}
+setTimeout(backupAutomatico, 20_000);              // no boot (após o server assentar)
+setInterval(backupAutomatico, 6 * 60 * 60 * 1000); // re-checa a cada 6h (PDV fica aberto o dia todo)
+
+app.get("/api/suporte/backups", authMiddleware, adminOnly, (req, res) => {
+  res.json({ pasta: dirBackups(), backups: listarBackups() });
+});
+
+app.post("/api/suporte/backup", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const destino = await fazerBackup();
+    res.json({ ok: true, arquivo: basename(destino), backups: listarBackups() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Liga/desliga a exigência de login no PDV (aba "Login" das Configurações).

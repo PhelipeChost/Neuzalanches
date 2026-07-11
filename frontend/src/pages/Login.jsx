@@ -50,6 +50,17 @@ export default function Login() {
             {carregando ? "Entrando..." : "Entrar"}
           </button>
         </form>
+
+        {sessionStorage.getItem("nx_pdv_url") && (
+          <button onClick={() => { window.location.href = sessionStorage.getItem("nx_pdv_url"); }}
+            style={{
+              width: "100%", marginTop: 14, padding: "12px 16px", borderRadius: 12, cursor: "pointer",
+              background: "transparent", border: "1.5px solid rgba(255,255,255,0.1)", color: "#d6d3d1",
+              fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+            }}>
+            🏬 Trocar de estabelecimento
+          </button>
+        )}
       </div>
     </div>
   );

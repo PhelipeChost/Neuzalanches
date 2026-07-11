@@ -11,8 +11,11 @@ import { criarSchema, seedInicial } from "./schema.js";
 import { criarRotas } from "./routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT) || 3002;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "data", "mercado.db");
+// MERCADO_* tem prioridade: quando este backend roda DENTRO do Electron do
+// Nexus PDV (mesmo processo do server lanchonete), process.env.PORT já foi
+// usado pelo outro servidor — as envs prefixadas evitam o conflito.
+const PORT = Number(process.env.MERCADO_PORT || process.env.PORT) || 3002;
+const DB_PATH = process.env.MERCADO_DB_PATH || process.env.DB_PATH || path.join(__dirname, "..", "data", "mercado.db");
 
 const db = await abrirBanco(DB_PATH);
 criarSchema(db);
@@ -27,8 +30,8 @@ app.use(cors(origins.length ? { origin: origins, credentials: true } : { origin:
 app.get("/api/health", (req, res) => res.json({ ok: true, app: "nexus-mercado", uptime: process.uptime() }));
 app.use("/api", criarRotas(db));
 
-// Serve o frontend buildado (produção): frontend/dist ou FRONTEND_DIST via env
-const distPath = process.env.FRONTEND_DIST || path.join(__dirname, "..", "..", "frontend", "dist");
+// Serve o frontend buildado (produção): frontend/dist ou MERCADO_DIST/FRONTEND_DIST via env
+const distPath = process.env.MERCADO_DIST || process.env.FRONTEND_DIST || path.join(__dirname, "..", "..", "frontend", "dist");
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
   app.get(/^\/(?!api).*/, (req, res) => res.sendFile(path.join(distPath, "index.html")));

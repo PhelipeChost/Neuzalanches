@@ -90,6 +90,13 @@ export const api = {
     salvar: (tipos) => request("/config/tipos-estabelecimento", { method: "PUT", body: JSON.stringify({ tipos }) }),
   },
 
+  // Suporte Nexus — fora do login do estabelecimento (senha do Operador)
+  suporte: {
+    login: (senha) => request("/suporte/login", { method: "POST", body: JSON.stringify({ senha }) }),
+    backups: () => request("/suporte/backups"),
+    backup: () => request("/suporte/backup", { method: "POST" }),
+  },
+
   // Sessão de caixa (abrir/fechar/sangria/suprimento)
   caixa: {
     sessao: () => request("/caixa/sessao"),

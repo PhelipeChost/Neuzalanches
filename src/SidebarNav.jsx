@@ -7,6 +7,8 @@ const SIDEBAR_WIDTH = 240;
 // a sidebar mostra a logo Nexus como avatar em vez das iniciais.
 const NEXUS_ADMIN_EMAIL = "reinonexusideal@gmail.com";
 
+// O Suporte Nexus saiu daqui: agora vive FORA do login (botão 🛟 na tela
+// inicial do PDV) — é área do Operador Nexus, não do estabelecimento.
 const SECOES = [
   { grupo: "operação",  key: "caixa",       icon: "🧾", label: "Frente de Caixa" },
   { grupo: "operação",  key: "cozinha",     icon: "🔥", label: "Cozinha" },
@@ -15,7 +17,6 @@ const SECOES = [
   { grupo: "cadastros", key: "estoque",     icon: "📦", label: "Estoque e Insumos" },
   { grupo: "gestão",    key: "financeiro",  icon: "💰", label: "Financeiro" },
   { grupo: "gestão",    key: "config",      icon: "⚙️", label: "Configurações" },
-  { grupo: "gestão",    key: "suporte",     icon: "🛟", label: "Suporte" },
 ];
 
 const GRUPOS = ["operação", "cadastros", "gestão"];
@@ -27,6 +28,7 @@ export default function SidebarNav({
   onNavegar,
   onLogout,
   onResetLicenca,
+  onTrocarEstab, // multi-estabelecimento: volta pro seletor pré-login
   usuario,
   perfil,
   loginNecessario,
@@ -127,7 +129,7 @@ export default function SidebarNav({
                 const active = setorAtivo === s.key;
                 const badge = (s.key === "pedidos" || s.key === "cozinha") && pendentesCount > 0
                   ? <span className="nx-sb-badge">{pendentesCount}</span>
-                  : (s.key === "suporte" ? <span className="nx-sb-badge novo">NOVO</span> : null);
+                  : null;
                 return (
                   <button key={s.key}
                     className={`nx-sb-item ${active ? "active" : ""}`}
@@ -166,6 +168,9 @@ export default function SidebarNav({
               <button className="nx-sb-btn" onClick={onLogout}>
                 {usuario?.email ? "Sair da conta" : "Entrar com conta (admin)"}
               </button>
+            )}
+            {onTrocarEstab && (
+              <button className="nx-sb-btn" onClick={onTrocarEstab}>🏬 Trocar de estabelecimento</button>
             )}
             {onResetLicenca && (
               <button className="nx-sb-btn danger" onClick={onResetLicenca}>Resetar licença</button>

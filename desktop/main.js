@@ -18,7 +18,8 @@ import { configurarAutoUpdate } from "./atualizacao.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");          // pasta principal (server/, etc.)
-const PORT = 41730;                                // porta local fixa do app
+const PORT = 41730;                                // porta local fixa do app (lanchonete)
+const MERCADO_PORT = 41731;                        // porta local do PDV Mercado (2º stack)
 const APP_NAME = "Nexus PDV";
 const ICONE = nativeImage.createFromPath(join(__dirname, "build", "icon.ico"));
 
@@ -48,10 +49,34 @@ async function iniciarServidor() {
   process.env.FLUXO_DIST_PATH = join(__dirname, "app-dist");        // frontend base "/"
   process.env.NODE_ENV = "production";
   process.env.NEXUS_DESKTOP = "1";  // habilita login opcional (acesso direto até ativar)
+  process.env.MERCADO_URL = `http://127.0.0.1:${MERCADO_PORT}`; // exposto no GET tipos-estabelecimento
   if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "nexus-desktop-" + fingerprintMaquina();
 
   await import(pathToFileURL(join(REPO_ROOT, "server", "index.js")).href);
   await esperarPorta(PORT, 15000);
+}
+
+// ─── PDV Mercado (2º stack: backend/ + frontend/) ────────────────────────────
+// Sobe no MESMO processo, em outra porta. sql.js é WASM puro (zero dependência
+// nativa), então não briga com o ABI do Electron. Falha aqui NUNCA derruba o
+// PDV lanchonete — o mercado simplesmente fica indisponível.
+async function iniciarMercado() {
+  const dirDados = app.getPath("userData");
+  const backendIndex = join(REPO_ROOT, "backend", "src", "index.js");
+  if (!existsSync(backendIndex)) {
+    console.log("[mercado] backend/ não encontrado neste build — pulado");
+    return;
+  }
+  process.env.MERCADO_PORT = String(MERCADO_PORT);
+  process.env.MERCADO_DB_PATH = join(dirDados, "mercado.db");
+  // Empacotado: frontend-dist vai em resources/ via extraResources.
+  // Dev (código-fonte): usa frontend/dist buildado.
+  process.env.MERCADO_DIST = app.isPackaged
+    ? join(REPO_ROOT, "frontend-dist")
+    : join(REPO_ROOT, "frontend", "dist");
+
+  await import(pathToFileURL(backendIndex).href);
+  console.log(`[mercado] PDV Mercado no ar em http://127.0.0.1:${MERCADO_PORT}`);
 }
 
 // ─── Sincronização com a nuvem (opcional, config em userData/sync.json) ──────
@@ -227,6 +252,29 @@ ipcMain.handle("licenca:reset", async () => {
 // Splash pergunta a versão
 ipcMain.handle("splash:versao", () => app.getVersion());
 
+// Status da licença — usado pelo Suporte (plano de assinatura / validade).
+// Só LÊ e verifica; não altera nada.
+ipcMain.handle("licenca:status", () => {
+  try {
+    const dir = app.getPath("userData");
+    const token = lerLicenca(dir);
+    const r = verificarLicenca(token, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprintMaquina() });
+    const c = r.claims || {};
+    return {
+      estado: r.estado,                       // ativo | tolerancia | bloqueado
+      motivo: r.motivo,
+      dias_restantes: r.diasRestantes,
+      expira_em: c.exp ? new Date(c.exp * 1000).toISOString() : null,
+      plano: c.plano || c.plan || null,
+      cliente: c.cliente || c.nome || c.name || null,
+      grace_days: Number(c.grace_days) || 0,
+      versao: app.getVersion(),
+    };
+  } catch (e) {
+    return { estado: "erro", motivo: e.message };
+  }
+});
+
 // Workaround do bug de foco do Chromium/Electron no Windows: depois de um
 // alert()/confirm() nativo, os inputs param de aceitar foco até a janela
 // perder e recuperar o foco. O frontend chama isso após cada diálogo nativo.
@@ -296,6 +344,8 @@ async function main() {
     console.log("[boot] licença OK, subindo servidor local…");
     await iniciarServidor();
     console.log("[boot] servidor no ar, abrindo janela.");
+    // PDV Mercado em paralelo — nunca bloqueia nem derruba o boot do PDV
+    iniciarMercado().catch(e => console.error("[mercado] falha ao iniciar:", e && e.message));
     abrirApp(resultado);   // esta chama fecharSplash() no ready-to-show
     iniciarSync(dirDados).catch(e => console.error("[sync] falha ao iniciar:", e.message));
     iniciarHeartbeat(dirDados);           // renova licença + config de sync em segundo plano

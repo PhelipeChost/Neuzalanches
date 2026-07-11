@@ -25,6 +25,62 @@ const OPCOES = [
   },
 ];
 
+// Info de exibição de cada tipo (reusada no seletor pré-login)
+export const INFO_TIPOS = {
+  lanchonete: { icone: "🍔", titulo: "Lanchonete / Pizzaria / Hamburgueria", desc: "Mesas, comandas, cozinha e cardápio online" },
+  mercado:    { icone: "🛒", titulo: "Mercado", desc: "Caixa com código de barras, estoque e inventário" },
+};
+
+// ─── Pré-login: qual estabelecimento usar NESTA sessão ───────────────────────
+// Aparece quando o PDV tem mais de um tipo habilitado (mundos separados).
+export function EscolhaEstabelecimento({ tipos, onEscolher }) {
+  return (
+    <div style={{
+      fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh",
+      background: "radial-gradient(1200px 700px at 15% 10%, #0f2b1e 0%, #0a1712 45%, #050a08 100%)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 24, color: "#f5f5f4",
+    }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@600;700;800&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        .nx-estab-card { transition: transform 0.15s, border-color 0.15s; }
+        .nx-estab-card:hover { transform: translateY(-3px); border-color: #16a34a !important; }
+      `}</style>
+
+      <div style={{ width: 640, maxWidth: "94vw", textAlign: "center" }}>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 18 }}><NexusLogo size={68} /></div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 24, fontWeight: 800, color: "#fff", marginBottom: 8 }}>
+          Qual estabelecimento você vai usar?
+        </div>
+        <div style={{ fontSize: 13, color: "#a8a29e", marginBottom: 30 }}>
+          Cada estabelecimento é um mundo separado — vendas, estoque e financeiro independentes.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(tipos.length, 2)}, 1fr)`, gap: 16 }}>
+          {tipos.map(t => {
+            const info = INFO_TIPOS[t] || { icone: "🏬", titulo: t, desc: "" };
+            return (
+              <button key={t} className="nx-estab-card" onClick={() => onEscolher(t)}
+                style={{
+                  padding: "34px 22px", borderRadius: 18, cursor: "pointer", textAlign: "center",
+                  fontFamily: "inherit", color: "#f5f5f4",
+                  border: "2px solid rgba(255,255,255,0.10)", background: "rgba(20,32,26,0.75)",
+                }}>
+                <div style={{ fontSize: 44, marginBottom: 12 }}>{info.icone}</div>
+                <div style={{ fontSize: 16.5, fontWeight: 800, fontFamily: "'Inter', sans-serif" }}>{info.titulo}</div>
+                <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 6, lineHeight: 1.5 }}>{info.desc}</div>
+                <div style={{ marginTop: 16, display: "inline-block", padding: "8px 22px", borderRadius: 999, fontSize: 13, fontWeight: 700, background: "linear-gradient(135deg, #16a34a 0%, #15803d 100%)", color: "#fff" }}>
+                  Entrar →
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TipoEstabelecimento({ onConfirmado }) {
   const [selecionados, setSelecionados] = useState([]);
   const [salvando, setSalvando] = useState(false);

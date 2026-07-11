@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("licenca", {
   info: () => ipcRenderer.invoke("licenca:info"),
+  status: () => ipcRenderer.invoke("licenca:status"),
   abrirArquivo: () => ipcRenderer.invoke("licenca:abrirArquivo"),
   validar: (token) => ipcRenderer.invoke("licenca:validar", token),
   ativarOnline: (chave) => ipcRenderer.invoke("licenca:ativarOnline", chave),

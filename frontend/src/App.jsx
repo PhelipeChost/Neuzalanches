@@ -109,6 +109,12 @@ export default function App() {
             style={{ width: "100%", padding: "9px 12px", borderRadius: 9, background: "transparent", border: "1px solid #1c2622", color: "#e7e5e4", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
             Sair da conta
           </button>
+          {sessionStorage.getItem("nx_pdv_url") && (
+            <button onClick={() => { window.location.href = sessionStorage.getItem("nx_pdv_url"); }}
+              style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 9, background: "transparent", border: "1px solid #1c2622", color: "#e7e5e4", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+              🏬 Trocar de estabelecimento
+            </button>
+          )}
         </div>
       </aside>
 
