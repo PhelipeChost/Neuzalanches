@@ -74,4 +74,19 @@ export function heartbeatOnline({ chave, fingerprint, versao_app }) {
   return postJson("/api/licenca/heartbeat", { chave, fingerprint, versao_app });
 }
 
+export function gerarCobrancaPix(chave) {
+  return postJson("/api/assinatura/gerar-cobranca", { chave }, 20000);
+}
+
+export async function statusPagamento(chave) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const r = await fetch(NEXUS_URL + `/api/assinatura/status/${encodeURIComponent(chave)}`, {
+      signal: ctrl.signal,
+    });
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+
 export { NEXUS_URL };

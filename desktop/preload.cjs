@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("licenca", {
   validar: (token) => ipcRenderer.invoke("licenca:validar", token),
   ativarOnline: (chave) => ipcRenderer.invoke("licenca:ativarOnline", chave),
   reset: () => ipcRenderer.invoke("licenca:reset"),
+  gerarCobranca: () => ipcRenderer.invoke("licenca:gerarCobranca"),
+  statusPagamento: () => ipcRenderer.invoke("licenca:statusPagamento"),
+  reiniciar: () => ipcRenderer.invoke("licenca:reiniciar"),
 });
 
 contextBridge.exposeInMainWorld("splash", {

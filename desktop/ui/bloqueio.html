@@ -23,6 +23,8 @@
   button { border: none; border-radius: 10px; padding: 12px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
   .primary { background: #7c5cfc; color: #fff; flex: 1; }
   .primary:hover { background: #6a49f2; }
+  .pix-btn { background: #00b894; color: #fff; flex: 1; font-size: 14px; }
+  .pix-btn:hover { background: #00a381; }
   .ghost { background: #161922; color: #cfd4dd; border: 1.5px solid #2a2f3a; }
   .ghost:hover { border-color: #3a4150; }
   .msg { margin-top: 14px; font-size: 13px; min-height: 18px; }
@@ -34,6 +36,25 @@
   .fp code { flex: 1; background: #0d0f14; border: 1px solid #222732; border-radius: 8px; padding: 8px 10px; font-size: 12.5px; color: #b9c0cc; word-break: break-all; }
   .fp .hint { font-size: 11.5px; color: #727a86; margin-top: 9px; line-height: 1.5; }
   .foot { margin-top: 18px; font-size: 11.5px; color: #5b626e; text-align: center; }
+
+  /* Pix payment section */
+  .pix-section { display: none; margin-bottom: 24px; }
+  .pix-section.visible { display: block; }
+  .pix-box { background: #12141b; border: 1.5px solid #1e4d3d; border-radius: 14px; padding: 20px; text-align: center; }
+  .pix-box h3 { font-size: 16px; font-weight: 700; margin-bottom: 4px; color: #4ade80; }
+  .pix-box .valor { font-size: 28px; font-weight: 800; color: #fff; margin: 10px 0 6px; }
+  .pix-box .valor small { font-size: 14px; color: #9aa3b0; font-weight: 400; }
+  .pix-qr { margin: 16px auto; max-width: 220px; }
+  .pix-qr img { width: 100%; border-radius: 10px; background: #fff; padding: 8px; }
+  .pix-copiacola { display: flex; gap: 8px; margin-top: 12px; }
+  .pix-copiacola input { flex: 1; background: #0d0f14; border: 1px solid #222732; border-radius: 8px; padding: 9px 12px; font-size: 11px; color: #b9c0cc; font-family: monospace; outline: none; }
+  .pix-copiacola button { padding: 9px 14px; font-size: 12px; }
+  .pix-status { margin-top: 14px; font-size: 13px; color: #9aa3b0; }
+  .pix-status.aguardando { color: #f59e0b; }
+  .pix-status.pago { color: #4ade80; font-weight: 700; }
+  .pix-expire { font-size: 11.5px; color: #5b626e; margin-top: 8px; }
+  .pix-loading { display: inline-block; width: 16px; height: 16px; border: 2px solid #4ade80; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -42,6 +63,29 @@
   <div class="sub">Ativação de licença</div>
 
   <div class="alerta" id="alerta">Verificando licença…</div>
+
+  <!-- Pix payment (visible only when license exists but is blocked/expired) -->
+  <div class="pix-section" id="pixSection">
+    <div class="pix-box" id="pixBox">
+      <h3>Renovar assinatura via Pix</h3>
+      <p style="font-size:12.5px;color:#9aa3b0;margin-bottom:14px;">Pague e o sistema desbloqueia automaticamente.</p>
+      <button class="pix-btn" id="btnPagar" style="width:100%;">Gerar QR Code Pix</button>
+      <div id="pixResult" style="display:none;">
+        <div class="valor" id="pixValor"></div>
+        <div class="pix-qr" id="pixQr"></div>
+        <div class="pix-copiacola">
+          <input readonly id="pixCopia" />
+          <button class="ghost" id="btnCopiarPix">Copiar</button>
+        </div>
+        <div class="pix-status aguardando" id="pixStatus">
+          <span class="pix-loading"></span> Aguardando pagamento…
+        </div>
+        <div class="pix-expire" id="pixExpire"></div>
+      </div>
+      <div class="msg" id="msgPix"></div>
+    </div>
+    <div class="sep">ou ative com uma chave diferente</div>
+  </div>
 
   <label>Chave de licença</label>
   <input class="chave" id="chave" placeholder="NXS-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false" />
@@ -55,7 +99,7 @@
   <label>Cole a sua licença (.lic)</label>
   <textarea id="token" placeholder="eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."></textarea>
   <div class="row">
-    <button class="ghost" id="btnArquivo">📂 Abrir arquivo .lic</button>
+    <button class="ghost" id="btnArquivo">Abrir arquivo .lic</button>
     <button class="ghost" id="btnAtivar">Ativar por arquivo</button>
   </div>
   <div class="msg" id="msg2"></div>
@@ -78,14 +122,75 @@
 
 <script>
   const $ = (id) => document.getElementById(id);
+  let pollInterval = null;
 
   (async () => {
     const info = await window.licenca.info();
     $("alerta").textContent = info.motivo;
     $("fp").textContent = info.fingerprint;
     $("versao").textContent = "Nexus PDV v" + (info.versao || "1.0.0");
+
+    // Mostra opção de pagar via Pix quando já existe chave salva (licença expirada, não primeiro uso)
+    if (info.temChave) {
+      $("pixSection").classList.add("visible");
+    }
   })();
 
+  // ─── Pix Payment ──────────────────────────────────────────────────────────
+  $("btnPagar").onclick = async () => {
+    $("btnPagar").disabled = true;
+    setMsgPix("Gerando cobrança…", "");
+    const r = await window.licenca.gerarCobranca();
+    if (!r.ok) {
+      setMsgPix(r.motivo || "Erro ao gerar cobrança.", "err");
+      $("btnPagar").disabled = false;
+      return;
+    }
+    $("btnPagar").style.display = "none";
+    $("pixResult").style.display = "block";
+    setMsgPix("", "");
+
+    $("pixValor").innerHTML = "R$ " + Number(r.amount).toFixed(2).replace(".", ",") + " <small>via Pix</small>";
+
+    if (r.qrCodeBase64) {
+      $("pixQr").innerHTML = '<img src="' + r.qrCodeBase64 + '" alt="QR Code Pix" />';
+    }
+    if (r.copyPaste) {
+      $("pixCopia").value = r.copyPaste;
+    }
+    if (r.expiresAt) {
+      const exp = new Date(r.expiresAt);
+      $("pixExpire").textContent = "Expira em " + exp.toLocaleTimeString("pt-BR");
+    }
+
+    // Poll for payment confirmation
+    startPolling();
+  };
+
+  $("btnCopiarPix").onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($("pixCopia").value);
+      $("btnCopiarPix").textContent = "Copiado!";
+      setTimeout(() => $("btnCopiarPix").textContent = "Copiar", 2000);
+    } catch {}
+  };
+
+  function startPolling() {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(async () => {
+      try {
+        const s = await window.licenca.statusPagamento();
+        if (s.pago) {
+          clearInterval(pollInterval);
+          $("pixStatus").className = "pix-status pago";
+          $("pixStatus").innerHTML = "Pagamento confirmado! Reiniciando o sistema…";
+          setTimeout(() => window.licenca.reiniciar(), 2000);
+        }
+      } catch {}
+    }, 5000);
+  }
+
+  // ─── License Activation ────────────────────────────────────────────────────
   $("btnOnline").onclick = async () => {
     const chave = $("chave").value.trim();
     if (!chave) return setMsg("Informe a chave de licença.", "err");
@@ -128,6 +233,7 @@
 
   function setMsg(t, cls)  { const m = $("msg");  m.textContent = t; m.className = "msg " + (cls || ""); }
   function setMsg2(t, cls) { const m = $("msg2"); m.textContent = t; m.className = "msg " + (cls || ""); }
+  function setMsgPix(t, cls) { const m = $("msgPix"); m.textContent = t; m.className = "msg " + (cls || ""); }
 </script>
 </body>
 </html>

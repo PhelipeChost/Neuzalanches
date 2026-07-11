@@ -12,7 +12,7 @@ import { verificarLicenca } from "./licenca/verificar.js";
 import { CHAVE_PUBLICA_NEXUS } from "./licenca/chavePublica.js";
 import { fingerprintMaquina } from "./licenca/fingerprint.js";
 import { lerLicenca, salvarLicenca, removerLicenca } from "./licenca/armazenamento.js";
-import { ativarOnline, heartbeatOnline, lerChave, salvarChave, aplicarConfigSync } from "./licenca/online.js";
+import { ativarOnline, heartbeatOnline, lerChave, salvarChave, aplicarConfigSync, gerarCobrancaPix, statusPagamento } from "./licenca/online.js";
 import { criarMotorSync, criarAuthVps } from "./sync/motor.js";
 import { configurarAutoUpdate } from "./atualizacao.js";
 import { iniciarAgenteImpressao } from "./agente-impressao.js";
@@ -184,6 +184,7 @@ ipcMain.handle("licenca:info", () => ({
   fingerprint: fingerprintMaquina(),
   motivo: (BrowserWindow.getFocusedWindow() || janela)?._motivo || "É necessário ativar a licença.",
   versao: app.getVersion(),
+  temChave: !!lerChave(app.getPath("userData")),
 }));
 
 ipcMain.handle("licenca:abrirArquivo", async () => {
@@ -247,6 +248,40 @@ ipcMain.handle("licenca:reset", async () => {
   removerLicenca(dir);
   try { const { caminhoChave } = await import("./licenca/online.js"); rmSync(caminhoChave(dir), { force: true }); } catch {}
   setTimeout(() => { app.relaunch(); app.exit(0); }, 300);
+  return { ok: true };
+});
+
+// ─── Pagamento Pix (GoatPay) ────────────────────────────────────────────────
+// Gera QR Pix para o cliente pagar a mensalidade pela tela de bloqueio.
+ipcMain.handle("licenca:gerarCobranca", async () => {
+  const chave = lerChave(app.getPath("userData"));
+  if (!chave) return { ok: false, motivo: "Nenhuma chave de licença registrada." };
+  try {
+    const r = await gerarCobrancaPix(chave);
+    if (r.error) return { ok: false, motivo: r.error };
+    return { ok: true, ...r };
+  } catch (e) {
+    return { ok: false, motivo: "Sem conexão com o servidor. Verifique a internet." };
+  }
+});
+
+ipcMain.handle("licenca:statusPagamento", async () => {
+  const chave = lerChave(app.getPath("userData"));
+  if (!chave) return { pago: false };
+  try {
+    const r = await statusPagamento(chave);
+    const pago = r.ultimaCobranca?.status === "paid" || r.clientStatus === "ativo";
+    if (pago) {
+      await baterHeartbeat(app.getPath("userData"));
+    }
+    return { pago, ...r };
+  } catch {
+    return { pago: false };
+  }
+});
+
+ipcMain.handle("licenca:reiniciar", () => {
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 400);
   return { ok: true };
 });
 
