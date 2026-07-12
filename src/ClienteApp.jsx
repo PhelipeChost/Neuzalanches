@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import { ImagemProduto } from "./Produtos";
 import Logo from "./Logo";
+import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
+import { cardapioDoProduto, precoExibicao } from "./segmentos";
 
 // ─── CONFIGURAÇÕES DA MARCA ───────────────────────────────────────────────────
 const WHATSAPP_NUMERO = "5518991589923"; // número do bot conectado
@@ -884,7 +886,8 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
           <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>
-            {fmt(p.preco)}
+            {precoExibicao(p).aPartirDe && <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)" }}>a partir de </span>}
+            {fmt(precoExibicao(p).preco)}
           </span>
           <button onClick={e => { e.stopPropagation(); onAdd(p); }}
             style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif", flexShrink: 0, transition: "background 0.18s" }}
@@ -944,7 +947,8 @@ function ModalProduto({ produto, adicionais, permiteAdicionais, aberto, onAddSim
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>
-              {fmt(produto.preco)}
+              {precoExibicao(produto).aPartirDe && <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-muted)" }}>a partir de </span>}
+              {fmt(precoExibicao(produto).preco)}
             </div>
           </div>
 
@@ -1477,6 +1481,7 @@ export default function ClienteApp() {
   const [obs, setObs] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [modalAdicional, setModalAdicional] = useState(null);
+  const [modalMontagem, setModalMontagem] = useState(null); // { produto, cardapio }
   const [modalCheckout, setModalCheckout] = useState(false);
   const [cardapios, setCardapios] = useState([]);
   const [cardapioAtivo, setCardapioAtivo] = useState(null);
@@ -1558,11 +1563,29 @@ export default function ClienteApp() {
       showToast("🔒 Estabelecimento fechado no momento. Volte de Ter–Dom, das 19h às 01h.", "var(--hot)");
       return;
     }
+    // Segmento do cardápio pode exigir montagem (tamanho, meio a meio, complementos)
+    const card = cardapioDoProduto(produto, cardapios, categorias);
+    if (precisaMontagem(produto, card)) {
+      setModalMontagem({ produto, cardapio: card });
+      return;
+    }
     if (catPermiteAdicionais[produto.categoria] && adicionaisDoMenu.length > 0) {
       setModalAdicional(produto);
     } else {
       addCarrinhoSimples(produto, []);
     }
+  };
+
+  // Item montado (pizza meio a meio, açaí com complementos…) — sempre linha nova
+  const addItemMontado = (item) => {
+    setCarrinho(c => [...c, {
+      _uid: nextUid(), _adKey: `m:${item.produto_nome}`,
+      produto_id: item.produto_id, produto_nome: item.produto_nome,
+      preco_unitario: item.preco_unitario, quantidade: item.quantidade || 1,
+      adicionais: item.adicionais || [],
+    }]);
+    setModalMontagem(null);
+    showToast(`${item.produto_nome} adicionado!`, "var(--new-green)");
   };
 
   const addCarrinhoSimples = (produto, adicionaisSelecionados) => {
@@ -2290,8 +2313,16 @@ export default function ClienteApp() {
           adicionais={adicionaisDoMenu}
           permiteAdicionais={!!catPermiteAdicionais[modalProduto.categoria]}
           aberto={aberto}
-          onAddSimples={(p, ads) => { addCarrinhoSimples(p, ads); }}
-          onAddComAdicionais={(p) => { setModalAdicional(p); }}
+          onAddSimples={(p, ads) => {
+            const card = cardapioDoProduto(p, cardapios, categorias);
+            if (precisaMontagem(p, card)) setModalMontagem({ produto: p, cardapio: card });
+            else addCarrinhoSimples(p, ads);
+          }}
+          onAddComAdicionais={(p) => {
+            const card = cardapioDoProduto(p, cardapios, categorias);
+            if (precisaMontagem(p, card)) setModalMontagem({ produto: p, cardapio: card });
+            else setModalAdicional(p);
+          }}
           onClose={() => setModalProduto(null)}
         />
       )}
@@ -2304,6 +2335,18 @@ export default function ClienteApp() {
           maxAdicionais={catMaxAdicionais[modalAdicional.categoria] || 0}
           onConfirm={confirmarAdicionais}
           onClose={() => setModalAdicional(null)}
+        />
+      )}
+
+      {/* Modal Montagem por segmento (pizza meio a meio, açaí, tamanhos…) */}
+      {modalMontagem && (
+        <MontagemProduto
+          produto={modalMontagem.produto}
+          cardapio={modalMontagem.cardapio}
+          adicionais={adicionaisDoMenu}
+          irmaos={produtos.filter(p => p.categoria === modalMontagem.produto.categoria && p.disponivel !== 0)}
+          onConfirm={addItemMontado}
+          onClose={() => setModalMontagem(null)}
         />
       )}
 

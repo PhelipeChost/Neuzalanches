@@ -11,6 +11,7 @@ import FinanceiroApp from "./FinanceiroApp";
 import ConfigApp from "./ConfigApp";
 import PedidosOnlineApp from "./PedidosOnlineApp";
 import MesaApp from "./MesaApp";
+import AtenderMesas from "./AtenderMesas";
 import SuporteApp from "./SuporteApp";
 import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
 import Logo from "./Logo";
@@ -85,8 +86,9 @@ const IS_DESKTOP = import.meta.env.VITE_DESKTOP === "1";
 // (horário, foto, nome e conexão com o PDV). O resto da gestão vive no PDV.
 const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
 // Setores que cada build oferece no hub admin.
+// Online: "mesas" = Atender Mesas (a atendente lança pedidos das mesas do salão).
 const SETORES_BUILD = IS_ONLINE
-  ? ["pedidos", "config"]
+  ? ["mesas", "pedidos", "config"]
   : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config"];
 
 export default function App() {
@@ -626,7 +628,7 @@ export default function App() {
   // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config = sempre.
   // Cozinha, Estoque, Fiscal = opcionais (controlados pelo perfil).
   const modulosAtivos = perfil?.modulos || [];
-  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos"].includes(m) || modulosAtivos.includes(m);
+  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos", "mesas"].includes(m) || modulosAtivos.includes(m);
 
   // Setores permitidos para este admin. null/[] = todos.
   const setoresPermitidos = Array.isArray(usuario?.setores) && usuario.setores.length > 0
@@ -636,7 +638,7 @@ export default function App() {
 
   const navegar = (destino) => {
     if (destino === "cardapio") { window.location.href = "/"; return; }
-    if (["cozinha", "caixa", "produtos", "estoque", "financeiro", "config", "pedidos"].includes(destino)) {
+    if (["cozinha", "caixa", "produtos", "estoque", "financeiro", "config", "pedidos", "mesas"].includes(destino)) {
       if (!podeAcessar(destino)) return;
       setSetor(destino);
       return;
@@ -655,6 +657,7 @@ export default function App() {
 
   // ─── Renderização do conteúdo do setor (dentro da sidebar) ────────────────
   const conteudoSetor = (() => {
+    if (setor === "mesas")      return <AtenderMesas />;
     if (setor === "pedidos")    return <PedidosOnlineApp onNavegar={navegar} />;
     if (setor === "cozinha")    return <CozinhaApp onNavegar={navegar} />;
     if (setor === "produtos")   return <ProdutosApp onNavegar={navegar} />;

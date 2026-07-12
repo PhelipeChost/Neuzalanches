@@ -9,6 +9,7 @@
 import { useState, useEffect } from "react";
 import { api } from "./api";
 import NexusLogo from "./NexusLogo";
+import { SEGMENTOS, RECURSOS_LABELS } from "./segmentos";
 
 const IS_DESKTOP = import.meta.env.VITE_DESKTOP === "1";
 
@@ -19,8 +20,8 @@ const MODULOS_OPCIONAIS = [
 ];
 
 const TIPOS_ESTABELECIMENTO = [
-  { id: "lanchonete", icon: "🍔", label: "Lanchonete / Pizzaria / Hamburgueria", desc: "Mesas e balcão, comandas, cozinha e cardápio online" },
-  { id: "mercado",    icon: "🛒", label: "Mercado",                              desc: "Caixa por código de barras, estoque por setor e inventário" },
+  { id: "lanchonete", icon: "🍔", label: "Fast Food / Delivery", desc: "Lanchonete, pizzaria, açaiteria e outros segmentos — mesas, comandas, cozinha e cardápio online" },
+  { id: "mercado",    icon: "🛒", label: "Mercado",              desc: "Caixa por código de barras, estoque por setor e inventário" },
 ];
 
 const cardStyle = { background: "#fff", borderRadius: 14, border: "1px solid #e7e5e4", padding: 22 };
@@ -272,13 +273,14 @@ function SecaoOperador({ tipos, setTipos, showToast }) {
   );
 }
 
-// ═══ SEÇÃO 2: LANCHONETE / PIZZARIA / HAMBURGUERIA ═══════════════════════════
+// ═══ SEÇÃO 2: FAST FOOD / DELIVERY ═══════════════════════════════════════════
 function SecaoLanchonete({ showToast }) {
   const [modulos, setModulos] = useState([]);
   const [modo, setModo] = useState("mesas");
   const [nome, setNome] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [sincStat, setSincStat] = useState(null);
+  const [cardapios, setCardapios] = useState([]);
 
   useEffect(() => {
     api.perfil.obter().then(p => {
@@ -287,6 +289,7 @@ function SecaoLanchonete({ showToast }) {
       setNome(p.nome_estabelecimento || "");
     }).catch(() => {});
     api.sync.config().then(setSincStat).catch(() => {});
+    api.cardapios.listar().then(setCardapios).catch(() => {});
   }, []);
 
   const toggleModulo = (id) => setModulos(prev => prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]);
@@ -340,8 +343,52 @@ function SecaoLanchonete({ showToast }) {
   return (
     <>
       <div>
-        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#1c1917" }}>🍔 Lanchonete / Pizzaria / Hamburgueria</div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#1c1917" }}>🍔 Fast Food / Delivery</div>
         <div style={{ fontSize: 13, color: "#78716c" }}>Configurações estruturais do estabelecimento de alimentação.</div>
+      </div>
+
+      {/* Segmentos em uso — cada cardápio tem um tipo; só os tipos com cardápio
+          criado contam como "em uso" (o resto fica desabilitado por natureza). */}
+      <div style={cardStyle}>
+        <div style={tituloCard}>Segmentos em uso</div>
+        <div style={subCard}>
+          Cada cardápio criado em Produtos define seu segmento. Os recursos de cada segmento só
+          aparecem no cadastro e na montagem quando existe cardápio daquele tipo — segmentos sem
+          cardápio ficam automaticamente desabilitados.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {Object.entries(SEGMENTOS).map(([tipo, seg]) => {
+            const usados = cardapios.filter(c => (c.tipo || "snack_bar") === tipo);
+            const emUso = usados.length > 0;
+            const recursos = Object.keys(seg.recursos || {}).map(r => RECURSOS_LABELS[r]).filter(Boolean);
+            return (
+              <div key={tipo} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "11px 14px", borderRadius: 11,
+                border: `1.5px solid ${emUso ? "#15803d" : "#e7e5e4"}`, background: emUso ? "#f0fdf4" : "#fafaf9", opacity: emUso ? 1 : 0.55 }}>
+                <div style={{ fontSize: 20, width: 30, textAlign: "center" }}>{seg.icone}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: emUso ? "#15803d" : "#57534e" }}>{seg.nome}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 99,
+                      background: emUso ? "#dcfce7" : "#f5f5f4", color: emUso ? "#15803d" : "#a8a29e" }}>
+                      {emUso ? `${usados.length} cardápio${usados.length > 1 ? "s" : ""}` : "não utilizado"}
+                    </span>
+                    {emUso && usados.map(c => (
+                      <span key={c.id} style={{ fontSize: 10.5, color: "#78716c" }}>{c.icone} {c.nome}</span>
+                    ))}
+                  </div>
+                  {recursos.length > 0 && (
+                    <div style={{ fontSize: 11, color: "#78716c", marginTop: 3 }}>
+                      Recursos: {recursos.join(" · ")}
+                    </div>
+                  )}
+                  {recursos.length === 0 && (
+                    <div style={{ fontSize: 11, color: "#78716c", marginTop: 3 }}>Produtos simples, sem montagem</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Módulos habilitados */}

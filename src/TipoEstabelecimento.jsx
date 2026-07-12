@@ -9,8 +9,8 @@ import NexusLogo from "./NexusLogo";
 const OPCOES = [
   {
     key: "lanchonete", icone: "🍔",
-    titulo: "Lanchonete, pizzaria ou hamburgueria",
-    desc: "Mesas e balcão, comandas, cozinha, cardápio digital com pedidos online",
+    titulo: "Fast Food / Delivery",
+    desc: "Lanchonete, pizzaria, pastelaria, sorveteria, açaiteria, hamburgueria, cafeteria, marmitaria e conveniência — mesas, comandas, cozinha e cardápio digital",
   },
   {
     key: "mercado", icone: "🛒",
@@ -27,7 +27,7 @@ const OPCOES = [
 
 // Info de exibição de cada tipo (reusada no seletor pré-login)
 export const INFO_TIPOS = {
-  lanchonete: { icone: "🍔", titulo: "Lanchonete / Pizzaria / Hamburgueria", desc: "Mesas, comandas, cozinha e cardápio online" },
+  lanchonete: { icone: "🍔", titulo: "Fast Food / Delivery", desc: "Mesas, comandas, cozinha e cardápio online" },
   mercado:    { icone: "🛒", titulo: "Mercado", desc: "Caixa com código de barras, estoque e inventário" },
 };
 

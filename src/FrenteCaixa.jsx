@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import QRCode from "qrcode";
 import { agenteStatus, imprimirBytesViaAgente, gerarQRMesaBytes } from "./cozinhaImpressoraUSB";
+import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
+import { cardapioDoProduto, precoExibicao } from "./segmentos";
 
 const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -112,6 +114,12 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [itemObs, setItemObs] = useState("");
   const [itemQtd, setItemQtd] = useState(1);
 
+  // Montagem por segmento (pizza meio a meio, açaí…): { produto, cardapio, destino }
+  const [modalMontagem, setModalMontagem] = useState(null);
+  const [categorias, setCategorias] = useState([]);
+  const [adicionais, setAdicionais] = useState([]);
+  const [cardapios, setCardapios] = useState([]);
+
   // Toast
   const [toast, setToast] = useState(null);
   const showToast = (msg, cor = "var(--success)") => { setToast({ msg, cor }); setTimeout(() => setToast(null), 2500); };
@@ -161,6 +169,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         api.cozinha.filaUnificada(),
         api.caixaStats(),
         api.produtos.listar(),
+        api.categorias.listar(),
+        api.adicionais.listar(),
+        api.cardapios.listar(),
       ];
       if (modoPerfil === "mesas") promessas.push(api.mesas.listar());
       if (modoPerfil === "balcao") promessas.push(api.pedidos.listar());
@@ -168,10 +179,13 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
       setFila(r[0]);
       setStats(r[1]);
       setProdutos(r[2].filter(pr => pr.disponivel));
-      if (modoPerfil === "mesas") setMesas(r[3]);
+      setCategorias(r[3] || []);
+      setAdicionais((r[4] || []).filter(a => a.disponivel));
+      setCardapios(r[5] || []);
+      if (modoPerfil === "mesas") setMesas(r[6]);
       if (modoPerfil === "balcao") {
         const hoje = new Date().toISOString().slice(0, 10);
-        setBalcaoPedidos((r[3] || []).filter(p => p.created_at && p.created_at.slice(0, 10) === hoje));
+        setBalcaoPedidos((r[6] || []).filter(p => p.created_at && p.created_at.slice(0, 10) === hoje));
       }
     } catch (err) {
       showToast("Erro ao carregar: " + err.message, "var(--danger)");
@@ -360,9 +374,24 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     } catch (err) { showToast(err.message, "var(--danger)"); }
   };
 
+  // ── Montagem por segmento ──────────────────────────────────────────────────
+  const cardapioDe = (prod) => cardapioDoProduto(prod, cardapios, categorias);
+  const adicionaisParaProduto = (prod) => {
+    const cat = categorias.find(c => c.nome === prod.categoria);
+    if (!cat || !cat.permite_adicionais) return [];
+    const especificos = adicionais.filter(a => !a.categoria_id || a.categoria_id === cat.id);
+    return especificos.length > 0 ? especificos : adicionais;
+  };
+  const itemAdTotal = (it) => (it.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
+
   // Adicionar item à comanda
   const handleAdicionarItem = async (prod) => {
     if (!comanda) return;
+    const card = cardapioDe(prod);
+    if (precisaMontagem(prod, card)) {
+      setModalMontagem({ produto: prod, cardapio: card, destino: "comanda" });
+      return;
+    }
     try {
       await api.comandas.itens.adicionar(comanda.id, {
         produto_id: prod.id,
@@ -417,7 +446,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
           produto_nome: it.nome,
           quantidade: it.qtd,
           preco_unitario: it.preco,
-          adicionais: [],
+          adicionais: it.adicionais || [],
         })),
         tipo: "presencial",
         tipo_entrega: "retirada",
@@ -439,18 +468,64 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   };
 
   const handleAddBalcaoItem = (prod) => {
+    const card = cardapioDe(prod);
+    if (precisaMontagem(prod, card)) {
+      setModalMontagem({ produto: prod, cardapio: card, destino: "balcao" });
+      return;
+    }
     setBalcaoItens(prev => {
-      const existing = prev.find(it => it.produto_id === prod.id);
-      if (existing) return prev.map(it => it.produto_id === prod.id ? { ...it, qtd: it.qtd + 1 } : it);
+      const existing = prev.find(it => it.produto_id === prod.id && !it._uid);
+      if (existing) return prev.map(it => (it.produto_id === prod.id && !it._uid) ? { ...it, qtd: it.qtd + 1 } : it);
       return [...prev, { produto_id: prod.id, nome: prod.nome, preco: prod.preco, qtd: 1 }];
     });
   };
 
-  const handleRemoveBalcaoItem = (produtoId) => {
-    setBalcaoItens(prev => prev.filter(it => it.produto_id !== produtoId));
+  // Item montado confirmado (balcão ou comanda)
+  const confirmarMontagem = async (item) => {
+    const destino = modalMontagem?.destino;
+    setModalMontagem(null);
+    if (destino === "balcao") {
+      // Sempre linha nova — cada montagem é única (sabores/tamanho/complementos)
+      setBalcaoItens(prev => [...prev, {
+        _uid: `m_${Date.now()}`,
+        produto_id: item.produto_id,
+        nome: item.obs ? `${item.produto_nome} (${item.obs})` : item.produto_nome,
+        preco: item.preco_unitario,
+        qtd: item.quantidade,
+        adicionais: item.adicionais || [],
+      }]);
+      return;
+    }
+    if (destino === "comanda" && comanda) {
+      try {
+        await api.comandas.itens.adicionar(comanda.id, {
+          produto_id: item.produto_id,
+          produto_nome: `${item.quantidade}× ${item.produto_nome}`,
+          quantidade: item.quantidade,
+          preco_unitario: item.preco_unitario,
+          adicionais: item.adicionais || [],
+          obs: item.obs || itemObs,
+          origem: "caixa",
+        });
+        const it = await api.comandas.itens.listar(comanda.id);
+        setItens(it);
+        const c = await api.comandas.buscar(comanda.id);
+        setComanda(c);
+        await carregarTudo();
+        setModalItem(false);
+        setBusca("");
+        setItemObs("");
+        setItemQtd(1);
+        showToast(`${item.produto_nome} adicionado!`);
+      } catch (err) { showToast(err.message, "var(--danger)"); }
+    }
   };
 
-  const balcaoSubtotal = balcaoItens.reduce((s, it) => s + it.preco * it.qtd, 0);
+  const handleRemoveBalcaoItem = (chave) => {
+    setBalcaoItens(prev => prev.filter(it => (it._uid || it.produto_id) !== chave));
+  };
+
+  const balcaoSubtotal = balcaoItens.reduce((s, it) => s + (it.preco + itemAdTotal(it)) * it.qtd, 0);
   const balcaoDescontoValor = balcaoDesconto.tipo === "percentual"
     ? (balcaoSubtotal * Number(balcaoDesconto.valor || 0)) / 100
     : Number(balcaoDesconto.valor || 0);
@@ -1198,14 +1273,19 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                       Clique nos produtos ao lado para montar o pedido
                     </div>
                   ) : balcaoItens.map(it => (
-                    <div key={it.produto_id} className="fc-comanda-item" style={{ alignItems: "center" }}>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>
+                    <div key={it._uid || it.produto_id} className="fc-comanda-item" style={{ alignItems: "center" }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>
                         {it.qtd > 1 && <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{it.qtd}×</span>}
                         {it.nome}
+                        {(it.adicionais || []).length > 0 && (
+                          <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500, marginTop: 2 }}>
+                            {it.adicionais.map(a => `${(a.quantidade || 1) > 1 ? `${a.quantidade}x ` : "+ "}${a.nome}`).join(" · ")}
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(it.preco * it.qtd)}</span>
-                        <button onClick={() => handleRemoveBalcaoItem(it.produto_id)}
+                        <span style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL((it.preco + itemAdTotal(it)) * it.qtd)}</span>
+                        <button onClick={() => handleRemoveBalcaoItem(it._uid || it.produto_id)}
                           style={{ width: 20, height: 20, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
                       </div>
                     </div>
@@ -1630,8 +1710,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               onKeyDown={e => {
                 if (e.key === "Enter") {
                   const novaQtd = parseInt(e.target.value, 10);
-                  if (novaQtd <= 0) setBalcaoItens(prev => prev.filter(i => i.produto_id !== modalAlterarQtd.produto_id));
-                  else setBalcaoItens(prev => prev.map(i => i.produto_id === modalAlterarQtd.produto_id ? { ...i, qtd: novaQtd } : i));
+                  const chave = modalAlterarQtd._uid || modalAlterarQtd.produto_id;
+                  if (novaQtd <= 0) setBalcaoItens(prev => prev.filter(i => (i._uid || i.produto_id) !== chave));
+                  else setBalcaoItens(prev => prev.map(i => (i._uid || i.produto_id) === chave ? { ...i, qtd: novaQtd } : i));
                   setModalAlterarQtd(null);
                 }
               }}
@@ -1771,6 +1852,18 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
             </div>
           </div>
         </div>
+      )}
+
+      {/* MONTAGEM POR SEGMENTO (pizza meio a meio, açaí, tamanhos…) */}
+      {modalMontagem && (
+        <MontagemProduto
+          produto={modalMontagem.produto}
+          cardapio={modalMontagem.cardapio}
+          adicionais={adicionaisParaProduto(modalMontagem.produto)}
+          irmaos={produtos.filter(p => p.categoria === modalMontagem.produto.categoria)}
+          comObs
+          onConfirm={confirmarMontagem}
+          onClose={() => setModalMontagem(null)} />
       )}
 
       {/* TOAST */}

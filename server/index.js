@@ -616,9 +616,9 @@ app.get("/api/cardapios", (req, res) => {
 });
 
 app.post("/api/cardapios", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, icone, cor, imagem } = req.body;
+  const { nome, descricao, icone, cor, imagem, tipo, config } = req.body;
   if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
-  try { const c = criarCardapio({ nome, descricao, icone, cor, imagem }); agendarSyncCatalogo(); res.json(c); }
+  try { const c = criarCardapio({ nome, descricao, icone, cor, imagem, tipo, config }); agendarSyncCatalogo(); res.json(c); }
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -759,18 +759,18 @@ app.get("/api/produtos/:id", (req, res) => {
 });
 
 app.post("/api/produtos", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo } = req.body;
+  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo });
+  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config });
   agendarSyncCatalogo();
   res.status(201).json(p);
 });
 
 app.put("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo } = req.body;
+  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
-  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo });
+  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config });
   if (!p) return res.status(404).json({ error: "Não encontrado" });
   agendarSyncCatalogo();
   res.json(p);
@@ -1228,11 +1228,13 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
     const categorias = listarCategorias();
     const adicionais = listarAdicionais();
     const cardapios = listarCardapios();
+    // Mesas: o online precisa da MESMA lista do PDV (QR + Atender Mesas)
+    const mesas = listarMesas().map(m => ({ numero: m.numero, lugares: m.lugares }));
     const baseUrl = url.replace(/\/+$/, "");
     const r = await fetch(`${baseUrl}/api/sync/push-catalogo`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ produtos, categorias, adicionais, cardapios }),
+      body: JSON.stringify({ produtos, categorias, adicionais, cardapios, mesas }),
       signal: AbortSignal.timeout(15000),
     });
     if (!r.ok) {
@@ -1242,10 +1244,11 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
     const result = await r.json();
     const agora = new Date().toISOString();
     salvarConfig("sync_last", agora);
-    salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais, ${cardapios.length} cardápios`);
+    salvarConfig("sync_last_result", `${produtos.length} produtos, ${categorias.length} categorias, ${adicionais.length} adicionais, ${cardapios.length} cardápios, ${mesas.length} mesas`);
     syncCatalogoHash = JSON.stringify({ p: produtos.length, c: categorias.length, a: adicionais.length,
-      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}`).sort().join(","),
-      cards: cardapios.map(c => `${c.id}:${c.nome}:${c.ativo}:${(c.categorias || []).length}:${(c.adicionais || []).length}`).sort().join(",") });
+      ids: produtos.map(p => `${p.id}:${p.updated_at || p.nome}:${p.config || ""}`).sort().join(","),
+      cards: cardapios.map(c => `${c.id}:${c.nome}:${c.ativo}:${c.tipo || ""}:${c.config || ""}:${(c.categorias || []).length}:${(c.adicionais || []).length}`).sort().join(","),
+      mesas: mesas.map(m => `${m.numero}:${m.lugares}`).sort().join(",") });
     res.json({ ok: true, ...result, sincronizado_em: agora });
   } catch (err) {
     salvarConfig("sync_last", new Date().toISOString());
@@ -1256,8 +1259,8 @@ app.post("/api/sync/produtos", authMiddleware, adminOnly, async (req, res) => {
 
 app.post("/api/sync/push-catalogo", syncTokenOrAdmin, (req, res) => {
   try {
-    const { categorias = [], adicionais = [], produtos = [], cardapios = [] } = req.body;
-    const resultado = upsertCatalogoSync({ categorias, adicionais, produtos, cardapios });
+    const { categorias = [], adicionais = [], produtos = [], cardapios = [], mesas = null } = req.body;
+    const resultado = upsertCatalogoSync({ categorias, adicionais, produtos, cardapios, mesas });
     res.json({ ok: true, ...resultado });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2168,7 +2171,9 @@ app.post('/api/mesas', authMiddleware, adminOnly, (req, res) => {
   try {
     const { numero, lugares } = req.body;
     if (!numero) return res.status(400).json({ error: "Número da mesa é obrigatório" });
-    res.status(201).json(criarMesa({ numero, lugares }));
+    const mesa = criarMesa({ numero, lugares });
+    agendarSyncCatalogo(); // o online precisa da mesma lista de mesas
+    res.status(201).json(mesa);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
@@ -2183,6 +2188,7 @@ app.put('/api/mesas/:id', authMiddleware, adminOnly, (req, res) => {
 app.delete('/api/mesas/:id', authMiddleware, adminOnly, (req, res) => {
   try {
     if (!excluirMesa(req.params.id)) return res.status(404).json({ error: "Mesa não encontrada" });
+    agendarSyncCatalogo();
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -2307,7 +2313,9 @@ app.get('/api/mesa/:numero/info', (req, res) => {
   const cats = listarCategorias();
   const adds = listarAdicionais(true);
   const comanda = buscarComandaPorMesa(mesa.id);
-  res.json({ mesa, produtos, categorias: cats, adicionais: adds, comanda });
+  // cardapios: o front resolve produto→cardápio pra saber o segmento
+  // (pizzaria com meio a meio, açaí com complementos inclusos…)
+  res.json({ mesa, produtos, categorias: cats, adicionais: adds, comanda, cardapios: listarCardapios() });
 });
 
 // Pedido público via mesa (auto-abre comanda se não existir)

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
+import { infoSegmento, parseConfig, tamanhosDoProduto, precoExibicao } from "./segmentos";
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
@@ -86,8 +87,13 @@ function SlideshowAdmin({ imagens }) {
 }
 
 // ─── MODAL PRODUTO ────────────────────────────────────────────────────────────
-function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, insumos }) {
+function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, insumos, cardapioTipo = "snack_bar" }) {
   const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true, codigo: "" });
+  // Segmento do cardápio ativo define os recursos do form (tamanhos etc.)
+  const segmento = infoSegmento(cardapioTipo);
+  const [tamanhos, setTamanhos] = useState(() =>
+    tamanhosDoProduto(editando).map(t => ({ nome: t.nome, preco: String(t.preco) }))
+  );
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef(null);
   const [abaModal, setAbaModal] = useState("produto");
@@ -206,7 +212,16 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
   };
 
   const salvar = async () => {
-    if (!form.nome || !form.preco) return;
+    // Tamanhos válidos (nome + preço numérico). Com tamanhos, o preço base
+    // vira o menor deles — o card mostra "a partir de".
+    const tamanhosValidos = segmento.recursos.tamanhos
+      ? tamanhos.filter(t => t.nome.trim() && !isNaN(parseFloat(t.preco)) && parseFloat(t.preco) >= 0)
+          .map(t => ({ nome: t.nome.trim(), preco: parseFloat(t.preco) }))
+      : [];
+    const precoBase = tamanhosValidos.length > 0
+      ? Math.min(...tamanhosValidos.map(t => t.preco))
+      : parseFloat(form.preco);
+    if (!form.nome || isNaN(precoBase)) return;
     setSalvando(true);
     try {
       // Lê do ref para garantir o valor mais atual (evita closure stale)
@@ -218,9 +233,10 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
       const produto = await onSave({
         ...form,
         imagem: primeiraImg,
-        preco: parseFloat(form.preco),
+        preco: precoBase,
         custo: parseFloat(form.custo) || 0,
         disponivel: form.disponivel,
+        config: { ...parseConfig(editando?.config), tamanhos: tamanhosValidos },
       });
 
       if (produto?.id) {
@@ -364,10 +380,44 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
               <label style={lbl}>Descrição</label>
               <input style={inp} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Breve descrição do produto" />
             </div>
+            {/* Tamanhos com preço próprio (pizzaria, açaí, sorvete, marmita, café…) */}
+            {segmento.recursos.tamanhos && (
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "12px 14px" }}>
+                <label style={{ ...lbl, color: "#15803d", marginBottom: 4 }}>
+                  {segmento.icone} Tamanhos ({segmento.nome})
+                </label>
+                <div style={{ fontSize: 11, color: "#78716c", marginBottom: 10 }}>
+                  Cada tamanho tem seu preço (ex: Broto/Grande, 300ml/500ml, P/M/G). Com tamanhos
+                  cadastrados, o cliente escolhe o tamanho na montagem e o preço base vira o menor deles.
+                  Sem tamanhos, vale o preço de venda abaixo.
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {tamanhos.map((t, i) => (
+                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input style={{ ...inp, flex: 1, padding: "7px 10px", fontSize: 12.5 }} value={t.nome}
+                        onChange={e => setTamanhos(ts => ts.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))}
+                        placeholder={cardapioTipo === "pizzeria" ? "Ex: Grande (8 fatias)" : "Ex: 500ml"} />
+                      <input style={{ ...inp, width: 100, padding: "7px 10px", fontSize: 12.5 }} type="number" step="0.01" value={t.preco}
+                        onChange={e => setTamanhos(ts => ts.map((x, j) => j === i ? { ...x, preco: e.target.value } : x))}
+                        placeholder="R$" />
+                      <button type="button" onClick={() => setTamanhos(ts => ts.filter((_, j) => j !== i))}
+                        style={{ background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", color: "#dc2626" }}>×</button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setTamanhos(ts => [...ts, { nome: "", preco: "" }])}
+                    style={{ alignSelf: "flex-start", padding: "6px 14px", background: "#fff", border: "1.5px solid #bbf7d0", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#15803d" }}>
+                    + Adicionar tamanho
+                  </button>
+                </div>
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <div>
-                <label style={lbl}>Preço de venda (R$)</label>
-                <input style={inp} type="number" step="0.01" value={form.preco} onChange={e => setForm({ ...form, preco: e.target.value })} placeholder="0,00" />
+                <label style={lbl}>Preço de venda (R$){tamanhos.some(t => t.nome.trim()) ? " — automático (menor tamanho)" : ""}</label>
+                <input style={{ ...inp, background: tamanhos.some(t => t.nome.trim()) ? "#fafaf9" : "#fff" }}
+                  type="number" step="0.01" value={form.preco}
+                  readOnly={tamanhos.some(t => t.nome.trim())}
+                  onChange={e => setForm({ ...form, preco: e.target.value })} placeholder="0,00" />
               </div>
               <div>
                 <label style={lbl}>
@@ -661,7 +711,7 @@ function ModalImportarCSV({ onImport, onClose }) {
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
 // cardapioAtivo: id do cardápio ativo (recebido do ProdutosApp). Se presente,
 // filtra produtos pelas categorias desse cardápio e força a criação vinculada.
-export default function Produtos({ cardapioAtivo, cardapioNome } = {}) {
+export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "snack_bar" } = {}) {
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -799,7 +849,19 @@ export default function Produtos({ cardapioAtivo, cardapioNome } = {}) {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>{fmt(p.preco)}</div>
+                  {(() => {
+                    const pe = precoExibicao(p);
+                    const ts = tamanhosDoProduto(p);
+                    return (
+                      <>
+                        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>
+                          {pe.aPartirDe && <span style={{ fontSize: 11, fontWeight: 500, color: "#78716c" }}>a partir de </span>}
+                          {fmt(pe.preco)}
+                        </div>
+                        {ts.length > 0 && <div style={{ fontSize: 10, color: "#2563eb", fontWeight: 600 }}>{ts.length} tamanho{ts.length > 1 ? "s" : ""}</div>}
+                      </>
+                    );
+                  })()}
                   {p.custo > 0 && <div style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmt(p.custo)}</div>}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -812,7 +874,7 @@ export default function Produtos({ cardapioAtivo, cardapioNome } = {}) {
         </div>
       )}
 
-      {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} />}
+      {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} cardapioTipo={cardapioTipo} />}
       {modalImport && <ModalImportarCSV onImport={importarCSV} onClose={() => setModalImport(false)} />}
 
       {confirmDel && (

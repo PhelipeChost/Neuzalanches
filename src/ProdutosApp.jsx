@@ -3,6 +3,7 @@ import { api } from "./api";
 import Produtos from "./Produtos";
 import Promocoes from "./Promocoes";
 import Logo from "./Logo";
+import { SEGMENTOS, TIPOS_CARDAPIO, infoSegmento, parseConfig } from "./segmentos";
 
 const cfgInp = { padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none", color: "#1c1917" };
 const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" };
@@ -435,8 +436,7 @@ function CardapiosTab({ onChange }) {
   const [categorias, setCategorias] = useState([]);
   const [adicionais, setAdicionais] = useState([]);
   const [novoNome, setNovoNome] = useState("");
-  const [novoIcone, setNovoIcone] = useState("📋");
-  const [novoCor, setNovoCor] = useState("#15803d");
+  const [novoTipo, setNovoTipo] = useState("snack_bar");
   const [editando, setEditando] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
@@ -461,11 +461,12 @@ function CardapiosTab({ onChange }) {
   const criar = async () => {
     if (!novoNome.trim()) return showToast("Digite o nome do cardápio", "#dc2626");
     try {
-      await api.cardapios.criar({ nome: novoNome.trim(), icone: novoIcone, cor: novoCor });
-      setNovoNome(""); setNovoIcone("📋"); setNovoCor("#15803d");
+      const seg = infoSegmento(novoTipo);
+      await api.cardapios.criar({ nome: novoNome.trim(), icone: seg.icone, cor: "#15803d", tipo: novoTipo });
+      setNovoNome(""); setNovoTipo("snack_bar");
       await carregar();
       onChange?.();
-      showToast("Cardápio criado!");
+      showToast(`Cardápio de ${seg.nome} criado!`);
     } catch (e) { showToast(e.message, "#dc2626"); }
   };
 
@@ -478,7 +479,10 @@ function CardapiosTab({ onChange }) {
   const salvarEdicao = async () => {
     if (!editando) return;
     try {
-      await api.cardapios.atualizar(editando.id, { nome: editando.nome, icone: editando.icone, cor: editando.cor, ativo: editando.ativo, imagem: editando.imagem });
+      await api.cardapios.atualizar(editando.id, {
+        nome: editando.nome, icone: editando.icone, cor: editando.cor, ativo: editando.ativo,
+        imagem: editando.imagem, tipo: editando.tipo || "snack_bar", config: editando.configObj || {},
+      });
       await api.cardapios.definirCategorias(editando.id, editando.categorias);
       await api.cardapios.definirAdicionais(editando.id, editando.adicionais || []);
       setEditando(null);
@@ -487,6 +491,9 @@ function CardapiosTab({ onChange }) {
       showToast("Salvo!");
     } catch (e) { showToast(e.message, "#dc2626"); }
   };
+
+  // Config do segmento no editor (bordas, regra de preço, inclusos…)
+  const setCfg = (patch) => setEditando(prev => ({ ...prev, configObj: { ...(prev.configObj || {}), ...patch } }));
 
   const toggleCat = (catId) => {
     if (!editando) return;
@@ -526,18 +533,40 @@ function CardapiosTab({ onChange }) {
     <div className="card anim">
       <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 18, fontFamily: "'Inter', sans-serif" }}>Cardápios</h3>
       <p style={{ fontSize: 12, color: "#78716c", marginBottom: 18, lineHeight: 1.5 }}>
-        Crie múltiplos cardápios (ex: Almoço, Jantar, Delivery) e atribua categorias a cada um.
-        No cardápio digital, o cliente verá abas para alternar entre eles.
+        Crie um cardápio para cada segmento do seu negócio (ex: Pizzaria, Açaiteria, Lanches).
+        O <b>tipo do cardápio</b> define os recursos do cadastro de produto e da montagem do pedido —
+        pizzaria ganha tamanhos, meio a meio e bordas; açaí ganha complementos inclusos; e assim por diante.
       </p>
 
-      {/* Criar novo */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20, alignItems: "center" }}>
-        <input style={{ ...cfgInp, flex: "1 1 180px" }} value={novoNome} onChange={e => setNovoNome(e.target.value)} placeholder="Nome do cardápio" />
-        <select style={{ ...cfgInp, width: 60 }} value={novoIcone} onChange={e => setNovoIcone(e.target.value)}>
-          {ICONES.map(i => <option key={i} value={i}>{i}</option>)}
-        </select>
-        <input type="color" value={novoCor} onChange={e => setNovoCor(e.target.value)} style={{ width: 36, height: 36, border: "1.5px solid #e7e5e4", borderRadius: 8, cursor: "pointer", padding: 2 }} />
-        <button style={cfgBtn} onClick={criar}>+ Criar</button>
+      {/* Criar novo: nome + tipo de segmento */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          <input style={{ ...cfgInp, flex: "1 1 220px" }} value={novoNome} onChange={e => setNovoNome(e.target.value)}
+            placeholder="Nome do cardápio (ex: Pizzas da Casa)" onKeyDown={e => e.key === "Enter" && criar()} />
+          <button style={cfgBtn} onClick={criar}>+ Criar cardápio</button>
+        </div>
+        <div style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>
+          Tipo do cardápio
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
+          {TIPOS_CARDAPIO.map(t => {
+            const seg = SEGMENTOS[t];
+            const sel = novoTipo === t;
+            return (
+              <button key={t} onClick={() => setNovoTipo(t)}
+                style={{ display: "flex", alignItems: "center", gap: 9, padding: "10px 12px", borderRadius: 10, textAlign: "left",
+                  cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                  border: `1.5px solid ${sel ? "#15803d" : "#e7e5e4"}`,
+                  background: sel ? "#f0fdf4" : "#fff" }}>
+                <span style={{ fontSize: 20 }}>{seg.icone}</span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: sel ? "#15803d" : "#1c1917" }}>{seg.nome}</span>
+                  <span style={{ display: "block", fontSize: 10, color: "#a8a29e", lineHeight: 1.35 }}>{seg.desc}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {cardapios.length === 0 && (
@@ -554,7 +583,12 @@ function CardapiosTab({ onChange }) {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 24 }}>{c.icone}</span>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#1c1917" }}>{c.nome}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: "#1c1917" }}>{c.nome}</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 9px", borderRadius: 99, background: "#eff6ff", color: "#2563eb" }}>
+                      {infoSegmento(c.tipo).icone} {infoSegmento(c.tipo).nome}
+                    </span>
+                  </div>
                   <div style={{ fontSize: 11, color: "#78716c" }}>
                     {c.categorias.length} categoria{c.categorias.length !== 1 ? "s" : ""}
                     {!c.ativo && <span style={{ color: "#dc2626", marginLeft: 8, fontWeight: 600 }}>INATIVO</span>}
@@ -562,7 +596,7 @@ function CardapiosTab({ onChange }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button className="icon-btn" onClick={() => setEditando({ ...c, categorias: [...(c.categorias || [])], adicionais: [...(c.adicionais || [])] })} title="Editar">✏️</button>
+                <button className="icon-btn" onClick={() => setEditando({ ...c, categorias: [...(c.categorias || [])], adicionais: [...(c.adicionais || [])], configObj: parseConfig(c.config) })} title="Editar">✏️</button>
                 <button className="icon-btn del" onClick={() => excluir(c.id)} title="Excluir">🗑️</button>
               </div>
             </div>
@@ -580,6 +614,74 @@ function CardapiosTab({ onChange }) {
                     <input type="checkbox" checked={!!editando.ativo} onChange={e => setEditando(p => ({ ...p, ativo: e.target.checked ? 1 : 0 }))} /> Ativo
                   </label>
                 </div>
+
+                {/* Tipo do cardápio (segmento) */}
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 8 }}>Tipo do cardápio:</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
+                  <select style={{ ...cfgInp, minWidth: 220, cursor: "pointer" }} value={editando.tipo || "snack_bar"}
+                    onChange={e => setEditando(p => ({ ...p, tipo: e.target.value }))}>
+                    {TIPOS_CARDAPIO.map(t => <option key={t} value={t}>{SEGMENTOS[t].icone} {SEGMENTOS[t].nome}</option>)}
+                  </select>
+                  <span style={{ fontSize: 11, color: "#a8a29e" }}>{infoSegmento(editando.tipo).desc}</span>
+                </div>
+
+                {/* Config específica: PIZZARIA — meio a meio + bordas */}
+                {infoSegmento(editando.tipo).recursos.meioAMeio && (
+                  <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 8 }}>🍕 Pizza meio a meio</div>
+                    <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                      <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                        <input type="checkbox" checked={(editando.configObj?.meio_a_meio ?? true) !== false}
+                          onChange={e => setCfg({ meio_a_meio: e.target.checked })} />
+                        Permitir 2 sabores (metade/metade)
+                      </label>
+                      <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                        Preço do meio a meio:
+                        <select style={{ ...cfgInp, padding: "5px 8px", fontSize: 12 }} value={editando.configObj?.regra_preco || "maior"}
+                          onChange={e => setCfg({ regra_preco: e.target.value })}>
+                          <option value="maior">Sabor mais caro</option>
+                          <option value="media">Média dos sabores</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>Bordas recheadas (opcional)</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {(editando.configObj?.bordas || []).map((b, i) => (
+                        <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                          <input style={{ ...cfgInp, flex: 1, padding: "6px 10px", fontSize: 12 }} value={b.nome}
+                            onChange={e => setCfg({ bordas: (editando.configObj?.bordas || []).map((x, j) => j === i ? { ...x, nome: e.target.value } : x) })}
+                            placeholder="Ex: Borda de catupiry" />
+                          <input style={{ ...cfgInp, width: 90, padding: "6px 10px", fontSize: 12 }} type="number" step="0.01" value={b.preco}
+                            onChange={e => setCfg({ bordas: (editando.configObj?.bordas || []).map((x, j) => j === i ? { ...x, preco: e.target.value } : x) })}
+                            placeholder="R$" />
+                          <button onClick={() => setCfg({ bordas: (editando.configObj?.bordas || []).filter((_, j) => j !== i) })}
+                            style={{ ...cfgDel, padding: "5px 10px" }}>×</button>
+                        </div>
+                      ))}
+                      <button onClick={() => setCfg({ bordas: [...(editando.configObj?.bordas || []), { nome: "", preco: "" }] })}
+                        style={{ ...cfgBtn, background: "#fff", color: "#92400e", border: "1.5px solid #fde68a", padding: "6px 14px", fontSize: 12, alignSelf: "flex-start" }}>
+                        + Adicionar borda
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Config específica: AÇAÍ / SORVETERIA — complementos inclusos */}
+                {infoSegmento(editando.tipo).recursos.complementos && (
+                  <div style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#5b21b6", marginBottom: 8 }}>
+                      {infoSegmento(editando.tipo).icone} Complementos inclusos
+                    </div>
+                    <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      O cliente escolhe até
+                      <input style={{ ...cfgInp, width: 64, padding: "5px 8px", fontSize: 12, textAlign: "center" }} type="number" min="0" step="1"
+                        value={editando.configObj?.inclusos ?? 0}
+                        onChange={e => setCfg({ inclusos: Math.max(0, parseInt(e.target.value, 10) || 0) })} />
+                      complementos grátis (os cadastrados em Adicionais). Acima disso, cobra o preço do adicional. 0 = todos pagos.
+                    </label>
+                  </div>
+                )}
+
                 <div style={{ fontSize: 12, fontWeight: 600, color: "#57534e", marginBottom: 8 }}>Categorias deste cardápio:</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
                   {categorias.map(cat => {
@@ -781,7 +883,7 @@ export default function ProdutosApp({ onNavegar }) {
         ) : (
           <>
             {aba === "cardapios" && <CardapiosTab onChange={recarregarCardapios} />}
-            {aba === "produtos" && <Produtos cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
+            {aba === "produtos" && <Produtos cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} cardapioTipo={cardapioAtual?.tipo || "snack_bar"} />}
             {aba === "categorias" && <CategoriasTab cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
             {aba === "adicionais" && <AdicionaisTab cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
             {aba === "promocoes" && <Promocoes cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}

@@ -436,6 +436,19 @@ db.exec(`
   if (!colsCard.includes("imagem")) db.exec("ALTER TABLE cardapios ADD COLUMN imagem TEXT DEFAULT ''");
 }
 
+// ─── MIGRAÇÃO: segmentos por cardápio (multiestabelecimento) ─────────────────
+// cardapios.tipo   = establishment_type (snack_bar, pizzeria, acai_shop…)
+// cardapios.config = JSON por segmento (bordas, regra de preço meio a meio,
+//                    complementos inclusos…)
+// produtos.config  = JSON por produto (tamanhos com preço próprio…)
+{
+  const colsCard = db.prepare("PRAGMA table_info(cardapios)").all().map(c => c.name);
+  if (!colsCard.includes("tipo"))   db.exec("ALTER TABLE cardapios ADD COLUMN tipo TEXT DEFAULT 'snack_bar'");
+  if (!colsCard.includes("config")) db.exec("ALTER TABLE cardapios ADD COLUMN config TEXT DEFAULT '{}'");
+  const colsProd = db.prepare("PRAGMA table_info(produtos)").all().map(c => c.name);
+  if (!colsProd.includes("config")) db.exec("ALTER TABLE produtos ADD COLUMN config TEXT DEFAULT '{}'");
+}
+
 // Inserir chave PIX padrão se não existir
 const existePix = db.prepare("SELECT 1 FROM config WHERE key = 'pix_key'").get();
 if (!existePix) {
@@ -1839,18 +1852,25 @@ export function buscarProduto(id) {
   return db.prepare("SELECT * FROM produtos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
-export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel, codigo }) {
+// config: JSON por segmento (ex.: { tamanhos: [{nome,preco}] }). Aceita objeto ou string.
+function normalizarConfigJson(config) {
+  if (config == null) return null;
+  if (typeof config === "string") { try { JSON.parse(config); return config; } catch { return null; } }
+  try { return JSON.stringify(config); } catch { return null; }
+}
+
+export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config }) {
   const id = gerarId();
   db.prepare(
-    "INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel !== undefined ? (disponivel ? 1 : 0) : 1, (codigo || "").trim());
+    "INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel !== undefined ? (disponivel ? 1 : 0) : 1, (codigo || "").trim(), normalizarConfigJson(config) || "{}");
   return buscarProduto(id);
 }
 
-export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo }) {
+export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config }) {
   const result = db.prepare(
-    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo) WHERE id = ? AND deleted_at IS NULL"
-  ).run(nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0, codigo != null ? String(codigo).trim() : null, id);
+    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo), config = COALESCE(?, config) WHERE id = ? AND deleted_at IS NULL"
+  ).run(nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0, codigo != null ? String(codigo).trim() : null, normalizarConfigJson(config), id);
   if (result.changes === 0) return null;
   return buscarProduto(id);
 }
@@ -2296,8 +2316,8 @@ export function upsertComandaSync(c) {
 // ─── SINCRONIZAÇÃO DE CATÁLOGO (push-catalogo) ──────────────────────────────
 // Recebe categorias, adicionais e produtos do PDV remoto e faz upsert local.
 // Last-write-wins por ID. Transacional para consistência.
-export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos = [], cardapios = [] }) {
-  const resultado = { categorias: { inserido: 0, atualizado: 0 }, adicionais: { inserido: 0, atualizado: 0 }, produtos: { inserido: 0, atualizado: 0 }, cardapios: { inserido: 0, atualizado: 0, removido: 0 } };
+export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos = [], cardapios = [], mesas = null }) {
+  const resultado = { categorias: { inserido: 0, atualizado: 0 }, adicionais: { inserido: 0, atualizado: 0 }, produtos: { inserido: 0, atualizado: 0 }, cardapios: { inserido: 0, atualizado: 0, removido: 0 }, mesas: { inserido: 0, atualizado: 0, removido: 0 } };
 
   const tx = db.transaction(() => {
     const catIdsRecebidos = new Set();
@@ -2345,12 +2365,12 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
       prodIdsRecebidos.add(p.id);
       const existe = db.prepare("SELECT id FROM produtos WHERE id = ?").get(p.id);
       if (existe) {
-        db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo) WHERE id = ?")
-          .run(p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, p.codigo != null ? String(p.codigo).trim() : null, p.id);
+        db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo), config = ? WHERE id = ?")
+          .run(p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, p.codigo != null ? String(p.codigo).trim() : null, typeof p.config === "string" ? p.config : JSON.stringify(p.config || {}), p.id);
         resultado.produtos.atualizado++;
       } else {
-        db.prepare("INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .run(p.id, p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, (p.codigo || "").trim());
+        db.prepare("INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(p.id, p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, (p.codigo || "").trim(), typeof p.config === "string" ? p.config : JSON.stringify(p.config || {}));
         resultado.produtos.inserido++;
       }
     }
@@ -2383,13 +2403,15 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
         if (!c || !c.id) continue;
         cardIdsRecebidos.add(c.id);
         const existe = db.prepare("SELECT id FROM cardapios WHERE id = ?").get(c.id);
+        const tipoCard = c.tipo || "snack_bar";
+        const cfgCard = typeof c.config === "string" ? c.config : JSON.stringify(c.config || {});
         if (existe) {
-          db.prepare("UPDATE cardapios SET nome = ?, descricao = ?, icone = ?, cor = ?, ativo = ?, ordem = ?, imagem = ? WHERE id = ?")
-            .run(c.nome, c.descricao ?? "", c.icone ?? "📋", c.cor ?? "#15803d", c.ativo ?? 1, c.ordem ?? 0, c.imagem ?? "", c.id);
+          db.prepare("UPDATE cardapios SET nome = ?, descricao = ?, icone = ?, cor = ?, ativo = ?, ordem = ?, imagem = ?, tipo = ?, config = ? WHERE id = ?")
+            .run(c.nome, c.descricao ?? "", c.icone ?? "📋", c.cor ?? "#15803d", c.ativo ?? 1, c.ordem ?? 0, c.imagem ?? "", tipoCard, cfgCard, c.id);
           resultado.cardapios.atualizado++;
         } else {
-          db.prepare("INSERT INTO cardapios (id, nome, descricao, icone, cor, ativo, ordem, imagem) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-            .run(c.id, c.nome, c.descricao ?? "", c.icone ?? "📋", c.cor ?? "#15803d", c.ativo ?? 1, c.ordem ?? 0, c.imagem ?? "");
+          db.prepare("INSERT INTO cardapios (id, nome, descricao, icone, cor, ativo, ordem, imagem, tipo, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .run(c.id, c.nome, c.descricao ?? "", c.icone ?? "📋", c.cor ?? "#15803d", c.ativo ?? 1, c.ordem ?? 0, c.imagem ?? "", tipoCard, cfgCard);
           resultado.cardapios.inserido++;
         }
         // Vínculos: substitui pelos do PDV (fonte da verdade). Remapeia ids de
@@ -2416,6 +2438,35 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
           db.prepare("DELETE FROM cardapios WHERE id = ?").run(o.id);
           resultado.cardapios.removido++;
         }
+      }
+    }
+
+    // ── Mesas (PDV é a fonte da verdade — o online precisa da MESMA lista
+    // pro QR e pro Atender Mesas). Match por número; nunca remove mesa com
+    // comanda aberta pra não órfã-la no meio do atendimento.
+    if (Array.isArray(mesas)) {
+      const numerosRecebidos = new Set();
+      for (const m of mesas) {
+        const numero = parseInt(m?.numero, 10);
+        if (isNaN(numero)) continue;
+        numerosRecebidos.add(numero);
+        const existe = db.prepare("SELECT id FROM mesas WHERE numero = ?").get(numero);
+        if (existe) {
+          db.prepare("UPDATE mesas SET lugares = ? WHERE numero = ?").run(m.lugares || 4, numero);
+          resultado.mesas.atualizado++;
+        } else {
+          db.prepare("INSERT INTO mesas (id, numero, lugares) VALUES (?, ?, ?)")
+            .run(crypto.randomUUID(), numero, m.lugares || 4);
+          resultado.mesas.inserido++;
+        }
+      }
+      const locais = db.prepare("SELECT id, numero FROM mesas").all();
+      for (const l of locais) {
+        if (numerosRecebidos.has(l.numero)) continue;
+        const comandaAberta = db.prepare("SELECT 1 FROM comandas WHERE mesa_id = ? AND status = 'aberta' AND deleted_at IS NULL LIMIT 1").get(l.id);
+        if (comandaAberta) continue;
+        db.prepare("DELETE FROM mesas WHERE id = ?").run(l.id);
+        resultado.mesas.removido++;
       }
     }
   });
@@ -3312,20 +3363,21 @@ export function listarCardapiosPorAdicional(adicionalId) {
     .all(adicionalId).map(r => r.cardapio_id);
 }
 
-export function criarCardapio({ nome, descricao, icone, cor, imagem }) {
+export function criarCardapio({ nome, descricao, icone, cor, imagem, tipo, config }) {
   const id = crypto.randomUUID();
   const max = db.prepare("SELECT COALESCE(MAX(ordem), -1) AS m FROM cardapios").get().m;
   db.prepare(
-    "INSERT INTO cardapios (id, nome, descricao, icone, cor, ordem, imagem) VALUES (?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, nome, descricao || "", icone || "📋", cor || "#15803d", max + 1, imagem || "");
+    "INSERT INTO cardapios (id, nome, descricao, icone, cor, ordem, imagem, tipo, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, nome, descricao || "", icone || "📋", cor || "#15803d", max + 1, imagem || "",
+    tipo || "snack_bar", normalizarConfigJson(config) || "{}");
   return { id, nome };
 }
 
-export function atualizarCardapio(id, { nome, descricao, icone, cor, ativo, ordem, imagem }) {
+export function atualizarCardapio(id, { nome, descricao, icone, cor, ativo, ordem, imagem, tipo, config }) {
   const atual = db.prepare("SELECT * FROM cardapios WHERE id = ?").get(id);
   if (!atual) throw new Error("Cardápio não encontrado");
   db.prepare(
-    "UPDATE cardapios SET nome = ?, descricao = ?, icone = ?, cor = ?, ativo = ?, ordem = ?, imagem = ? WHERE id = ?"
+    "UPDATE cardapios SET nome = ?, descricao = ?, icone = ?, cor = ?, ativo = ?, ordem = ?, imagem = ?, tipo = ?, config = ? WHERE id = ?"
   ).run(
     nome ?? atual.nome,
     descricao ?? atual.descricao,
@@ -3334,6 +3386,8 @@ export function atualizarCardapio(id, { nome, descricao, icone, cor, ativo, orde
     ativo !== undefined ? (ativo ? 1 : 0) : atual.ativo,
     ordem ?? atual.ordem,
     imagem ?? atual.imagem,
+    tipo ?? atual.tipo ?? "snack_bar",
+    normalizarConfigJson(config) ?? atual.config ?? "{}",
     id
   );
 }
@@ -3376,6 +3430,26 @@ export function garantirCardapioPrincipal() {
   return nova;
 }
 
+// Soma dos adicionais de UMA comanda (JSON por item × quantidade do item).
+// Os totais SQL (SUM(qtd*preco)) não enxergam o JSON de adicionais — sem isso
+// bordas de pizza, complementos de açaí e adicionais clássicos sumiam da conta.
+function totalAdicionaisComanda(comandaId) {
+  const rows = db.prepare(
+    "SELECT adicionais, quantidade FROM comanda_itens WHERE comanda_id = ? AND status != 'cancelado' AND deleted_at IS NULL"
+  ).all(comandaId);
+  let total = 0;
+  for (const r of rows) {
+    try {
+      const ads = JSON.parse(r.adicionais || "[]");
+      if (Array.isArray(ads)) {
+        const porUnidade = ads.reduce((s, a) => s + (Number(a.preco) || 0) * (Number(a.quantidade) || 1), 0);
+        total += porUnidade * (r.quantidade || 1);
+      }
+    } catch { /* JSON inválido → ignora */ }
+  }
+  return total;
+}
+
 export function listarMesas() {
   const mesas = db.prepare("SELECT * FROM mesas ORDER BY numero ASC").all();
   const comandaAberta = db.prepare(
@@ -3390,6 +3464,7 @@ export function listarMesas() {
   );
   return mesas.map(m => {
     const comanda = comandaAberta.get(m.id);
+    if (comanda) comanda.total += totalAdicionaisComanda(comanda.id);
     return { ...m, comanda: comanda || null };
   });
 }
@@ -3462,6 +3537,7 @@ export function buscarComanda(id) {
      WHERE c.id = ? AND c.deleted_at IS NULL
      GROUP BY c.id`
   ).get(id);
+  if (c) c.total += totalAdicionaisComanda(c.id);
   return c || null;
 }
 
@@ -3476,6 +3552,7 @@ export function buscarComandaPorMesa(mesa_id) {
      WHERE c.mesa_id = ? AND c.status = 'aberta' AND c.deleted_at IS NULL
      GROUP BY c.id`
   ).get(mesa_id);
+  if (c) c.total += totalAdicionaisComanda(c.id);
   return c || null;
 }
 
@@ -3707,6 +3784,11 @@ export function estatisticasCaixa() {
      JOIN comanda_itens ci ON ci.comanda_id = c.id AND ci.status != 'cancelado'
      WHERE c.status = 'fechada' AND date(c.closed_at) = ?`
   ).get(hojeStr);
+  // Adicionais (JSON por item) não entram no SUM acima — soma à parte
+  const fechadasHoje = db.prepare(
+    "SELECT id FROM comandas WHERE status = 'fechada' AND date(closed_at) = ?"
+  ).all(hojeStr);
+  for (const c of fechadasHoje) fatComandas.total += totalAdicionaisComanda(c.id);
 
   const fatPedidos = db.prepare(
     `SELECT COALESCE(SUM(total), 0) AS total, COUNT(*) AS pedidos

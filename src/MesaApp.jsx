@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import Logo from "./Logo";
 import { ImagemProduto } from "./Produtos";
+import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
+import { cardapioDoProduto, precoExibicao } from "./segmentos";
 
 const fmt = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -100,7 +102,10 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, catIdPorN
           </div>
         )}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
-          <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums" }}>{fmt(p.preco)}</span>
+          <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums" }}>
+            {precoExibicao(p).aPartirDe && <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)" }}>a partir de </span>}
+            {fmt(precoExibicao(p).preco)}
+          </span>
           <button onClick={e => { e.stopPropagation(); onAdd(p); }}
             style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif", flexShrink: 0 }}>
             + Adicionar
@@ -224,7 +229,9 @@ function IconSun() {
 }
 
 // ─── MESA APP ─────────────────────────────────────────────────────────────────
-export default function MesaApp({ mesaNumero }) {
+// modoAtendente: usado pelo "Atender Mesas" da plataforma online — a atendente
+// lança o pedido pelo mesmo cardápio, com botão de voltar pra lista de mesas.
+export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false }) {
   const [dados, setDados] = useState(null);
   const [erro, setErro] = useState("");
   const [loading, setLoading] = useState(true);
@@ -232,6 +239,7 @@ export default function MesaApp({ mesaNumero }) {
   const [toast, setToast] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [modalAdicional, setModalAdicional] = useState(null);
+  const [modalMontagem, setModalMontagem] = useState(null); // { produto, cardapio }
   const [modalProduto, setModalProduto] = useState(null);
   const [pedidoEnviado, setPedidoEnviado] = useState(null);
   const [clienteNome, setClienteNome] = useState("");
@@ -315,13 +323,33 @@ export default function MesaApp({ mesaNumero }) {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [categoriasComProdutos, busca]);
 
+  // Cardápio (segmento) do produto — define montagem por tamanho/meio a meio/complementos
+  const cardapioDe = (produto) => cardapioDoProduto(produto, dados?.cardapios || [], categorias);
+
   const handleAddProduto = (produto) => {
+    const card = cardapioDe(produto);
+    if (precisaMontagem(produto, card)) {
+      setModalMontagem({ produto, cardapio: card });
+      return;
+    }
     const ads = adicionaisParaProduto(produto);
     if (ads.length > 0) {
       setModalAdicional(produto);
     } else {
       addCarrinhoSimples(produto, []);
     }
+  };
+
+  // Item montado (pizza meio a meio, açaí com complementos…) — sempre linha nova
+  const addItemMontado = (item) => {
+    setCarrinho(c => [...c, {
+      _uid: nextUid(), _adKey: `m:${item.produto_nome}`,
+      produto_id: item.produto_id, produto_nome: item.produto_nome,
+      preco_unitario: item.preco_unitario, quantidade: item.quantidade || 1,
+      adicionais: item.adicionais || [], obs: item.obs || "",
+    }]);
+    setModalMontagem(null);
+    showToast(`${item.produto_nome} adicionado!`, "var(--new-green)");
   };
 
   const addCarrinhoSimples = (produto, adicionaisSelecionados) => {
@@ -366,7 +394,7 @@ export default function MesaApp({ mesaNumero }) {
       const itensLimpos = carrinho.map(({ _uid, _adKey, ...rest }) => rest);
       const result = await api.mesaPublica.pedido(mesaNumero, {
         itens: itensLimpos,
-        cliente_nome: clienteNome.trim() || "Cliente Mesa " + mesaNumero,
+        cliente_nome: clienteNome.trim() || (modoAtendente ? "Atendente — Mesa " + mesaNumero : "Cliente Mesa " + mesaNumero),
       });
       setCarrinho([]);
       setClienteNome("");
@@ -451,10 +479,18 @@ export default function MesaApp({ mesaNumero }) {
             <div style={{ fontSize: 13, color: "var(--new-green)", fontWeight: 700, marginBottom: 28, padding: "10px 16px", background: "rgba(5,150,105,0.1)", borderRadius: 10, border: "1.5px solid rgba(5,150,105,0.3)" }}>
               Seus itens foram enviados para a cozinha. O pagamento é feito no caixa ao final.
             </div>
-            <button onClick={() => setPedidoEnviado(null)}
-              style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 10, padding: "13px 28px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>
-              Fazer novo pedido
-            </button>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+              <button onClick={() => setPedidoEnviado(null)}
+                style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 10, padding: "13px 28px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>
+                Fazer novo pedido
+              </button>
+              {onVoltar && (
+                <button onClick={onVoltar}
+                  style={{ background: "var(--surface-warm)", color: "var(--text)", border: "1.5px solid var(--border-dark)", borderRadius: 10, padding: "13px 28px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>
+                  ← Voltar às mesas
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -475,10 +511,16 @@ export default function MesaApp({ mesaNumero }) {
         padding: "0 20px", height: 60,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {onVoltar && (
+            <button onClick={onVoltar}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 8, border: "1.5px solid var(--border-dark)", background: "var(--surface-warm)", color: "var(--text)", fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif" }}>
+              ← Mesas
+            </button>
+          )}
           <Logo size={36} radius={10} />
           <div>
             <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 15, color: "var(--text)", lineHeight: 1 }}>
-              Cardápio Digital
+              {modoAtendente ? "Atendimento" : "Cardápio Digital"}
             </div>
             <div style={{ fontSize: 11, color: "var(--brand)", fontWeight: 800, marginTop: 2 }}>
               Mesa {mesaNumero}
@@ -633,13 +675,30 @@ export default function MesaApp({ mesaNumero }) {
       {modalProduto && (
         <ModalProduto produto={modalProduto} adicionais={adicionaisParaProduto(modalProduto)}
           permiteAdicionais={!!catPermiteAdicionais[modalProduto.categoria] && adicionaisParaProduto(modalProduto).length > 0}
-          onAddSimples={(p, ads) => addCarrinhoSimples(p, ads)}
-          onAddComAdicionais={(p) => setModalAdicional(p)}
+          onAddSimples={(p, ads) => {
+            const card = cardapioDe(p);
+            if (precisaMontagem(p, card)) setModalMontagem({ produto: p, cardapio: card });
+            else addCarrinhoSimples(p, ads);
+          }}
+          onAddComAdicionais={(p) => {
+            const card = cardapioDe(p);
+            if (precisaMontagem(p, card)) setModalMontagem({ produto: p, cardapio: card });
+            else setModalAdicional(p);
+          }}
           onClose={() => setModalProduto(null)} />
       )}
       {modalAdicional && (
         <ModalAdicionais produto={modalAdicional} adicionais={adicionaisParaProduto(modalAdicional)}
           onConfirm={confirmarAdicionais} onClose={() => setModalAdicional(null)} />
+      )}
+      {modalMontagem && (
+        <MontagemProduto
+          produto={modalMontagem.produto}
+          cardapio={modalMontagem.cardapio}
+          adicionais={adicionaisParaProduto(modalMontagem.produto)}
+          irmaos={produtos.filter(p => p.categoria === modalMontagem.produto.categoria)}
+          onConfirm={addItemMontado}
+          onClose={() => setModalMontagem(null)} />
       )}
       {toast && <div className="mesa-toast" style={{ background: toast.cor || "var(--brand)" }}>{toast.msg}</div>}
     </div>

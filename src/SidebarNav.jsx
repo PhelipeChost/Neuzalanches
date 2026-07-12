@@ -11,6 +11,7 @@ const NEXUS_ADMIN_EMAIL = "reinonexusideal@gmail.com";
 // inicial do PDV) — é área do Operador Nexus, não do estabelecimento.
 const SECOES = [
   { grupo: "operação",  key: "caixa",       icon: "🧾", label: "Frente de Caixa" },
+  { grupo: "operação",  key: "mesas",       icon: "🍽️", label: "Atender Mesas" },   // só no build online
   { grupo: "operação",  key: "cozinha",     icon: "🔥", label: "Cozinha" },
   { grupo: "operação",  key: "pedidos",     icon: "📋", label: "Pedidos Online" },
   { grupo: "cadastros", key: "produtos",    icon: "🍔", label: "Produtos e Promoções" },
