@@ -3,7 +3,7 @@ import { api } from "./api";
 import QRCode from "qrcode";
 import { agenteStatus, imprimirBytesViaAgente, gerarQRMesaBytes } from "./cozinhaImpressoraUSB";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
-import { cardapioDoProduto, precoExibicao } from "./segmentos";
+import { cardapioDoProduto, precoExibicao, produtoPorPeso, fmtQuantidade, fmtPrecoUnitario } from "./segmentos";
 
 const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -97,11 +97,11 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [modalUltimasVendas, setModalUltimasVendas] = useState(false);
   // Modal alterar qtd (F5): guarda o item que será editado
   const [modalAlterarQtd, setModalAlterarQtd] = useState(null);
-  // Vendas suspensas (F7) — persistem em localStorage entre reinícios
+  // Vendas suspensas (F7) — persistem em localStorage entre reinícios. Exibidas
+  // num card dedicado na coluna direita (abaixo da comanda/venda rápida).
   const [vendasSuspensas, setVendasSuspensas] = useState(() => {
     try { return JSON.parse(localStorage.getItem("fc_vendas_suspensas") || "[]"); } catch { return []; }
   });
-  const [modalRetomarVenda, setModalRetomarVenda] = useState(false);
 
   // Modal abrir comanda
   const [modalAbrir, setModalAbrir] = useState(null);
@@ -116,6 +116,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
 
   // Montagem por segmento (pizza meio a meio, açaí…): { produto, cardapio, destino }
   const [modalMontagem, setModalMontagem] = useState(null);
+  // Prompt de peso para produtos por kg (peixaria etc): { produto, destino }
+  const [modalPeso, setModalPeso] = useState(null);
+  const [pesoInput, setPesoInput] = useState("");
   const [categorias, setCategorias] = useState([]);
   const [adicionais, setAdicionais] = useState([]);
   const [cardapios, setCardapios] = useState([]);
@@ -138,6 +141,13 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [agenteQROnline, setAgenteQROnline] = useState(false);
   // Nome do estabelecimento (vai no topo do cupom do QR). Cache local p/ uso imediato.
   const marcaRef = useRef((() => { try { return localStorage.getItem("nl_nome_estab") || ""; } catch { return ""; } })());
+  // Carrossel de produtos (Mapa do Salão): evita que a lista de produtos empurre
+  // o Mapa de Mesas pra fora da tela quando há muitos itens cadastrados.
+  const prodCarrosselRef = useRef(null);
+  const rolarCarrossel = (dir) => {
+    const el = prodCarrosselRef.current;
+    if (el) el.scrollBy({ left: dir * 340, behavior: "smooth" });
+  };
   useEffect(() => {
     api.config.estabelecimento()
       .then(r => { const n = (r && r.nome_estabelecimento) || ""; if (n) { marcaRef.current = n; try { localStorage.setItem("nl_nome_estab", n); } catch {} } })
@@ -443,7 +453,10 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         cliente_nome: balcaoCliente || "Balcão",
         itens: balcaoItens.map(it => ({
           produto_id: it.produto_id,
-          produto_nome: it.nome,
+          // Itens por peso: nome carrega o peso pra ficar claro na cozinha/impressão
+          produto_nome: it.por_peso
+            ? `${Number(it.qtd || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} kg × ${it.nome}`
+            : it.nome,
           quantidade: it.qtd,
           preco_unitario: it.preco,
           adicionais: it.adicionais || [],
@@ -473,11 +486,57 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
       setModalMontagem({ produto: prod, cardapio: card, destino: "balcao" });
       return;
     }
+    // Produto vendido por peso (peixaria etc.): pede o peso em kg antes.
+    // Cada peça é única (peso varia), então NÃO agrupa com item existente.
+    if (produtoPorPeso(prod)) {
+      setModalPeso({ produto: prod, destino: "balcao" });
+      setPesoInput("");
+      return;
+    }
     setBalcaoItens(prev => {
       const existing = prev.find(it => it.produto_id === prod.id && !it._uid);
       if (existing) return prev.map(it => (it.produto_id === prod.id && !it._uid) ? { ...it, qtd: it.qtd + 1 } : it);
       return [...prev, { produto_id: prod.id, nome: prod.nome, preco: prod.preco, qtd: 1 }];
     });
+  };
+
+  // Confirma o peso e adiciona o item por peso ao carrinho/comanda.
+  // Opção A: reaproveita `qtd` para guardar o PESO (0.350 kg) e `preco` continua
+  // sendo o preço por kg. Total = qtd × preco (mesma matemática de sempre).
+  const confirmarPeso = async () => {
+    if (!modalPeso) return;
+    const kg = parseFloat(String(pesoInput).replace(",", "."));
+    if (!kg || kg <= 0) { showToast("Digite um peso válido (ex: 0,350)", "var(--danger)"); return; }
+    const { produto, destino } = modalPeso;
+    if (destino === "balcao") {
+      setBalcaoItens(prev => [...prev, {
+        _uid: `peso_${Date.now()}`,
+        produto_id: produto.id,
+        nome: produto.nome,
+        preco: produto.preco,
+        qtd: kg,
+        por_peso: true,
+      }]);
+    } else if (destino === "comanda" && comanda) {
+      try {
+        await api.comandas.itens.adicionar(comanda.id, {
+          produto_id: produto.id,
+          produto_nome: `${kg.toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} kg × ${produto.nome}`,
+          quantidade: kg,
+          preco_unitario: produto.preco,
+          obs: "por peso",
+          origem: "caixa",
+        });
+        const it = await api.comandas.itens.listar(comanda.id);
+        setItens(it);
+        const c = await api.comandas.buscar(comanda.id);
+        setComanda(c);
+        await carregarTudo();
+      } catch (err) { showToast(err.message, "var(--danger)"); }
+    }
+    setModalPeso(null);
+    setPesoInput("");
+    showToast(`${produto.nome} · ${kg.toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} kg`);
   };
 
   // Item montado confirmado (balcão ou comanda)
@@ -536,7 +595,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     setBalcaoItens([]); setBalcaoCliente(""); setBalcaoSel(null);
     setBalcaoDesconto({ tipo: "valor", valor: 0 });
     setModalDesconto(false); setModalBuscarProduto(false); setModalUltimasVendas(false);
-    setModalAlterarQtd(null); setModalRetomarVenda(false);
+    setModalAlterarQtd(null);
     setModalPagamento(null);
   }, []);
 
@@ -557,8 +616,13 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     const restantes = vendasSuspensas.filter(v => v.id !== venda.id);
     setVendasSuspensas(restantes);
     try { localStorage.setItem("fc_vendas_suspensas", JSON.stringify(restantes)); } catch {}
-    setModalRetomarVenda(false);
     showToast("Venda retomada");
+  }, [vendasSuspensas]);
+
+  const descartarVendaSuspensa = useCallback((id) => {
+    const restantes = vendasSuspensas.filter(v => v.id !== id);
+    setVendasSuspensas(restantes);
+    try { localStorage.setItem("fc_vendas_suspensas", JSON.stringify(restantes)); } catch {}
   }, [vendasSuspensas]);
 
   // Busca produto por código exato (leitor de código de barras) e joga no carrinho
@@ -576,20 +640,24 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   }, []);
 
   useEffect(() => {
-    if (modoPerfil !== "balcao") return;
+    // F-keys valem em AMBOS os modos: balcão sempre; mesas como FALLBACK
+    // do balcão (o painel Venda Rápida agora vive INLINE no salão). Se o
+    // caixa lançar sem selecionar mesa, o pedido cai como venda de balcão
+    // — funciona pra corrigir problema no cardápio digital/pedido do garçom.
     const onKey = (e) => {
       // Não intercepta quando está digitando num input/textarea (exceto F1/F8/F10/ESC)
       const tag = (e.target && e.target.tagName || "").toLowerCase();
       const digitando = tag === "input" || tag === "textarea" || tag === "select";
-      // ESC sempre passa (fecha modais)
+      // ESC sempre passa (fecha modais). No modo mesas, ESC também fecha o overlay.
       if (e.key === "Escape") {
         if (modalBuscarProduto) { e.preventDefault(); setModalBuscarProduto(false); return; }
         if (modalDesconto) { e.preventDefault(); setModalDesconto(false); return; }
         if (modalUltimasVendas) { e.preventDefault(); setModalUltimasVendas(false); return; }
-        if (modalRetomarVenda) { e.preventDefault(); setModalRetomarVenda(false); return; }
         if (modalAlterarQtd) { e.preventDefault(); setModalAlterarQtd(null); return; }
+        if (modalPeso) { e.preventDefault(); setModalPeso(null); return; }
         if (modalPagamento) { e.preventDefault(); setModalPagamento(null); return; }
         if (modalCaixa) { e.preventDefault(); setModalCaixa(null); return; }
+        if (modalQR) { e.preventDefault(); setModalQR(false); return; }
         return;
       }
       // Se está digitando, só aceita F-keys, não outras
@@ -630,7 +698,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [modoPerfil, balcaoItens, balcaoPedidos, sessao, modalBuscarProduto, modalDesconto,
-      modalUltimasVendas, modalRetomarVenda, modalAlterarQtd, modalPagamento, modalCaixa,
+      modalUltimasVendas, modalAlterarQtd, modalPeso, modalPagamento, modalCaixa, modalQR,
       novaVenda, suspenderVenda]);
 
   // Marcar item da fila como pronto
@@ -745,7 +813,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         .fc-map-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
         .fc-salon-bg { background: linear-gradient(135deg, ${isDark ? "#1F1610" : "#FFFBEB"} 0%, ${isDark ? "#2A1E12" : "#FEF3C7"} 100%); padding: 28px 24px; position: relative; }
         .fc-salon-bg::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(circle at 1px 1px, ${isDark ? "rgba(251,191,36,0.06)" : "rgba(217,119,6,0.05)"} 1px, transparent 0); background-size: 22px 22px; pointer-events: none; }
-        .fc-mesas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; position: relative; z-index: 1; }
+        .fc-mesas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; position: relative; z-index: 1; }
         .fc-mesa { aspect-ratio: 1/1; background: var(--surface); border-radius: 16px; padding: 14px; cursor: pointer; border: 2px solid transparent; box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04); transition: transform 0.18s cubic-bezier(0.4,0,0.2,1), box-shadow 0.18s, border-color 0.18s; display: flex; flex-direction: column; position: relative; overflow: hidden; }
         .fc-mesa:hover { transform: translateY(-3px); box-shadow: 0 4px 8px rgba(0,0,0,0.06), 0 12px 28px rgba(217,119,6,0.15); border-color: var(--gold); }
         .fc-mesa.selected { transform: translateY(-3px); border-color: var(--gold-deep); box-shadow: 0 4px 8px rgba(0,0,0,0.08), 0 16px 32px rgba(217,119,6,0.22); }
@@ -789,7 +857,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
           .fc-topbar > div[style*="width: 1px"], .fc-topbar > div[style*="width:1px"] { display: none; }
           .fc-layout { padding: 16px; }
           .fc-salon-bg { padding: 18px 14px; }
-          .fc-mesas-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+          .fc-mesas-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
           .fc-prod-grid { grid-template-columns: 1fr; }
         }
       `}</style>
@@ -873,6 +941,72 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 700, letterSpacing: -0.3, lineHeight: 1.1 }}>{stats ? fmtBRL(stats.faturamento.total) : "..."}</div>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>{stats ? stats.faturamento.pedidos : 0} comandas fechadas</div>
             </div>
+          </div>
+
+          {/* ─── VENDA RÁPIDA INLINE ─── (Produtos + F-keys) ───────────────── */}
+          {/* Fallback pro balcão: quando o cardápio digital ou o pedido do
+              garçom dá problema, o caixa lança pelo balcão sem sair do salão. */}
+          <div className="fc-map-card" style={{ marginBottom: 20 }}>
+            <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: -0.2 }}>Produtos</div>
+              <input className="fc-input" value={balcaoBusca}
+                onChange={e => setBalcaoBusca(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && balcaoBusca.trim()) {
+                    const q = balcaoBusca.toLowerCase();
+                    const codMatch = produtos.find(p => (p.codigo || "").trim() === balcaoBusca.trim());
+                    if (codMatch) { handleAddBalcaoItem(codMatch); showToast(`✓ ${codMatch.nome}`); setBalcaoBusca(""); }
+                    else {
+                      const primeiro = produtos.find(p => p.nome.toLowerCase().includes(q));
+                      if (primeiro) { handleAddBalcaoItem(primeiro); setBalcaoBusca(""); }
+                    }
+                  }
+                }}
+                placeholder="Buscar produto / código (Enter) — F2 abre busca"
+                style={{ width: 380, maxWidth: "100%", fontSize: 12 }}
+              />
+            </div>
+            <div style={{ padding: "12px 6px", display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={() => rolarCarrossel(-1)} title="Anterior"
+                style={{ flexShrink: 0, width: 30, height: 60, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--surface)", color: "var(--text-muted)", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>‹</button>
+              <div ref={prodCarrosselRef} style={{ display: "flex", gap: 10, overflowX: "auto", scrollSnapType: "x proximity", padding: "0 4px", scrollbarWidth: "thin" }}>
+                {produtos.filter(p => {
+                  if (!balcaoBusca) return true;
+                  const q = balcaoBusca.toLowerCase();
+                  return p.nome.toLowerCase().includes(q) || (p.codigo || "").toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q);
+                }).map(prod => (
+                  <div key={prod.id} className="fc-prod-item" onClick={() => handleAddBalcaoItem(prod)}
+                    style={{ flex: "0 0 150px", scrollSnapAlign: "start" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>{prod.nome}</div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(prod.preco)}</div>
+                    {prod.categoria && <div style={{ fontSize: 10, color: "var(--text-soft)", marginTop: 2 }}>{prod.categoria}</div>}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => rolarCarrossel(1)} title="Próximo"
+                style={{ flexShrink: 0, width: 30, height: 60, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--surface)", color: "var(--text-muted)", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>›</button>
+            </div>
+          </div>
+
+          {/* BARRA DE ATALHOS F1-F10 (inline no salão) */}
+          <div style={{ marginBottom: 20, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 10, padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[
+              { k: "F1", l: "Nova", act: novaVenda, color: "var(--info)" },
+              { k: "F2", l: "Buscar", act: () => { setModalBuscarProduto(true); setBuscaProdutoTermo(""); }, color: "var(--gold-deep)" },
+              { k: "F3", l: "Desconto", act: () => setModalDesconto(true), color: "var(--warning)" },
+              { k: "F5", l: "Qtd", act: () => balcaoItens.length && setModalAlterarQtd(balcaoItens[balcaoItens.length - 1]), color: "var(--info)" },
+              { k: "F6", l: "Cancelar item", act: () => { if (balcaoItens.length) { setBalcaoItens(prev => prev.slice(0, -1)); showToast("Item removido"); } }, color: "var(--danger)" },
+              { k: "F7", l: "Suspender", act: suspenderVenda, color: "var(--warning)" },
+              { k: "F8", l: "Finalizar", act: () => balcaoItens.length && handleCriarPedidoBalcao(), color: "var(--success)" },
+              { k: "F9", l: "Últimas", act: () => setModalUltimasVendas(true), color: "var(--text-muted)" },
+              { k: "F10", l: sessao ? "Caixa" : "Abrir caixa", act: () => setModalCaixa(sessao ? "sangria" : "abrir"), color: "var(--gold-deep)" },
+            ].map(a => (
+              <button key={a.k} onClick={a.act}
+                style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--surface-2)", border: `1.5px solid var(--border)`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", color: "var(--text)", fontFamily: "inherit" }}>
+                <span style={{ background: a.color, color: "#fff", fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 4 }}>{a.k}</span>
+                {a.l}
+              </button>
+            ))}
           </div>
 
           {/* MAPA DE MESAS */}
@@ -985,6 +1119,46 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         {/* ─── COLUNA DIREITA ─── */}
         <aside style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
+          {/* CARRINHO DE VENDA RÁPIDA — visível quando NÃO há mesa selecionada
+              mas o caixa começou a lançar produtos (fallback do balcão). */}
+          {!comanda && balcaoItens.length > 0 && (
+            <div className="fc-side-card">
+              <div className="fc-side-head" style={{ background: "var(--gold-soft)", color: "var(--gold-deep)", borderColor: "var(--gold)" }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6 }}>🏪 Venda Rápida</div>
+                <span className="fc-pill" style={{ background: "var(--gold-deep)", color: "#fff" }}>{balcaoItens.length} item{balcaoItens.length !== 1 ? "s" : ""}</span>
+              </div>
+              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
+                {balcaoItens.map(it => (
+                  <div key={it._uid || it.produto_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "var(--surface-2)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 }}>{it.nome}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                        {fmtQuantidade(it.qtd, it.por_peso)} × {fmtPrecoUnitario(it.preco, it.por_peso)}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap" }}>{fmtBRL((it.preco + itemAdTotal(it)) * it.qtd)}</div>
+                      <button onClick={() => handleRemoveBalcaoItem(it._uid || it.produto_id)}
+                        style={{ width: 20, height: 20, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 }}>×</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--surface-2)" }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>Total</div>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--gold-deep)" }}>
+                    {fmtBRL(balcaoTotal)}
+                  </div>
+                </div>
+                <button onClick={() => balcaoItens.length && handleCriarPedidoBalcao()}
+                  style={{ padding: "10px 18px", background: "var(--success)", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                  ✓ Finalizar <span style={{ opacity: 0.8, marginLeft: 4, fontSize: 10 }}>F8</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* COMANDA DA MESA SELECIONADA */}
           <div className="fc-side-card">
             <div className="fc-side-head">
@@ -1048,6 +1222,32 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               </div>
             )}
           </div>
+
+          {/* VENDAS SUSPENSAS — card dedicado (F7 suspende; clique no item retoma) */}
+          {vendasSuspensas.length > 0 && (
+            <div className="fc-side-card">
+              <div className="fc-side-head" style={{ background: "var(--warning-bg)", color: "var(--warning)", borderColor: "var(--warning)" }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6 }}>⏸ Vendas suspensas</div>
+                <span className="fc-pill" style={{ background: "var(--warning)", color: "#fff" }}>{vendasSuspensas.length}</span>
+              </div>
+              <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+                {vendasSuspensas.map(v => {
+                  const sub = (v.itens || []).reduce((s, it) => s + (it.preco + itemAdTotal(it)) * it.qtd, 0);
+                  return (
+                    <div key={v.id} style={{ padding: "10px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => retomarVenda(v)}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{v.cliente || "Sem cliente"} · {v.itens.length} item{v.itens.length !== 1 ? "s" : ""}</div>
+                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{new Date(v.criada_em).toLocaleString("pt-BR")}</div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" }}>{fmtBRL(sub)}</div>
+                      <button onClick={() => descartarVendaSuspensa(v.id)}
+                        style={{ width: 22, height: 22, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>×</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* FILA DA COZINHA */}
           <div className="fc-side-card">
@@ -1183,14 +1383,15 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                 onChange={e => setBalcaoBusca(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === "Enter" && balcaoBusca.trim()) {
-                    // Enter: se casa código exato, adiciona direto; senão adiciona o primeiro do filtro
-                    const codMatch = produtos.find(p => (p.codigo || "").trim() === balcaoBusca.trim());
+                    // Enter: se casa código interno OU EAN exato, adiciona direto; senão adiciona o primeiro do filtro
+                    const termo = balcaoBusca.trim();
+                    const codMatch = produtos.find(p => (p.codigo || "").trim() === termo || (p.codigo_barras || "").trim() === termo);
                     if (codMatch) {
                       handleAddBalcaoItem(codMatch);
                       showToast(`✓ ${codMatch.nome}`);
                       setBalcaoBusca("");
                     } else {
-                      const primeiro = produtos.find(p => p.nome.toLowerCase().includes(balcaoBusca.toLowerCase()));
+                      const primeiro = produtos.find(p => p.nome.toLowerCase().includes(termo.toLowerCase()));
                       if (primeiro) { handleAddBalcaoItem(primeiro); setBalcaoBusca(""); }
                     }
                   }
@@ -1205,6 +1406,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                 const q = balcaoBusca.toLowerCase();
                 return p.nome.toLowerCase().includes(q)
                     || (p.codigo || "").toLowerCase().includes(q)
+                    || (p.codigo_barras || "").toLowerCase().includes(q)
                     || (p.categoria || "").toLowerCase().includes(q);
               }).map(prod => (
                 <div key={prod.id} className="fc-prod-item" onClick={() => handleAddBalcaoItem(prod)}>
@@ -1238,7 +1440,6 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               { k: "F8", l: "Finalizar", act: () => balcaoItens.length && handleCriarPedidoBalcao(), color: "var(--success)" },
               { k: "F9", l: "Últimas", act: () => setModalUltimasVendas(true), color: "var(--text-muted)" },
               { k: "F10", l: sessao ? "Caixa" : "Abrir caixa", act: () => setModalCaixa(sessao ? "sangria" : "abrir"), color: "var(--gold-deep)" },
-              ...(vendasSuspensas.length > 0 ? [{ k: "⏸", l: `${vendasSuspensas.length} suspensa${vendasSuspensas.length > 1 ? "s" : ""}`, act: () => setModalRetomarVenda(true), color: "var(--warning)" }] : []),
             ].map(a => (
               <button key={a.k} onClick={a.act}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", background: "var(--surface-2)", border: `1.5px solid var(--border)`, borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", color: "var(--text)", fontFamily: "inherit" }}>
@@ -1275,7 +1476,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                   ) : balcaoItens.map(it => (
                     <div key={it._uid || it.produto_id} className="fc-comanda-item" style={{ alignItems: "center" }}>
                       <div style={{ fontSize: 13, fontWeight: 600, minWidth: 0 }}>
-                        {it.qtd > 1 && <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{it.qtd}×</span>}
+                        {it.por_peso
+                          ? <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{fmtQuantidade(it.qtd, true)} ×</span>
+                          : (it.qtd > 1 && <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{it.qtd}×</span>)}
                         {it.nome}
                         {(it.adicionais || []).length > 0 && (
                           <div style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 500, marginTop: 2 }}>
@@ -1367,6 +1570,32 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               </>
             )}
           </div>
+
+          {/* VENDAS SUSPENSAS — card dedicado (F7 suspende; clique no item retoma) */}
+          {vendasSuspensas.length > 0 && (
+            <div className="fc-side-card">
+              <div className="fc-side-head" style={{ background: "var(--warning-bg)", color: "var(--warning)", borderColor: "var(--warning)" }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.6 }}>⏸ Vendas suspensas</div>
+                <span className="fc-pill" style={{ background: "var(--warning)", color: "#fff" }}>{vendasSuspensas.length}</span>
+              </div>
+              <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 6, maxHeight: 260, overflowY: "auto" }}>
+                {vendasSuspensas.map(v => {
+                  const sub = (v.itens || []).reduce((s, it) => s + (it.preco + itemAdTotal(it)) * it.qtd, 0);
+                  return (
+                    <div key={v.id} style={{ padding: "10px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => retomarVenda(v)}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700 }}>{v.cliente || "Sem cliente"} · {v.itens.length} item{v.itens.length !== 1 ? "s" : ""}</div>
+                        <div style={{ fontSize: 10.5, color: "var(--text-muted)" }}>{new Date(v.criada_em).toLocaleString("pt-BR")}</div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" }}>{fmtBRL(sub)}</div>
+                      <button onClick={() => descartarVendaSuspensa(v.id)}
+                        style={{ width: 22, height: 22, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>×</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* FILA DA COZINHA */}
           <div className="fc-side-card">
@@ -1642,26 +1871,37 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               onChange={e => setBuscaProdutoTermo(e.target.value)}
               onKeyDown={async e => {
                 if (e.key === "Enter" && buscaProdutoTermo.trim()) {
-                  const codMatch = produtos.find(p => (p.codigo || "").trim() === buscaProdutoTermo.trim());
+                  const termo = buscaProdutoTermo.trim();
+                  const codMatch = produtos.find(p => (p.codigo || "").trim() === termo || (p.codigo_barras || "").trim() === termo);
                   if (codMatch) { handleAddBalcaoItem(codMatch); showToast(`✓ ${codMatch.nome}`); setBuscaProdutoTermo(""); return; }
-                  const primeiro = produtos.find(p => p.nome.toLowerCase().includes(buscaProdutoTermo.toLowerCase()));
+                  const primeiro = produtos.find(p => p.nome.toLowerCase().includes(termo.toLowerCase()));
                   if (primeiro) { handleAddBalcaoItem(primeiro); showToast(`✓ ${primeiro.nome}`); setBuscaProdutoTermo(""); }
                 }
               }}
-              placeholder="Nome do produto ou código..." style={{ fontSize: 14, padding: "10px 14px" }} />
-            <div style={{ marginTop: 12, maxHeight: 320, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+              placeholder="Nome, código interno, EAN ou categoria..." style={{ fontSize: 14, padding: "10px 14px" }} />
+            <div style={{ marginTop: 12, maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
               {produtos.filter(p => {
                 if (!buscaProdutoTermo.trim()) return true;
                 const q = buscaProdutoTermo.toLowerCase();
-                return p.nome.toLowerCase().includes(q) || (p.codigo || "").toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q);
+                return p.nome.toLowerCase().includes(q)
+                  || (p.codigo || "").toLowerCase().includes(q)
+                  || (p.codigo_barras || "").toLowerCase().includes(q)
+                  || (p.categoria || "").toLowerCase().includes(q)
+                  || (p.ncm || "").toLowerCase().includes(q);
               }).slice(0, 30).map(p => (
                 <div key={p.id} onClick={() => { handleAddBalcaoItem(p); showToast(`✓ ${p.nome}`); setBuscaProdutoTermo(""); }}
-                  style={{ padding: "10px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
+                  style={{ padding: "10px 12px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>{p.nome}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.categoria || "—"}{p.codigo ? ` · cód. ${p.codigo}` : ""}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                      {p.categoria || "—"}
+                      {p.codigo ? <> · <span style={{ fontFamily: "monospace" }}>cód. {p.codigo}</span></> : null}
+                      {p.codigo_barras ? <> · <span style={{ fontFamily: "monospace" }}>EAN {p.codigo_barras}</span></> : null}
+                      {p.um && p.um !== "un" ? <> · <span style={{ textTransform: "uppercase", fontWeight: 700 }}>{p.um}</span></> : null}
+                      {p.ncm ? <> · NCM {p.ncm}</> : null}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(p.preco)}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap" }}>{fmtBRL(p.preco)}</div>
                 </div>
               ))}
             </div>
@@ -1704,20 +1944,59 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
       {modalAlterarQtd && (
         <div className="fc-modal-overlay" onClick={() => setModalAlterarQtd(null)}>
           <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 340 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Alterar quantidade (F5)</div>
-            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>{modalAlterarQtd.nome} · {fmtBRL(modalAlterarQtd.preco)} un.</div>
-            <input autoFocus className="fc-input" type="number" min="0" defaultValue={modalAlterarQtd.qtd}
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>
+              {modalAlterarQtd.por_peso ? "Alterar peso (F5)" : "Alterar quantidade (F5)"}
+            </div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>
+              {modalAlterarQtd.nome} · {fmtBRL(modalAlterarQtd.preco)}{modalAlterarQtd.por_peso ? "/kg" : " un."}
+            </div>
+            <input autoFocus className="fc-input" type="number"
+              min="0" step={modalAlterarQtd.por_peso ? "0.001" : "1"}
+              defaultValue={modalAlterarQtd.qtd}
               onKeyDown={e => {
                 if (e.key === "Enter") {
-                  const novaQtd = parseInt(e.target.value, 10);
+                  const raw = String(e.target.value).replace(",", ".");
+                  const nova = modalAlterarQtd.por_peso ? parseFloat(raw) : parseInt(raw, 10);
                   const chave = modalAlterarQtd._uid || modalAlterarQtd.produto_id;
-                  if (novaQtd <= 0) setBalcaoItens(prev => prev.filter(i => (i._uid || i.produto_id) !== chave));
-                  else setBalcaoItens(prev => prev.map(i => (i._uid || i.produto_id) === chave ? { ...i, qtd: novaQtd } : i));
+                  if (!nova || nova <= 0) setBalcaoItens(prev => prev.filter(i => (i._uid || i.produto_id) !== chave));
+                  else setBalcaoItens(prev => prev.map(i => (i._uid || i.produto_id) === chave ? { ...i, qtd: nova } : i));
                   setModalAlterarQtd(null);
                 }
               }}
               style={{ fontSize: 22, textAlign: "center", padding: "14px" }} />
-            <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>Enter confirma · ESC cancela</div>
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
+              {modalAlterarQtd.por_peso ? "Digite o peso em kg (ex: 0,350) · Enter confirma" : "Enter confirma · ESC cancela"}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: PESO DA PEÇA (produtos vendidos por kg) ─── */}
+      {modalPeso && (
+        <div className="fc-modal-overlay" onClick={() => setModalPeso(null)}>
+          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 360 }}>
+            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Peso da peça</div>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>
+              {modalPeso.produto.nome} · {fmtBRL(modalPeso.produto.preco)}/kg
+            </div>
+            <input autoFocus className="fc-input" type="number" min="0" step="0.001"
+              value={pesoInput}
+              onChange={e => setPesoInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") confirmarPeso(); }}
+              placeholder="Ex: 0,350"
+              style={{ fontSize: 22, textAlign: "center", padding: "14px" }} />
+            {pesoInput && !isNaN(parseFloat(String(pesoInput).replace(",", "."))) && (
+              <div style={{ marginTop: 10, padding: "10px 14px", background: "var(--surface-2)", borderRadius: 8, textAlign: "center", fontSize: 13 }}>
+                <b>Total:</b> {fmtBRL(parseFloat(String(pesoInput).replace(",", ".")) * modalPeso.produto.preco)}
+              </div>
+            )}
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
+              Digite o peso em kg (ex: 0,350 = 350g) · Enter confirma · ESC cancela
+            </div>
+            <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+              <button className="fc-btn fc-btn-secondary" style={{ flex: 1 }} onClick={() => setModalPeso(null)}>Cancelar</button>
+              <button className="fc-btn fc-btn-primary" style={{ flex: 2 }} onClick={confirmarPeso}>Adicionar</button>
+            </div>
           </div>
         </div>
       )}
@@ -1750,39 +2029,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         </div>
       )}
 
-      {/* ─── MODAL: RETOMAR VENDA SUSPENSA (F7 → retomar) ─── */}
-      {modalRetomarVenda && (
-        <div className="fc-modal-overlay" onClick={() => setModalRetomarVenda(false)}>
-          <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 520 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>⏸ Vendas suspensas</div>
-            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Clique para retomar. Ficam salvas mesmo se o PDV fechar.</div>
-            <div style={{ maxHeight: 400, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
-              {vendasSuspensas.length === 0 ? (
-                <div style={{ padding: 20, textAlign: "center", color: "var(--text-soft)" }}>Nenhuma venda suspensa.</div>
-              ) : vendasSuspensas.map(v => {
-                const sub = (v.itens || []).reduce((s, it) => s + it.preco * it.qtd, 0);
-                return (
-                  <div key={v.id} style={{ padding: "12px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, display: "flex", gap: 10, alignItems: "center" }}>
-                    <div style={{ flex: 1, cursor: "pointer" }} onClick={() => retomarVenda(v)}>
-                      <div style={{ fontSize: 13, fontWeight: 700 }}>{v.cliente || "Sem cliente"} · {v.itens.length} item{v.itens.length !== 1 ? "s" : ""}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(v.criada_em).toLocaleString("pt-BR")}</div>
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 800 }}>{fmtBRL(sub)}</div>
-                    <button onClick={() => {
-                      const restantes = vendasSuspensas.filter(x => x.id !== v.id);
-                      setVendasSuspensas(restantes);
-                      try { localStorage.setItem("fc_vendas_suspensas", JSON.stringify(restantes)); } catch {}
-                    }} style={{ width: 26, height: 26, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>×</button>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-              <button className="fc-btn fc-btn-secondary" onClick={() => setModalRetomarVenda(false)}>Fechar (ESC)</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Vendas suspensas agora vivem num card fixo na coluna direita — ver fc-side-card "⏸ Vendas suspensas" */}
 
       {/* ─── MODAL: PAGAMENTO ─── */}
       {modalPagamento && (

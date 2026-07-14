@@ -147,17 +147,30 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
   const [busca, setBusca] = useState("");
   const [modalAberto, setModalAberto] = useState(false);
   const [editando, setEditando] = useState(null);
-  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", eh_insumo: false });
+  // Tipo do item: revenda (produto direto de venda) | insumo (ficha técnica) | interno (uso do estabelecimento)
+  const [tipoFiltro, setTipoFiltro] = useState("todos"); // todos|revenda|insumo|interno
+  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", tipo: "revenda" });
   const [saving, setSaving] = useState(false);
+
+  const tipoDe = (i) => i.tipo || (i.eh_insumo ? "insumo" : "revenda");
+
+  const contagem = useMemo(() => {
+    const c = { revenda: 0, insumo: 0, interno: 0 };
+    for (const i of itens) c[tipoDe(i)] = (c[tipoDe(i)] || 0) + 1;
+    return c;
+  }, [itens]);
 
   const itensFiltrados = useMemo(() => {
     const q = busca.toLowerCase();
-    return itens.filter(i => !q || i.nome.toLowerCase().includes(q) || i.codigo.toLowerCase().includes(q));
-  }, [itens, busca]);
+    return itens.filter(i => {
+      if (tipoFiltro !== "todos" && tipoDe(i) !== tipoFiltro) return false;
+      return !q || i.nome.toLowerCase().includes(q) || i.codigo.toLowerCase().includes(q);
+    });
+  }, [itens, busca, tipoFiltro]);
 
   const abrirNovo = () => {
     setEditando(null);
-    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", eh_insumo: false });
+    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", tipo: tipoFiltro !== "todos" ? tipoFiltro : "revenda" });
     setModalAberto(true);
   };
 
@@ -168,13 +181,16 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
       categoria_id: item.categoria_id || "", fornecedor_id: item.fornecedor_id || "",
       estoque_minimo: item.estoque_minimo || "", estoque_maximo: item.estoque_maximo || "",
       custo_manual: (item.custo_manual != null && item.custo_manual !== 0) ? item.custo_manual : "",
-      eh_insumo: item.eh_insumo !== 0,
+      tipo: tipoDe(item),
     });
     setModalAberto(true);
   };
 
   const salvar = async () => {
-    if (!form.codigo.trim() || !form.nome.trim()) return showToast("Código e nome são obrigatórios", "#dc2626");
+    // Código: quando criando, backend gera automaticamente. Só cobra na edição
+    // (onde o código já existe).
+    if (editando && !form.codigo.trim()) return showToast("Código obrigatório", "#dc2626");
+    if (!form.nome.trim()) return showToast("Nome obrigatório", "#dc2626");
     setSaving(true);
     try {
       const data = {
@@ -184,7 +200,8 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
         estoque_minimo: parseFloat(form.estoque_minimo) || 0,
         estoque_maximo: parseFloat(form.estoque_maximo) || 0,
         custo_manual: parseFloat(form.custo_manual) || 0,
-        eh_insumo: !!form.eh_insumo,
+        tipo: form.tipo || "revenda",
+        eh_insumo: form.tipo === "insumo",
       };
       if (editando) {
         await api.estoque.itens.atualizar(editando.id, { ...data, ativo: editando.ativo });
@@ -235,6 +252,20 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
       <>
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
         <input className="search" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar item..." style={{ maxWidth: 260 }} />
+        <div style={{ display: "flex", gap: 4, background: "#f5f5f4", padding: 3, borderRadius: 10 }}>
+          {[
+            { k: "todos",   l: "Todos",     n: itens.length },
+            { k: "revenda", l: "🛒 Revenda", n: contagem.revenda },
+            { k: "insumo",  l: "🥣 Insumos", n: contagem.insumo },
+            { k: "interno", l: "🏢 Interno", n: contagem.interno },
+          ].map(t => (
+            <button key={t.k} onClick={() => setTipoFiltro(t.k)}
+              title={t.k === "revenda" ? "Produtos vendidos diretamente" : t.k === "insumo" ? "Ingredientes usados na ficha técnica" : t.k === "interno" ? "Uso do estabelecimento (sacolas, papel, limpeza…)" : "Todos os itens"}
+              style={{ padding: "6px 12px", borderRadius: 7, border: "none", background: tipoFiltro === t.k ? "#fff" : "transparent", color: tipoFiltro === t.k ? "#1c1917" : "#78716c", fontWeight: tipoFiltro === t.k ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", boxShadow: tipoFiltro === t.k ? "0 1px 4px rgba(0,0,0,0.08)" : "none", whiteSpace: "nowrap" }}>
+              {t.l} <span style={{ opacity: 0.6, marginLeft: 4 }}>({t.n})</span>
+            </button>
+          ))}
+        </div>
         <div style={{ flex: 1 }} />
         <button onClick={abrirNovo} style={btnPrimary}>+ Novo Item</button>
       </div>
@@ -257,7 +288,13 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
                   <td style={{ padding: "10px 10px", fontWeight: 600, fontFamily: "monospace", fontSize: 12 }}>{i.codigo}</td>
                   <td style={{ padding: "10px 10px", fontWeight: 500 }}>
                     {i.nome}
-                    {i.eh_insumo !== 0 && <span title="Este item é um insumo (ficha técnica)" style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: "#f0fdf4", color: "#15803d", verticalAlign: "middle" }}>INSUMO</span>}
+                    {(() => {
+                      const t = tipoDe(i);
+                      const meta = t === "insumo"  ? { l: "INSUMO",  bg: "#f0fdf4", fg: "#15803d", title: "Ingrediente usado em ficha técnica" }
+                                 : t === "interno" ? { l: "INTERNO", bg: "#f1f5f9", fg: "#334155", title: "Uso do estabelecimento (não vende)" }
+                                 :                    { l: "REVENDA", bg: "#eff6ff", fg: "#2563eb", title: "Produto vendido diretamente" };
+                      return <span title={meta.title} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: meta.bg, color: meta.fg, verticalAlign: "middle" }}>{meta.l}</span>;
+                    })()}
                   </td>
                   <td style={{ padding: "10px 10px", color: "#78716c" }}>{i.unidade}</td>
                   <td style={{ padding: "10px 10px", color: "#78716c" }}>{i.categoria_nome || "—"}</td>
@@ -294,15 +331,23 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>{editando ? "Editar Item" : "Novo Item de Estoque"}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ display: "flex", gap: 10 }}>
-                <div style={{ flex: "0 0 140px" }}>
-                  <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>CÓDIGO *</label>
-                  <input style={inp} value={form.codigo} onChange={e => setForm({ ...form, codigo: e.target.value.toUpperCase() })} placeholder="Ex: MAT001" />
-                </div>
+                {editando ? (
+                  <div style={{ flex: "0 0 140px" }}>
+                    <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>CÓDIGO</label>
+                    <input style={{ ...inp, background: "#fafaf9", fontFamily: "monospace", fontWeight: 700 }}
+                      value={form.codigo} readOnly title="Código gerado automaticamente na criação" />
+                  </div>
+                ) : null}
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>NOME *</label>
                   <input style={inp} value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Nome do item" />
                 </div>
               </div>
+              {!editando && (
+                <div style={{ fontSize: 11, color: "#78716c", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 12px", marginTop: -4 }}>
+                  🔖 O código de busca será gerado automaticamente (letras + números).
+                </div>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
                 <div style={{ flex: 1 }}>
                   <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>UNIDADE</label>
@@ -342,18 +387,32 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
                   Usado na ficha técnica enquanto não houver entradas. Após registrar entradas, vale o custo médio.
                 </div>
               </div>
-              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 10, cursor: "pointer",
-                border: `1.5px solid ${form.eh_insumo ? "#15803d" : "#e7e5e4"}`, background: form.eh_insumo ? "#f0fdf4" : "#fafaf9" }}>
-                <input type="checkbox" checked={!!form.eh_insumo} onChange={e => setForm({ ...form, eh_insumo: e.target.checked })}
-                  style={{ accentColor: "#15803d", marginTop: 2 }} />
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: form.eh_insumo ? "#15803d" : "#1c1917" }}>Este item é um insumo?</div>
-                  <div style={{ fontSize: 11, color: "#78716c", marginTop: 2 }}>
-                    Insumos aparecem na ficha técnica dos produtos (cálculo de CMV). Itens de uso
-                    geral (ex: material de limpeza) não precisam ser insumos.
-                  </div>
+              <div>
+                <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 6 }}>TIPO DO ITEM</label>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                  {[
+                    { k: "revenda", ic: "🛒", l: "Revenda",  d: "Produto vendido diretamente ao cliente" },
+                    { k: "insumo",  ic: "🥣", l: "Insumo",   d: "Ingrediente usado na ficha técnica de produtos" },
+                    { k: "interno", ic: "🏢", l: "Interno",  d: "Uso do estabelecimento (sacola, papel, limpeza)" },
+                  ].map(t => {
+                    const sel = form.tipo === t.k;
+                    const cor = t.k === "insumo" ? "#15803d" : t.k === "interno" ? "#334155" : "#2563eb";
+                    return (
+                      <label key={t.k} title={t.d}
+                        style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "12px 8px", borderRadius: 10, cursor: "pointer",
+                          border: `1.5px solid ${sel ? cor : "#e7e5e4"}`, background: sel ? (cor + "12") : "#fafaf9", textAlign: "center" }}>
+                        <input type="radio" name="tipoItem" value={t.k} checked={sel} onChange={() => setForm({ ...form, tipo: t.k })} style={{ display: "none" }} />
+                        <div style={{ fontSize: 22 }}>{t.ic}</div>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: sel ? cor : "#1c1917" }}>{t.l}</div>
+                        <div style={{ fontSize: 10, color: "#78716c", lineHeight: 1.3 }}>{t.d}</div>
+                      </label>
+                    );
+                  })}
                 </div>
-              </label>
+                <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 6, fontStyle: "italic" }}>
+                  Produtos com "Pertence ao estoque?" ligado entram automaticamente como <b>Revenda</b>.
+                </div>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 20, justifyContent: "flex-end" }}>
               <button onClick={() => setModalAberto(false)} style={btnSecondary}>Cancelar</button>

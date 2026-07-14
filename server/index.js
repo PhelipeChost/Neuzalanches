@@ -17,6 +17,7 @@ import {
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, reordenarCategorias, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
   listarProdutos, buscarProduto, buscarProdutoPorCodigo, criarProduto, atualizarProduto, excluirProduto,
+  importarProdutosEmLote,
   listarPromocoes, listarPromocoesAtivas, criarPromocao, atualizarPromocao,
   listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
   pedidosAlteradosDesde, upsertPedidoSync, upsertCatalogoSync,
@@ -41,10 +42,11 @@ import {
   listarFilaCozinha, listarFilaCozinhaUnificada, estatisticasCaixa,
   registrarVisita, getCardapioStats, getRankingVendas,
   obterFiscalConfig, salvarFiscalConfig, salvarCertificadoA1, removerCertificadoA1,
-  emitirNFCe, listarNFCe,
+  emitirNFCe, listarNFCe, verificarPendentesFocus,
+  montarRelatorioFiscalMensal, marcarRelatorioFiscalEnviado, verificarEnvioRelatorioFiscalPendente,
   consultarStatusSefazAntigo, emitirNFCeAntigo, listarNFCeAntigo, obterXmlNFCeAntigo,
   obterSessaoAberta, abrirCaixa, registrarMovimentoCaixa, fecharCaixa, listarMovimentosCaixa,
-  listarCardapios, criarCardapio, atualizarCardapio, excluirCardapio,
+  listarCardapios, criarCardapio, atualizarCardapio, excluirCardapio, contarOrfaosCardapio,
   definirCategoriasCardapio, definirAdicionaisCardapio, garantirCardapioPrincipal,
   listarCardapiosPorCategoria, listarCardapiosPorAdicional,
   caminhoBanco, backupBanco,
@@ -251,12 +253,22 @@ app.get("/api/config", authMiddleware, adminOnly, (req, res) => {
     evolution_instance: obterConfig("evolution_instance") || "",
     pix_key: obterConfig("pix_key") || "",
     pix_nome: obterConfig("pix_nome") || "",
+    estoque_conectado_financeiro: obterConfig("estoque_conectado_financeiro") === "1",
+    // Modo do módulo "Lista de Pedidos": "cozinha" (padrão histórico — com
+    // preparação/pronto) ou "impressao" (só imprime cupom, sem etapas — usado
+    // por estabelecimentos que não preparam alimento, como peixaria).
+    modo_lista_pedidos: obterConfig("modo_lista_pedidos") || "cozinha",
   });
 });
 
 app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
   const { saldo_inicial, nome_estabelecimento, whatsapp, logo, link_exibicao, mensagem_alerta,
-    evolution_url, evolution_key, evolution_instance, pix_key, pix_nome } = req.body;
+    evolution_url, evolution_key, evolution_instance, pix_key, pix_nome, estoque_conectado_financeiro,
+    modo_lista_pedidos } = req.body;
+  if (estoque_conectado_financeiro !== undefined) salvarConfig("estoque_conectado_financeiro", estoque_conectado_financeiro ? "1" : "0");
+  if (modo_lista_pedidos !== undefined && (modo_lista_pedidos === "cozinha" || modo_lista_pedidos === "impressao")) {
+    salvarConfig("modo_lista_pedidos", modo_lista_pedidos);
+  }
   if (evolution_url !== undefined) salvarConfig("evolution_url", String(evolution_url).trim().slice(0, 200));
   if (evolution_key !== undefined) salvarConfig("evolution_key", String(evolution_key).trim().slice(0, 200));
   if (evolution_instance !== undefined) salvarConfig("evolution_instance", String(evolution_instance).trim().slice(0, 100));
@@ -421,6 +433,38 @@ function backupAutomatico() {
 setTimeout(backupAutomatico, 20_000);              // no boot (após o server assentar)
 setInterval(backupAutomatico, 6 * 60 * 60 * 1000); // re-checa a cada 6h (PDV fica aberto o dia todo)
 
+// ─── POLLING FOCUS NFE ──────────────────────────────────────────────────────
+// Consulta o status das notas 'processando' — preferido a webhook porque o PDV
+// roda na máquina do lojista, sem IP público pra receber notificação de volta.
+function tickPendentesFocus() {
+  verificarPendentesFocus().catch(e => console.error("[fiscal/focus] polling falhou:", e.message));
+}
+setTimeout(tickPendentesFocus, 30_000);
+setInterval(tickPendentesFocus, 90 * 1000);
+
+// ─── RELATÓRIO FISCAL MENSAL (envio automático via n8n) ────────────────────
+// Não depende de disparar no minuto exato — só de "o dia configurado já
+// passou e ainda não mandei o relatório desse mês" (mesmo espírito do backup).
+function verificarEnvioRelatorioFiscal() {
+  const pendente = verificarEnvioRelatorioFiscalPendente();
+  if (!pendente) return;
+  const relatorio = montarRelatorioFiscalMensal(pendente.mesReferencia);
+  fetch(pendente.n8n_webhook_relatorio, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email_destino: pendente.email_contabilidade, ...relatorio }),
+    signal: AbortSignal.timeout(15000),
+  })
+    .then(r => {
+      if (!r.ok) throw new Error(`n8n respondeu HTTP ${r.status}`);
+      marcarRelatorioFiscalEnviado(pendente.mesReferencia);
+      console.log(`[fiscal] relatório de ${pendente.mesReferencia} enviado (${relatorio.quantidade} notas)`);
+    })
+    .catch(e => console.error("[fiscal] falha ao enviar relatório mensal:", e.message));
+}
+setTimeout(verificarEnvioRelatorioFiscal, 40_000);
+setInterval(verificarEnvioRelatorioFiscal, 6 * 60 * 60 * 1000);
+
 app.get("/api/suporte/backups", authMiddleware, adminOnly, (req, res) => {
   res.json({ pasta: dirBackups(), backups: listarBackups() });
 });
@@ -480,10 +524,19 @@ app.put("/api/config/login", authMiddleware, adminOnly, (req, res) => {
 app.get("/api/perfil", authMiddleware, adminOnly, (req, res) => {
   let modulos = [];
   try { modulos = JSON.parse(obterConfig("perfil_modulos") || "[]"); } catch {}
+  const configurado = obterConfig("perfil_configurado") === "1";
+  // v1.15: Financeiro virou opcional. Cliente antigo configurado que nunca
+  // opinou sobre financeiro → recebe automaticamente (mantém comportamento).
+  // Migração acontece uma vez: também persiste na config.
+  if (configurado && !modulos.includes("financeiro") && !obterConfig("perfil_modulos_migrado_v15")) {
+    modulos = [...modulos, "financeiro"];
+    salvarConfig("perfil_modulos", JSON.stringify(modulos));
+    salvarConfig("perfil_modulos_migrado_v15", "1");
+  }
   res.json({
     modo: obterConfig("perfil_modo") || "",
     modulos,
-    configurado: obterConfig("perfil_configurado") === "1",
+    configurado,
     nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
   });
 });
@@ -627,9 +680,20 @@ app.put("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
   catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.delete("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
-  try { excluirCardapio(req.params.id); agendarSyncCatalogo(); res.json({ ok: true }); }
+// Preview de exclusão: mostra o que SUMIRIA se apagasse com cascade.
+// Frontend usa pra montar o diálogo de confirmação.
+app.get("/api/cardapios/:id/preview-exclusao", authMiddleware, adminOnly, (req, res) => {
+  try { res.json(contarOrfaosCardapio(req.params.id)); }
   catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete("/api/cardapios/:id", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const cascade = req.query.cascade === "1";
+    const r = excluirCardapio(req.params.id, { cascade });
+    agendarSyncCatalogo();
+    res.json({ ok: true, ...r });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.put("/api/cardapios/:id/categorias", authMiddleware, adminOnly, (req, res) => {
@@ -651,7 +715,8 @@ app.put("/api/cardapios/:id/adicionais", authMiddleware, adminOnly, (req, res) =
 // Público: listar categorias (clientes precisam ver para o cardápio)
 app.get("/api/categorias", (req, res) => {
   const cardapio_id = req.query.cardapio_id || undefined;
-  res.json(listarCategorias({ cardapio_id }));
+  const incluirCardapios = req.query.incluir_cardapios === "1";
+  res.json(listarCategorias({ cardapio_id, incluirCardapios }));
 });
 
 app.post("/api/categorias", authMiddleware, adminOnly, (req, res) => {
@@ -704,7 +769,8 @@ app.get("/api/adicionais", (req, res) => {
     } catch { /* ignore */ }
   }
   const cardapio_id = req.query.cardapio_id || undefined;
-  res.json(listarAdicionais(!isAdmin, { cardapio_id }));
+  const incluirCardapios = req.query.incluir_cardapios === "1";
+  res.json(listarAdicionais(!isAdmin, { cardapio_id, incluirCardapios }));
 });
 
 app.post("/api/adicionais", authMiddleware, adminOnly, (req, res) => {
@@ -759,21 +825,41 @@ app.get("/api/produtos/:id", (req, res) => {
 });
 
 app.post("/api/produtos", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config } = req.body;
+  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config,
+          codigo_barras, ncm, cest, um, pertence_estoque } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config });
+  const p = criarProduto({ nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config,
+                           codigo_barras, ncm, cest, um, pertence_estoque });
   agendarSyncCatalogo();
   res.status(201).json(p);
 });
 
 app.put("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config } = req.body;
+  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config,
+          codigo_barras, ncm, cest, um, pertence_estoque } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
-  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config });
+  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config,
+                                              codigo_barras, ncm, cest, um, pertence_estoque });
   if (!p) return res.status(404).json({ error: "Não encontrado" });
   agendarSyncCatalogo();
   res.json(p);
+});
+
+// Importação em lote: recebe { itens: [...], cardapio_id? } e cria/atualiza produtos.
+// Categorias novas presentes na lista são criadas e vinculadas ao cardápio informado.
+app.post("/api/produtos/importar", authMiddleware, adminOnly, (req, res) => {
+  const { itens, cardapio_id } = req.body || {};
+  if (!Array.isArray(itens) || itens.length === 0) {
+    return res.status(400).json({ error: "Envie um array 'itens' com pelo menos 1 produto." });
+  }
+  try {
+    const relatorio = importarProdutosEmLote({ itens, cardapio_id });
+    agendarSyncCatalogo();
+    res.json(relatorio);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.delete("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
@@ -1477,10 +1563,10 @@ app.get("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo } = req.body;
-  if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo } = req.body;
+  if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
   try {
-    res.status(201).json(criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo }));
+    res.status(201).json(criarEstoqueItem({ codigo: codigo || "", nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo }));
   } catch (err) {
     if (err.message.includes("UNIQUE")) return res.status(409).json({ error: "Código já existe" });
     throw err;
@@ -1488,9 +1574,9 @@ app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.put("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo } = req.body;
   if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
-  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo });
+  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo });
   if (!item) return res.status(404).json({ error: "Não encontrado" });
   res.json(item);
 });
@@ -1678,19 +1764,19 @@ app.delete("/api/fiscal/certificado", authMiddleware, adminOnly, (req, res) => {
 });
 
 // NFC-e: emitir a partir de um pedido (ou teste sem pedido) + listar
-app.post("/api/fiscal/nfce/emitir", authMiddleware, adminOnly, (req, res) => {
+app.post("/api/fiscal/nfce/emitir", authMiddleware, adminOnly, async (req, res) => {
   const { pedido_id, simulado } = req.body || {};
   try {
-    res.status(201).json(emitirNFCe(pedido_id || null, { simulado: !!simulado }));
+    res.status(201).json(await emitirNFCe(pedido_id || null, { simulado: !!simulado }));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
 // Teste rápido de emissão simulada (sem pedido real)
-app.post("/api/fiscal/nfce/teste", authMiddleware, adminOnly, (req, res) => {
+app.post("/api/fiscal/nfce/teste", authMiddleware, adminOnly, async (req, res) => {
   try {
-    res.status(201).json(emitirNFCe(null, { simulado: true }));
+    res.status(201).json(await emitirNFCe(null, { simulado: true }));
   } catch (e) {
     res.status(400).json({ error: e.message });
   }

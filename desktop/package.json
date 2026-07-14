@@ -1,14 +1,14 @@
 {
   "name": "nexus-pdv-desktop",
   "productName": "Nexus PDV",
-  "version": "1.12.0",
+  "version": "1.21.0",
   "description": "Versão desktop offline-first da plataforma Nexus (Frente de Caixa), com gate de licença RS256.",
   "type": "module",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test:licenca": "node licenca/teste-licenca.mjs",
-    "build:frontend": "vite build --base=/ --outDir desktop/app-dist --emptyOutDir",
+    "build:frontend": "cross-env VITE_DESKTOP=1 vite build --base=/ --outDir desktop/app-dist --emptyOutDir",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "dist": "electron-builder"
   },
@@ -35,6 +35,7 @@
       "agente-impressao.js",
       "licenca/**/*",
       "sync/**/*",
+      "rede/**/*",
       "ui/**/*",
       "build/icon.ico",
       "app-dist/**/*",
@@ -47,7 +48,8 @@
       { "from": "../node_modules", "to": "node_modules" },
       { "from": "server-package.json", "to": "server/package.json" },
       { "from": "../backend", "to": "backend", "filter": ["**/*", "!data/**", "!node_modules/.cache/**"] },
-      { "from": "../frontend/dist", "to": "frontend-dist" }
+      { "from": "../frontend/dist", "to": "frontend-dist" },
+      { "from": "rede/criar-regra-firewall.ps1", "to": "rede/criar-regra-firewall.ps1" }
     ],
     "win": {
       "target": ["nsis"],

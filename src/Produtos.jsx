@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
-import { infoSegmento, parseConfig, tamanhosDoProduto, precoExibicao } from "./segmentos";
+import { infoSegmento, parseConfig, tamanhosDoProduto, precoExibicao, tamanhosPizzaDoCardapio, ingredientesDoProduto, produtoPorPeso } from "./segmentos";
 
 const fmt = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const lbl = { display: "block", fontSize: 11, color: "#78716c", fontWeight: 600, letterSpacing: "0.06em", marginBottom: 5 };
@@ -87,13 +87,32 @@ function SlideshowAdmin({ imagens }) {
 }
 
 // ─── MODAL PRODUTO ────────────────────────────────────────────────────────────
-function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, insumos, cardapioTipo = "snack_bar" }) {
-  const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true, codigo: "" });
+function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, insumos, cardapioTipo = "snack_bar", cardapio = null }) {
+  const [form, setForm] = useState(editando || { nome: "", descricao: "", preco: "", custo: "", categoria: "", imagem: "", disponivel: true, codigo: "", codigo_barras: "", ncm: "", cest: "", um: "un", pertence_estoque: false });
   // Segmento do cardápio ativo define os recursos do form (tamanhos etc.)
   const segmento = infoSegmento(cardapioTipo);
-  const [tamanhos, setTamanhos] = useState(() =>
-    tamanhosDoProduto(editando).map(t => ({ nome: t.nome, preco: String(t.preco) }))
-  );
+  // Pizzaria v2: tamanhos moram no CARDÁPIO. O sabor só preenche o preço
+  // para cada um. Sem tamanhos no cardápio → cai no fluxo antigo (tamanhos livres).
+  const tamanhosPizzaCardapio = tamanhosPizzaDoCardapio(cardapio);
+  const usaTamanhosCardapio = cardapioTipo === "pizzeria" && tamanhosPizzaCardapio.length > 0;
+  const [tamanhos, setTamanhos] = useState(() => {
+    const dopr = tamanhosDoProduto(editando);
+    if (usaTamanhosCardapio) {
+      // Mescla: um input de preço por tamanho do cardápio, herdando o preço
+      // já cadastrado no produto (se houver) ou vazio.
+      return tamanhosPizzaCardapio.map(t => {
+        const existente = dopr.find(x => x.nome === t.nome);
+        return { nome: t.nome, preco: existente ? String(existente.preco) : "" };
+      });
+    }
+    return dopr.map(t => ({ nome: t.nome, preco: String(t.preco) }));
+  });
+  // Pizzaria v2: ingredientes do sabor (chips editáveis)
+  const [ingredientes, setIngredientes] = useState(() => ingredientesDoProduto(editando));
+  const [ingredienteNovo, setIngredienteNovo] = useState("");
+  // Venda por peso (peixaria e outros): só pra cardápios com recurso vendaPorPeso.
+  // Marcar transforma "Preço" em "Preço por kg" e o lançamento no PDV pede peso.
+  const [porPeso, setPorPeso] = useState(() => produtoPorPeso(editando));
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef(null);
   const [abaModal, setAbaModal] = useState("produto");
@@ -236,7 +255,9 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
         preco: precoBase,
         custo: parseFloat(form.custo) || 0,
         disponivel: form.disponivel,
-        config: { ...parseConfig(editando?.config), tamanhos: tamanhosValidos },
+        pertence_estoque: !!form.pertence_estoque,
+        um: (form.um || "un").trim() || "un",
+        config: { ...parseConfig(editando?.config), tamanhos: tamanhosValidos, ingredientes: ingredientes.filter(s => s && s.trim()), venda_por_peso: !!porPeso },
       });
 
       if (produto?.id) {
@@ -387,33 +408,113 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
                   {segmento.icone} Tamanhos ({segmento.nome})
                 </label>
                 <div style={{ fontSize: 11, color: "#78716c", marginBottom: 10 }}>
-                  Cada tamanho tem seu preço (ex: Broto/Grande, 300ml/500ml, P/M/G). Com tamanhos
-                  cadastrados, o cliente escolhe o tamanho na montagem e o preço base vira o menor deles.
-                  Sem tamanhos, vale o preço de venda abaixo.
+                  {usaTamanhosCardapio ? (
+                    <>Herdados do cardápio (nome, fatias e máx. sabores). Aqui você só preenche o <b>preço deste sabor</b> em cada tamanho.</>
+                  ) : (
+                    <>Cada tamanho tem seu preço (ex: Broto/Grande, 300ml/500ml, P/M/G). Com tamanhos
+                    cadastrados, o cliente escolhe o tamanho na montagem e o preço base vira o menor deles.
+                    Sem tamanhos, vale o preço de venda abaixo.</>
+                  )}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {tamanhos.map((t, i) => (
-                    <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                      <input style={{ ...inp, flex: 1, padding: "7px 10px", fontSize: 12.5 }} value={t.nome}
-                        onChange={e => setTamanhos(ts => ts.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))}
-                        placeholder={cardapioTipo === "pizzeria" ? "Ex: Grande (8 fatias)" : "Ex: 500ml"} />
-                      <input style={{ ...inp, width: 100, padding: "7px 10px", fontSize: 12.5 }} type="number" step="0.01" value={t.preco}
-                        onChange={e => setTamanhos(ts => ts.map((x, j) => j === i ? { ...x, preco: e.target.value } : x))}
-                        placeholder="R$" />
-                      <button type="button" onClick={() => setTamanhos(ts => ts.filter((_, j) => j !== i))}
-                        style={{ background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", color: "#dc2626" }}>×</button>
+                  {tamanhos.map((t, i) => {
+                    const meta = usaTamanhosCardapio ? tamanhosPizzaCardapio.find(x => x.nome === t.nome) : null;
+                    return (
+                      <div key={i} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input style={{ ...inp, flex: 1, padding: "7px 10px", fontSize: 12.5, background: usaTamanhosCardapio ? "#fafaf9" : "#fff" }}
+                          value={t.nome}
+                          readOnly={usaTamanhosCardapio}
+                          onChange={e => setTamanhos(ts => ts.map((x, j) => j === i ? { ...x, nome: e.target.value } : x))}
+                          placeholder={cardapioTipo === "pizzeria" ? "Ex: Grande" : "Ex: 500ml"} />
+                        {meta && (
+                          <span style={{ fontSize: 10, color: "#78716c", background: "#fff", border: "1px solid #e7e5e4", borderRadius: 6, padding: "5px 8px", whiteSpace: "nowrap" }}>
+                            {meta.fatias} fatias · até {meta.max_sabores} sabor{meta.max_sabores > 1 ? "es" : ""}
+                          </span>
+                        )}
+                        <input style={{ ...inp, width: 100, padding: "7px 10px", fontSize: 12.5 }} type="number" step="0.01" value={t.preco}
+                          onChange={e => setTamanhos(ts => ts.map((x, j) => j === i ? { ...x, preco: e.target.value } : x))}
+                          placeholder="R$" />
+                        {!usaTamanhosCardapio && (
+                          <button type="button" onClick={() => setTamanhos(ts => ts.filter((_, j) => j !== i))}
+                            style={{ background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "5px 10px", fontSize: 12, cursor: "pointer", color: "#dc2626" }}>×</button>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {!usaTamanhosCardapio && (
+                    <button type="button" onClick={() => setTamanhos(ts => [...ts, { nome: "", preco: "" }])}
+                      style={{ alignSelf: "flex-start", padding: "6px 14px", background: "#fff", border: "1.5px solid #bbf7d0", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#15803d" }}>
+                      + Adicionar tamanho
+                    </button>
+                  )}
+                  {usaTamanhosCardapio && (
+                    <div style={{ fontSize: 11, color: "#78716c", fontStyle: "italic" }}>
+                      Para editar nomes/fatias/máx. sabores, vá em <b>Cardápios</b> → editar → Tamanhos de pizza.
                     </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Pizzaria v2: ingredientes do sabor (chips) — cliente pode remover na montagem */}
+            {cardapioTipo === "pizzeria" && (
+              <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px" }}>
+                <label style={{ ...lbl, color: "#92400e", marginBottom: 4 }}>🧀 Ingredientes do sabor</label>
+                <div style={{ fontSize: 11, color: "#78716c", marginBottom: 10 }}>
+                  Lista dos ingredientes deste sabor (ex: queijo, molho, cebola, azeitona). Na montagem
+                  o cliente pode marcar quais tirar ("sem cebola"). Deixe vazio se não quiser essa opção.
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {ingredientes.map((ing, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "#fff", border: "1.5px solid #fde68a", borderRadius: 999, fontSize: 12, color: "#92400e" }}>
+                      {ing}
+                      <button type="button" onClick={() => setIngredientes(list => list.filter((_, j) => j !== i))}
+                        style={{ background: "none", border: "none", color: "#a16207", cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
+                    </span>
                   ))}
-                  <button type="button" onClick={() => setTamanhos(ts => [...ts, { nome: "", preco: "" }])}
-                    style={{ alignSelf: "flex-start", padding: "6px 14px", background: "#fff", border: "1.5px solid #bbf7d0", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#15803d" }}>
-                    + Adicionar tamanho
+                  {ingredientes.length === 0 && (
+                    <span style={{ fontSize: 11, color: "#a8a29e", fontStyle: "italic" }}>Nenhum ingrediente cadastrado.</span>
+                  )}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input style={{ ...inp, flex: 1, padding: "7px 10px", fontSize: 12.5 }} value={ingredienteNovo}
+                    onChange={e => setIngredienteNovo(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const v = ingredienteNovo.trim();
+                        if (v && !ingredientes.includes(v)) setIngredientes(list => [...list, v]);
+                        setIngredienteNovo("");
+                      }
+                    }}
+                    placeholder="Ex: queijo mussarela" />
+                  <button type="button"
+                    onClick={() => {
+                      const v = ingredienteNovo.trim();
+                      if (v && !ingredientes.includes(v)) setIngredientes(list => [...list, v]);
+                      setIngredienteNovo("");
+                    }}
+                    style={{ padding: "6px 14px", background: "#fff", border: "1.5px solid #fde68a", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#92400e" }}>
+                    + Adicionar
                   </button>
                 </div>
               </div>
             )}
+            {segmento.recursos.vendaPorPeso && (
+              <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+                <input type="checkbox" id="por-peso" checked={porPeso} onChange={e => setPorPeso(e.target.checked)}
+                  style={{ width: 16, height: 16, cursor: "pointer", accentColor: "#0284c7" }} />
+                <label htmlFor="por-peso" style={{ fontSize: 12.5, color: "#0c4a6e", cursor: "pointer", flex: 1 }}>
+                  <strong>Vender por peso (kg)</strong>
+                  <span style={{ display: "block", fontSize: 11, color: "#075985", marginTop: 2 }}>
+                    O preço abaixo passa a ser "por kg". No lançamento (PDV), o operador digita o peso da peça e o total sai por multiplicação.
+                  </span>
+                </label>
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
               <div>
-                <label style={lbl}>Preço de venda (R$){tamanhos.some(t => t.nome.trim()) ? " — automático (menor tamanho)" : ""}</label>
+                <label style={lbl}>{porPeso ? "Preço por kg (R$)" : "Preço de venda (R$)"}{tamanhos.some(t => t.nome.trim()) ? " — automático (menor tamanho)" : ""}</label>
                 <input style={{ ...inp, background: tamanhos.some(t => t.nome.trim()) ? "#fafaf9" : "#fff" }}
                   type="number" step="0.01" value={form.preco}
                   readOnly={tamanhos.some(t => t.nome.trim())}
@@ -439,6 +540,62 @@ function ModalProduto({ onSave, onFichaSalva, onClose, editando, categorias, ins
                 {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
               </select>
             </div>
+
+            {/* ── FISCAL & ESTOQUE — código, EAN, NCM, CEST, UM ── */}
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <label style={{ ...lbl, color: "#334155", marginBottom: 0 }}>🏷️ Fiscal & Estoque</label>
+                <span style={{ fontSize: 10, color: "#64748b" }}>Opcional — necessário para NFC-e e importação</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
+                <div>
+                  <label style={{ ...lbl, fontSize: 10 }}>Código (interno)</label>
+                  <input style={{ ...inp, padding: "7px 10px", fontSize: 12 }} value={form.codigo || ""}
+                    onChange={e => setForm({ ...form, codigo: e.target.value })} placeholder="Ex: PX0001" />
+                </div>
+                <div>
+                  <label style={{ ...lbl, fontSize: 10 }}>Código de barras (EAN)</label>
+                  <input style={{ ...inp, padding: "7px 10px", fontSize: 12 }} value={form.codigo_barras || ""}
+                    onChange={e => setForm({ ...form, codigo_barras: e.target.value })} placeholder="Ex: 7891234567890" />
+                </div>
+                <div>
+                  <label style={{ ...lbl, fontSize: 10 }}>NCM</label>
+                  <input style={{ ...inp, padding: "7px 10px", fontSize: 12 }} value={form.ncm || ""}
+                    onChange={e => setForm({ ...form, ncm: e.target.value })} placeholder="8 dígitos" />
+                </div>
+                <div>
+                  <label style={{ ...lbl, fontSize: 10 }}>CEST</label>
+                  <input style={{ ...inp, padding: "7px 10px", fontSize: 12 }} value={form.cest || ""}
+                    onChange={e => setForm({ ...form, cest: e.target.value })} placeholder="7 dígitos" />
+                </div>
+                <div>
+                  <label style={{ ...lbl, fontSize: 10 }}>Unidade (UM)</label>
+                  <select style={{ ...inp, padding: "7px 10px", fontSize: 12, cursor: "pointer" }} value={form.um || "un"}
+                    onChange={e => setForm({ ...form, um: e.target.value })}>
+                    <option value="un">UN — unidade</option>
+                    <option value="kg">KG — quilograma</option>
+                    <option value="g">G — grama</option>
+                    <option value="l">L — litro</option>
+                    <option value="ml">ML — mililitro</option>
+                    <option value="cx">CX — caixa</option>
+                    <option value="pct">PCT — pacote</option>
+                    <option value="dz">DZ — dúzia</option>
+                    <option value="m">M — metro</option>
+                  </select>
+                </div>
+              </div>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginTop: 12, background: "#fff", border: "1.5px solid #cbd5e1", borderRadius: 8, padding: "9px 12px" }}>
+                <input type="checkbox" checked={!!form.pertence_estoque} onChange={e => setForm({ ...form, pertence_estoque: e.target.checked })}
+                  style={{ marginTop: 2, cursor: "pointer" }} />
+                <span style={{ fontSize: 12.5, color: "#334155", flex: 1 }}>
+                  <strong>Pertence ao estoque?</strong>
+                  <span style={{ display: "block", fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                    Ao marcar, o item entra em <b>Estoque</b> como <b>revenda</b> (mesmo código). Cada venda desconta 1 unidade do saldo. Precisa ter <b>código</b> ou <b>EAN</b> pra funcionar.
+                  </span>
+                </span>
+              </label>
+            </div>
+
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
               <input type="checkbox" checked={form.disponivel} onChange={e => setForm({ ...form, disponivel: e.target.checked })} />
               <span style={{ color: form.disponivel ? "#15803d" : "#a8a29e", fontWeight: 500 }}>
@@ -591,49 +748,116 @@ function parsePrecoBR(s) {
   else if (s.includes(",")) s = s.replace(",", ".");
   return parseFloat(s);
 }
+// Parser CSV completo — colunas mínimas: nome + preco. Todas as outras opcionais.
+// Aliases pra tolerar cabeçalhos que vieram do fornecedor/planilha do cliente.
 function parseProdutosCSV(text) {
   const linhas = String(text).trim().split(/\r?\n/).filter(l => l.trim());
   if (linhas.length < 2) return { rows: [], erro: "Inclua um cabeçalho e ao menos 1 linha de produto." };
   const delim = (linhas[0].match(/;/g) || []).length > (linhas[0].match(/,/g) || []).length ? ";" : ",";
-  const norm = s => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const norm = s => s.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[\s_-]+/g, "");
   const headers = splitCSVLine(linhas[0], delim).map(norm);
   const acha = (alts) => headers.findIndex(h => alts.includes(h));
   const idx = {
-    nome: acha(["nome", "produto", "name", "item"]),
-    preco: acha(["preco", "price", "valor", "venda", "preco_venda"]),
-    categoria: acha(["categoria", "category", "cat", "grupo"]),
-    descricao: acha(["descricao", "description", "desc", "detalhe"]),
-    custo: acha(["custo", "cmv", "cost"]),
-    disponivel: acha(["disponivel", "ativo", "available", "status"]),
+    nome:            acha(["nome", "produto", "name", "item", "descricao", "descriminacao", "discriminacao"]),
+    preco:           acha(["preco", "price", "valor", "venda", "precovenda", "valorvenda", "preco_venda"]),
+    categoria:       acha(["categoria", "category", "cat", "grupo", "grupoproduto"]),
+    descricao:       acha(["descricaocomplementar", "detalhe", "obs", "observacao", "detalhes", "description", "desc"]),
+    custo:           acha(["custo", "cmv", "cost", "custocompra", "precocompra"]),
+    disponivel:      acha(["disponivel", "ativo", "available", "status"]),
+    codigo:          acha(["codigo", "cod", "code", "sku"]),
+    codigo_barras:   acha(["codigobarras", "codbarras", "ean", "ean13", "gtin", "nan"]),
+    ncm:             acha(["ncm"]),
+    cest:            acha(["cest"]),
+    um:              acha(["um", "unidade", "unidmedida", "unid", "un"]),
+    estoque_inicial: acha(["estoque", "estoqueinicial", "saldo", "saldoatual", "qtdestoque", "unidadeestoque", "valorunidadeestoque"]),
+    estoque_minimo:  acha(["estoqueminimo", "minimo", "estoquemin", "min"]),
+    pertence_estoque:acha(["pertenceestoque", "controlaestoque", "estoquecontrolado"]),
   };
   if (idx.nome < 0 || idx.preco < 0) return { rows: [], erro: "O cabeçalho precisa ter pelo menos as colunas 'nome' e 'preco'." };
   const rows = [];
+  const truthy = (s) => /^(1|s|sim|y|yes|true|v|verdadeiro)$/i.test(String(s || "").trim());
   for (let i = 1; i < linhas.length; i++) {
     const cols = splitCSVLine(linhas[i], delim);
     const nome = (cols[idx.nome] || "").trim();
     const preco = parsePrecoBR(cols[idx.preco]);
     if (!nome || isNaN(preco)) continue;
+    const um = idx.um >= 0 ? (cols[idx.um] || "").trim().toLowerCase() : "";
+    const pertence = idx.pertence_estoque >= 0
+      ? truthy(cols[idx.pertence_estoque])
+      : (idx.estoque_inicial >= 0 && !isNaN(parseFloat(String(cols[idx.estoque_inicial] || "").replace(",", "."))));
     rows.push({
       nome,
       preco,
       categoria: idx.categoria >= 0 ? (cols[idx.categoria] || "").trim() : "",
       descricao: idx.descricao >= 0 ? (cols[idx.descricao] || "").trim() : "",
-      custo: idx.custo >= 0 ? (parsePrecoBR(cols[idx.custo]) || 0) : 0,
-      disponivel: idx.disponivel >= 0 ? !/^(0|nao|n|false|indispon|inativo)/i.test(norm(cols[idx.disponivel] || "")) : true,
+      custo:     idx.custo >= 0 ? (parsePrecoBR(cols[idx.custo]) || 0) : 0,
+      disponivel: idx.disponivel >= 0 ? !/^(0|nao|n|false|indispon|inativo)/i.test(String(cols[idx.disponivel] || "").trim().toLowerCase()) : true,
+      codigo:        idx.codigo >= 0 ? (cols[idx.codigo] || "").trim() : "",
+      codigo_barras: idx.codigo_barras >= 0 ? (cols[idx.codigo_barras] || "").trim() : "",
+      ncm:  idx.ncm >= 0 ? (cols[idx.ncm] || "").trim() : "",
+      cest: idx.cest >= 0 ? (cols[idx.cest] || "").trim() : "",
+      um:   um || "un",
+      estoque_inicial: idx.estoque_inicial >= 0 ? parseFloat(String(cols[idx.estoque_inicial] || "").replace(",", ".")) : undefined,
+      estoque_minimo:  idx.estoque_minimo >= 0 ? parseFloat(String(cols[idx.estoque_minimo] || "").replace(",", ".")) : undefined,
+      pertence_estoque: pertence,
     });
   }
   return { rows, erro: rows.length ? null : "Nenhuma linha válida encontrada (verifique nome e preço)." };
 }
 
-function ModalImportarCSV({ onImport, onClose }) {
+// Parser JSON — aceita array de objetos com as MESMAS chaves do CSV. Formato
+// mais fácil de gerar via ChatGPT ("converta esses prints em JSON com os campos X, Y, Z").
+function parseProdutosJSON(text) {
+  const s = String(text).trim();
+  if (!s) return { rows: [], erro: "" };
+  let raw;
+  try { raw = JSON.parse(s); }
+  catch (e) { return { rows: [], erro: "JSON inválido: " + e.message }; }
+  const arr = Array.isArray(raw) ? raw : (Array.isArray(raw?.itens) ? raw.itens : (Array.isArray(raw?.produtos) ? raw.produtos : null));
+  if (!arr) return { rows: [], erro: "Envie um array de produtos (ou um objeto com 'itens' / 'produtos')." };
+  const rows = [];
+  for (const it of arr) {
+    if (!it || typeof it !== "object") continue;
+    const nome = String(it.nome || it.name || it.produto || "").trim();
+    const preco = Number(String(it.preco ?? it.price ?? it.valor ?? "").replace(",", "."));
+    if (!nome || !isFinite(preco)) continue;
+    rows.push({
+      nome, preco,
+      categoria: String(it.categoria || it.category || "").trim(),
+      descricao: String(it.descricao || it.description || "").trim(),
+      custo: Number(String(it.custo ?? it.cmv ?? 0).toString().replace(",", ".")) || 0,
+      disponivel: it.disponivel === false ? false : true,
+      codigo: String(it.codigo || it.cod || "").trim(),
+      codigo_barras: String(it.codigo_barras || it.ean || it.gtin || it.nan || "").trim(),
+      ncm: String(it.ncm || "").trim(),
+      cest: String(it.cest || "").trim(),
+      um: String(it.um || it.unidade || "un").trim().toLowerCase() || "un",
+      estoque_inicial: it.estoque_inicial != null ? Number(String(it.estoque_inicial).replace(",", ".")) : (it.estoque != null ? Number(String(it.estoque).replace(",", ".")) : undefined),
+      estoque_minimo: it.estoque_minimo != null ? Number(String(it.estoque_minimo).replace(",", ".")) : undefined,
+      pertence_estoque: it.pertence_estoque === true || it.controla_estoque === true || (it.estoque_inicial != null),
+    });
+  }
+  return { rows, erro: rows.length ? null : "Nenhum produto válido no JSON (cada item precisa de 'nome' e 'preco')." };
+}
+
+// Modal completo: dois formatos (JSON ou CSV), prévia em tabela, envia em UM
+// POST para /api/produtos/importar (o endpoint faz idempotência por código,
+// cria categorias faltantes e vincula ao cardápio ativo).
+function ModalImportarProdutos({ onImport, onClose, cardapioNome }) {
+  const [aba, setAba] = useState("json"); // "json" | "csv"
   const [texto, setTexto] = useState("");
   const [importando, setImportando] = useState(false);
+  const [resultado, setResultado] = useState(null); // relatório do server após importar
   const fileRef = useRef(null);
-  const { rows, erro } = parseProdutosCSV(texto);
+
+  const parsed = aba === "json" ? parseProdutosJSON(texto) : parseProdutosCSV(texto);
+  const { rows, erro } = parsed;
 
   const carregarArquivo = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    const nome = (f.name || "").toLowerCase();
+    setAba(nome.endsWith(".json") ? "json" : "csv");
     const reader = new FileReader();
     reader.onload = () => setTexto(String(reader.result || ""));
     reader.readAsText(f, "utf-8");
@@ -642,67 +866,126 @@ function ModalImportarCSV({ onImport, onClose }) {
   const importar = async () => {
     if (!rows.length) return;
     setImportando(true);
-    try { await onImport(rows); onClose(); }
-    catch { setImportando(false); }
+    try {
+      const r = await onImport(rows);
+      setResultado(r);
+    } catch (err) {
+      setResultado({ criados: 0, atualizados: 0, erros: [{ linha: 0, msg: err.message }], categorias_criadas: [] });
+    } finally {
+      setImportando(false);
+    }
   };
 
-  const exemplo = "nome,categoria,preco,descricao,disponivel\nX-Tudo,Lanches,28.90,Hambúrguer completo,sim\nCoca-Cola Lata,Bebidas,7,,sim";
+  const exemploJSON = JSON.stringify([
+    { codigo: "PX001", codigo_barras: "7891234567890", nome: "Filé de Tilápia", categoria: "Peixes", preco: 45.00, custo: 28, um: "kg", ncm: "03038900", cest: "", estoque_inicial: 15, pertence_estoque: true },
+    { codigo: "PX002", nome: "Camarão VG", categoria: "Frutos do mar", preco: 89.90, um: "kg", estoque_inicial: 3.5, pertence_estoque: true },
+    { nome: "Refrigerante 2L", categoria: "Bebidas", preco: 12, um: "un" },
+  ], null, 2);
+  const exemploCSV = "codigo,codigo_barras,nome,categoria,preco,custo,um,ncm,cest,estoque_inicial,pertence_estoque\nPX001,7891234567890,Filé de Tilápia,Peixes,45.00,28,kg,03038900,,15,sim\nPX002,,Camarão VG,Frutos do mar,89.90,,kg,,,3.5,sim\n,,Refrigerante 2L,Bebidas,12,,un,,,,";
+
+  const setExemplo = () => setTexto(aba === "json" ? exemploJSON : exemploCSV);
+
+  const fmt = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: "26px 28px", width: 600, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
+      <div style={{ background: "#fff", borderRadius: 16, padding: "26px 28px", width: 780, maxWidth: "100%", maxHeight: "92vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Importar produtos (CSV)</div>
+          <div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600 }}>Importar produtos</div>
+            {cardapioNome && <div style={{ fontSize: 12, color: "#78716c", marginTop: 2 }}>Cardápio ativo: <b>{cardapioNome}</b></div>}
+          </div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#a8a29e" }}>×</button>
         </div>
-        <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14 }}>
-          Cole o conteúdo do CSV ou carregue um arquivo. Colunas aceitas: <b>nome</b> e <b>preco</b> (obrigatórias), categoria, descricao, custo, disponivel.
-        </div>
 
-        <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          <button onClick={() => fileRef.current?.click()} style={{ padding: "8px 14px", background: "#f5f5f4", border: "1px solid #e7e5e4", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e", fontWeight: 500 }}>📄 Carregar arquivo .csv</button>
-          <button onClick={() => setTexto(exemplo)} style={{ padding: "8px 14px", background: "#fff", border: "1px solid #e7e5e4", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>Usar exemplo</button>
-          <input ref={fileRef} type="file" accept=".csv,text/csv,text/plain" onChange={carregarArquivo} style={{ display: "none" }} />
-        </div>
-
-        <textarea value={texto} onChange={e => setTexto(e.target.value)} placeholder={exemplo}
-          style={{ width: "100%", minHeight: 130, padding: "10px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "monospace", fontSize: 12, outline: "none", resize: "vertical", color: "#1c1917" }} />
-
-        {texto && erro && (
-          <div style={{ marginTop: 10, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{erro}</div>
-        )}
-
-        {rows.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#15803d", marginBottom: 6 }}>{rows.length} produto(s) prontos para importar — prévia:</div>
-            <div style={{ border: "1px solid #e7e5e4", borderRadius: 8, overflow: "hidden", maxHeight: 200, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr style={{ background: "#fafaf9" }}>
-                  {["Nome", "Categoria", "Preço", "CMV", "Disp."].map(h => <th key={h} style={{ padding: "6px 10px", textAlign: "left", fontSize: 11, color: "#78716c", fontWeight: 600 }}>{h}</th>)}
-                </tr></thead>
-                <tbody>
-                  {rows.slice(0, 50).map((r, i) => (
-                    <tr key={i} style={{ borderTop: "1px solid #f5f5f4" }}>
-                      <td style={{ padding: "6px 10px", fontWeight: 500 }}>{r.nome}</td>
-                      <td style={{ padding: "6px 10px", color: "#78716c" }}>{r.categoria || "—"}</td>
-                      <td style={{ padding: "6px 10px", color: "#15803d", fontWeight: 600 }}>{Number(r.preco).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</td>
-                      <td style={{ padding: "6px 10px", color: "#78716c" }}>{r.custo ? Number(r.custo).toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</td>
-                      <td style={{ padding: "6px 10px" }}>{r.disponivel ? "✅" : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* Resultado da última importação */}
+        {resultado && (
+          <div style={{ marginTop: 12, background: resultado.erros?.length ? "#fffbeb" : "#f0fdf4", border: `1px solid ${resultado.erros?.length ? "#fde68a" : "#bbf7d0"}`, borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: resultado.erros?.length ? "#92400e" : "#15803d" }}>
+              {resultado.criados} criado(s) · {resultado.atualizados} atualizado(s)
+              {resultado.erros?.length ? ` · ${resultado.erros.length} erro(s)` : ""}
             </div>
+            {resultado.categorias_criadas?.length > 0 && (
+              <div style={{ fontSize: 12, color: "#57534e", marginTop: 4 }}>Categorias novas: {resultado.categorias_criadas.join(", ")}</div>
+            )}
+            {resultado.erros?.length > 0 && (
+              <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12, color: "#dc2626" }}>
+                {resultado.erros.slice(0, 10).map((e, i) => <li key={i}>Linha {e.linha}: {e.msg}</li>)}
+                {resultado.erros.length > 10 && <li>... e mais {resultado.erros.length - 10}.</li>}
+              </ul>
+            )}
+            <button onClick={onClose} style={{ marginTop: 10, padding: "8px 16px", background: "#15803d", border: "none", borderRadius: 8, color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>Fechar</button>
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
-          <button onClick={importar} disabled={!rows.length || importando}
-            style={{ flex: 2, padding: 11, background: "#F38C24", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (!rows.length || importando) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (!rows.length || importando) ? 0.5 : 1 }}>
-            {importando ? "Importando..." : `Importar ${rows.length || ""} produto(s)`}
-          </button>
-        </div>
+        {!resultado && (
+          <>
+            <div style={{ fontSize: 12, color: "#78716c", marginTop: 10, marginBottom: 14 }}>
+              Cole a lista em <b>JSON</b> ou <b>CSV</b>, ou carregue um arquivo. Campos aceitos: <b>nome</b>, <b>preco</b> (obrigatórios), codigo, codigo_barras (EAN), ncm, cest, um (un/kg/g/l/ml…), categoria, descricao, custo, estoque_inicial, estoque_minimo, pertence_estoque. Categorias novas na lista são criadas e vinculadas a este cardápio.
+            </div>
+
+            <div style={{ display: "flex", gap: 2, background: "#f5f5f4", borderRadius: 8, padding: 3, marginBottom: 10, width: "fit-content" }}>
+              {[["json", "JSON"], ["csv", "CSV"]].map(([k, v]) => (
+                <button key={k} onClick={() => setAba(k)}
+                  style={{ padding: "6px 18px", borderRadius: 6, border: "none", background: aba === k ? "#fff" : "none", color: aba === k ? "#F38C24" : "#78716c", fontWeight: aba === k ? 700 : 500, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", boxShadow: aba === k ? "0 1px 4px rgba(0,0,0,0.08)" : "none" }}>
+                  {v}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <button onClick={() => fileRef.current?.click()} style={{ padding: "8px 14px", background: "#f5f5f4", border: "1px solid #e7e5e4", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e", fontWeight: 500 }}>📄 Carregar arquivo</button>
+              <button onClick={setExemplo} style={{ padding: "8px 14px", background: "#fff", border: "1px solid #e7e5e4", borderRadius: 8, fontSize: 12, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#78716c" }}>Usar exemplo</button>
+              <input ref={fileRef} type="file" accept=".csv,.json,.txt,text/csv,application/json,text/plain" onChange={carregarArquivo} style={{ display: "none" }} />
+            </div>
+
+            <textarea value={texto} onChange={e => setTexto(e.target.value)} placeholder={aba === "json" ? exemploJSON : exemploCSV}
+              style={{ width: "100%", minHeight: 170, padding: "10px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontFamily: "monospace", fontSize: 12, outline: "none", resize: "vertical", color: "#1c1917" }} />
+
+            {texto && erro && (
+              <div style={{ marginTop: 10, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: "#dc2626" }}>{erro}</div>
+            )}
+
+            {rows.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#15803d", marginBottom: 6 }}>
+                  {rows.length} produto(s) prontos para importar — prévia:
+                </div>
+                <div style={{ border: "1px solid #e7e5e4", borderRadius: 8, overflow: "auto", maxHeight: 240 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11.5 }}>
+                    <thead><tr style={{ background: "#fafaf9" }}>
+                      {["Nome", "Cat.", "Cód.", "EAN", "UM", "Preço", "CMV", "Estoq.", "Est?"].map(h => <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10.5, color: "#78716c", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>)}
+                    </tr></thead>
+                    <tbody>
+                      {rows.slice(0, 100).map((r, i) => (
+                        <tr key={i} style={{ borderTop: "1px solid #f5f5f4" }}>
+                          <td style={{ padding: "5px 8px", fontWeight: 500, whiteSpace: "nowrap", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{r.nome}</td>
+                          <td style={{ padding: "5px 8px", color: "#78716c" }}>{r.categoria || "—"}</td>
+                          <td style={{ padding: "5px 8px", color: "#57534e", fontFamily: "monospace", fontSize: 10.5 }}>{r.codigo || "—"}</td>
+                          <td style={{ padding: "5px 8px", color: "#57534e", fontFamily: "monospace", fontSize: 10.5 }}>{r.codigo_barras || "—"}</td>
+                          <td style={{ padding: "5px 8px", color: "#78716c", textTransform: "uppercase" }}>{r.um || "un"}</td>
+                          <td style={{ padding: "5px 8px", color: "#15803d", fontWeight: 600 }}>{fmt(r.preco)}</td>
+                          <td style={{ padding: "5px 8px", color: "#78716c" }}>{r.custo ? fmt(r.custo) : "—"}</td>
+                          <td style={{ padding: "5px 8px", color: "#57534e" }}>{isFinite(r.estoque_inicial) ? r.estoque_inicial : "—"}</td>
+                          <td style={{ padding: "5px 8px" }}>{r.pertence_estoque ? "📦" : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {rows.length > 100 && <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>Mostrando 100 de {rows.length}. Todos serão importados.</div>}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button onClick={onClose} style={{ flex: 1, padding: 11, background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#57534e" }}>Cancelar</button>
+              <button onClick={importar} disabled={!rows.length || importando}
+                style={{ flex: 2, padding: 11, background: "#F38C24", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: (!rows.length || importando) ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif", color: "#fff", opacity: (!rows.length || importando) ? 0.5 : 1 }}>
+                {importando ? "Importando..." : `Importar ${rows.length || ""} produto(s)`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -711,7 +994,7 @@ function ModalImportarCSV({ onImport, onClose }) {
 // ─── COMPONENTE PRINCIPAL ─────────────────────────────────────────────────────
 // cardapioAtivo: id do cardápio ativo (recebido do ProdutosApp). Se presente,
 // filtra produtos pelas categorias desse cardápio e força a criação vinculada.
-export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "snack_bar" } = {}) {
+export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "snack_bar", cardapio = null } = {}) {
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [insumos, setInsumos] = useState([]);
@@ -763,17 +1046,22 @@ export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "
     }
   };
 
-  // T9 — importação em lote via CSV
-  const importarCSV = async (rows) => {
-    let ok = 0, fail = 0;
-    for (const r of rows) {
-      try {
-        const novo = await api.produtos.criar({ ...r, preco: Number(r.preco), custo: Number(r.custo) || 0 });
-        setProdutos(ps => [...ps, novo]);
-        ok++;
-      } catch { fail++; }
-    }
-    showToast(`${ok} produto(s) importado(s)${fail ? `, ${fail} com erro` : ""}.`, fail ? "#d97706" : "#14532d");
+  // Importação em lote — envia UM POST, o server valida/cria categorias/atualiza duplicados.
+  // O modal usa o relatório retornado (criados/atualizados/erros) e mostra na tela.
+  const importarProdutos = async (rows) => {
+    const relatorio = await api.produtos.importar(rows, cardapioAtivo || undefined);
+    // Recarrega a lista pra refletir criações/atualizações (evita casar por id em lote).
+    try {
+      const [prods, cats] = await Promise.all([
+        api.produtos.listar(),
+        api.categorias.listar({ cardapio_id: cardapioAtivo }),
+      ]);
+      setProdutos(prods);
+      setCategorias(cats);
+    } catch {}
+    const cor = relatorio.erros?.length ? "#d97706" : "#14532d";
+    showToast(`${relatorio.criados} criado(s), ${relatorio.atualizados} atualizado(s)${relatorio.erros?.length ? `, ${relatorio.erros.length} erro(s)` : ""}.`, cor);
+    return relatorio;
   };
 
   // Chamado pela ficha técnica após salvar composição (já atualizou CMV no servidor)
@@ -818,7 +1106,7 @@ export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", width: "100%" }}>
           <input className="search" placeholder="Buscar produto..." value={busca} onChange={e => setBusca(e.target.value)} style={{ flex: 1, minWidth: 0, width: "100%" }} />
           <button className="btn-add" onClick={() => setModalImport(true)} style={{ background: "#fff", color: "#57534e", border: "1.5px solid #e7e5e4", flex: "0 0 auto" }}>
-            ⬆ Importar CSV
+            ⬆ Importar produtos
           </button>
           <button className="btn-add" onClick={() => { setEditando(null); setModal(true); }} style={{ background: "#F38C24", flex: "0 0 auto" }}>
             <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo produto
@@ -874,8 +1162,8 @@ export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "
         </div>
       )}
 
-      {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} cardapioTipo={cardapioTipo} />}
-      {modalImport && <ModalImportarCSV onImport={importarCSV} onClose={() => setModalImport(false)} />}
+      {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} cardapioTipo={cardapioTipo} cardapio={cardapio} />}
+      {modalImport && <ModalImportarProdutos onImport={importarProdutos} onClose={() => setModalImport(false)} cardapioNome={cardapioNome} />}
 
       {confirmDel && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setConfirmDel(null)}>

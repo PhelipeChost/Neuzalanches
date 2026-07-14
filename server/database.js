@@ -449,6 +449,30 @@ db.exec(`
   if (!colsProd.includes("config")) db.exec("ALTER TABLE produtos ADD COLUMN config TEXT DEFAULT '{}'");
 }
 
+// ─── MIGRAÇÃO: campos fiscais no produto + tipo no estoque_item ──────────────
+// NCM/CEST/UM permitem NFC-e correta por produto (não hardcode). codigo_barras
+// = GTIN/EAN do leitor. pertence_estoque=1 cria/atualiza um estoque_item de
+// revenda espelhado por código. tipo no estoque_item separa revenda × insumo ×
+// interno (uso do estabelecimento — sacolas, papel, etc.).
+{
+  const cp = db.prepare("PRAGMA table_info(produtos)").all().map(c => c.name);
+  if (!cp.includes("codigo_barras"))    db.exec("ALTER TABLE produtos ADD COLUMN codigo_barras TEXT DEFAULT ''");
+  if (!cp.includes("ncm"))              db.exec("ALTER TABLE produtos ADD COLUMN ncm TEXT DEFAULT ''");
+  if (!cp.includes("cest"))             db.exec("ALTER TABLE produtos ADD COLUMN cest TEXT DEFAULT ''");
+  if (!cp.includes("um"))               db.exec("ALTER TABLE produtos ADD COLUMN um TEXT DEFAULT 'un'");
+  if (!cp.includes("pertence_estoque")) db.exec("ALTER TABLE produtos ADD COLUMN pertence_estoque INTEGER DEFAULT 0");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_produtos_codigo_barras ON produtos(codigo_barras)");
+  const ei = db.prepare("PRAGMA table_info(estoque_itens)").all().map(c => c.name);
+  if (!ei.includes("tipo")) {
+    db.exec("ALTER TABLE estoque_itens ADD COLUMN tipo TEXT DEFAULT 'revenda'");
+    // Migra o legado: itens marcados como insumo (eh_insumo=1) viram tipo='insumo'.
+    // Os demais continuam como 'revenda' (default). 'interno' é escolhido manualmente.
+    if (ei.includes("eh_insumo")) {
+      db.exec("UPDATE estoque_itens SET tipo = CASE WHEN eh_insumo = 1 THEN 'insumo' ELSE 'revenda' END WHERE tipo IS NULL OR tipo = 'revenda'");
+    }
+  }
+}
+
 // Inserir chave PIX padrão se não existir
 const existePix = db.prepare("SELECT 1 FROM config WHERE key = 'pix_key'").get();
 if (!existePix) {
@@ -506,6 +530,17 @@ const colsNfceEm = db.prepare("PRAGMA table_info(nfce_emitidas)").all().map(c =>
 if (!colsNfceEm.includes("motor")) {
   db.exec("ALTER TABLE nfce_emitidas ADD COLUMN motor TEXT DEFAULT 'novo'");
   db.exec("ALTER TABLE nfce_emitidas ADD COLUMN xml_assinado TEXT DEFAULT ''");
+}
+
+// Migração: integração com provedor real (Focus NFe) + relatório fiscal mensal
+if (!colsFiscal.includes("focus_empresa_id")) {
+  db.exec(`
+    ALTER TABLE fiscal_config ADD COLUMN focus_empresa_id TEXT DEFAULT '';
+    ALTER TABLE fiscal_config ADD COLUMN email_contabilidade TEXT DEFAULT '';
+    ALTER TABLE fiscal_config ADD COLUMN relatorio_dia_mes INTEGER DEFAULT 5;
+    ALTER TABLE fiscal_config ADD COLUMN n8n_webhook_relatorio TEXT DEFAULT '';
+    ALTER TABLE fiscal_config ADD COLUMN relatorio_ultimo_mes_enviado TEXT DEFAULT '';
+  `);
 }
 
 // Migração: adicionar colunas novas na tabela pedidos (para bancos já existentes)
@@ -990,6 +1025,10 @@ export function obterFiscalConfig() {
     antigo_proximo_numero: r.antigo_proximo_numero || 1,
     ncm_padrao: r.ncm_padrao || "21069090",
     cfop_padrao: r.cfop_padrao || "5102",
+    // relatório fiscal mensal (envio automático via n8n)
+    email_contabilidade: r.email_contabilidade || "",
+    relatorio_dia_mes: r.relatorio_dia_mes || 5,
+    n8n_webhook_relatorio: r.n8n_webhook_relatorio || "",
   };
 }
 
@@ -1023,6 +1062,9 @@ export function salvarFiscalConfig(dados) {
     antigo_proximo_numero: dados.antigo_proximo_numero != null ? parseInt(dados.antigo_proximo_numero, 10) || 1 : atual.antigo_proximo_numero,
     ncm_padrao: dados.ncm_padrao != null ? String(dados.ncm_padrao).replace(/\D/g, "").slice(0, 8) : atual.ncm_padrao,
     cfop_padrao: dados.cfop_padrao != null ? String(dados.cfop_padrao).replace(/\D/g, "").slice(0, 4) : atual.cfop_padrao,
+    email_contabilidade: dados.email_contabilidade ?? atual.email_contabilidade,
+    relatorio_dia_mes: dados.relatorio_dia_mes != null ? Math.min(28, Math.max(1, parseInt(dados.relatorio_dia_mes, 10) || 5)) : atual.relatorio_dia_mes,
+    n8n_webhook_relatorio: dados.n8n_webhook_relatorio ?? atual.n8n_webhook_relatorio,
   };
   db.prepare(`UPDATE fiscal_config SET
     nfce_habilitado=@nfce_habilitado, ambiente=@ambiente, cnpj=@cnpj, razao_social=@razao_social,
@@ -1032,6 +1074,8 @@ export function salvarFiscalConfig(dados) {
     proximo_numero=@proximo_numero, provedor=@provedor, provedor_token=@provedor_token,
     antigo_habilitado=@antigo_habilitado, antigo_serie=@antigo_serie,
     antigo_proximo_numero=@antigo_proximo_numero, ncm_padrao=@ncm_padrao, cfop_padrao=@cfop_padrao,
+    email_contabilidade=@email_contabilidade, relatorio_dia_mes=@relatorio_dia_mes,
+    n8n_webhook_relatorio=@n8n_webhook_relatorio,
     updated_at=datetime('now') WHERE id = 1`).run(campos);
   return obterFiscalConfig();
 }
@@ -1103,17 +1147,38 @@ function gerarChaveAcesso({ cUF, cnpj, modelo, serie, numero, tpEmis, cNF, aammE
 // a partir de agosto, IBS/CBS). Campos fiscais por item (NCM/CFOP) ainda não
 // existem no cadastro de produto — usamos defaults e sinalizamos como pendência.
 export function montarPayloadNFCe(pedido, fisc) {
+  const ncmPadrao = (fisc.ncm_padrao && String(fisc.ncm_padrao).replace(/\D/g, "")) || "00000000";
+  const cfopPadrao = (fisc.cfop_padrao && String(fisc.cfop_padrao).replace(/\D/g, "")) || "5102";
   const itens = (pedido.itens || []).map((it, i) => {
     const adicionais = (it.adicionais || []);
     const valorAdic = adicionais.reduce((s, a) => s + (a.preco || 0) * (a.quantidade || 1), 0);
     const valorUnit = (it.preco_unitario || 0) + valorAdic;
+    // Busca dados fiscais e venda-por-peso do produto uma vez. Ordem de precedência:
+    //  1) campo no item (se o pedido carregou snapshot)
+    //  2) cadastro do produto (produtos.ncm/cest/um)
+    //  3) default do estabelecimento (fiscal_config.ncm_padrao/cfop_padrao)
+    let prod = null;
+    if (it.produto_id) {
+      try { prod = buscarProduto(it.produto_id); } catch { /* produto sumiu do cadastro */ }
+    }
+    let porPeso = false;
+    if (prod) {
+      try {
+        const cfg = typeof prod.config === "string" ? JSON.parse(prod.config || "{}") : (prod.config || {});
+        porPeso = cfg.venda_por_peso === true;
+      } catch {}
+    }
+    const umProduto = (prod?.um || "").trim().toUpperCase();
+    const unidadeFiscal = porPeso ? "KG" : (umProduto || "UN");
     return {
       numero_item: i + 1,
-      codigo: it.produto_id || String(i + 1),
+      codigo: it.codigo || prod?.codigo || it.produto_id || String(i + 1),
+      codigo_barras: it.codigo_barras || prod?.codigo_barras || "",
       descricao: it.produto_nome + (adicionais.length ? " (" + adicionais.map(a => a.nome).join(", ") + ")" : ""),
-      ncm: it.ncm || "00000000",           // TODO: cadastrar NCM no produto
-      cfop: it.cfop || "5102",             // venda de mercadoria dentro do estado
-      unidade: "UN",
+      ncm: (it.ncm && String(it.ncm).replace(/\D/g, "")) || (prod?.ncm && String(prod.ncm).replace(/\D/g, "")) || ncmPadrao,
+      cest: (it.cest && String(it.cest).replace(/\D/g, "")) || (prod?.cest && String(prod.cest).replace(/\D/g, "")) || "",
+      cfop: it.cfop || cfopPadrao,             // venda de mercadoria dentro do estado
+      unidade: unidadeFiscal,
       quantidade: it.quantidade || 1,
       valor_unitario: Math.round(valorUnit * 100) / 100,
       valor_total: Math.round(valorUnit * (it.quantidade || 1) * 100) / 100,
@@ -1141,8 +1206,8 @@ export function montarPayloadNFCe(pedido, fisc) {
 }
 
 // Emite a NFC-e. Em modo simulado (ou provedor 'nenhum') gera uma nota fictícia.
-// Quando um provedor for configurado, aqui entra a chamada REST real.
-export function emitirNFCe(pedidoId, { simulado = false } = {}) {
+// Quando um provedor for configurado, chama a API REST do provedor (Focus NFe).
+export async function emitirNFCe(pedidoId, { simulado = false } = {}) {
   const fisc = db.prepare("SELECT * FROM fiscal_config WHERE id = 1").get() || {};
   const ehSimulado = simulado || (fisc.provedor || "nenhum") === "nenhum";
 
@@ -1184,13 +1249,20 @@ export function emitirNFCe(pedidoId, { simulado = false } = {}) {
       .run(id, pedidoId || null, numero, serie, fisc.ambiente, chave,
         "SIM" + Date.now(), payload.valor_total, qr, JSON.stringify(payload));
     registro = db.prepare("SELECT * FROM nfce_emitidas WHERE id = ?").get(id);
+  } else if (fisc.provedor === "focus") {
+    db.prepare(`INSERT INTO nfce_emitidas
+      (id, pedido_id, numero, serie, modelo, ambiente, status, valor_total, provedor, payload_json)
+      VALUES (?, ?, ?, ?, '65', ?, 'processando', ?, 'focus', ?)`)
+      .run(id, pedidoId || null, numero, serie, fisc.ambiente, payload.valor_total, JSON.stringify(payload));
+    try {
+      const resp = await emitirNFCeFocus(id, payload, fisc);
+      db.prepare("UPDATE nfce_emitidas SET retorno_json = ? WHERE id = ?").run(JSON.stringify(resp), id);
+    } catch (e) {
+      db.prepare("UPDATE nfce_emitidas SET status = 'erro', motivo = ? WHERE id = ?").run(e.message, id);
+      throw e;
+    }
+    registro = db.prepare("SELECT * FROM nfce_emitidas WHERE id = ?").get(id);
   } else {
-    // ─────────────────────────────────────────────────────────────────────────
-    // TODO (agosto): chamada REST ao provedor configurado.
-    //   const resp = await chamarProvedor(fisc.provedor, decrypt(fisc.provedor_token), payload, certParaProvedor);
-    //   grava chave/protocolo/status/qr a partir de resp.
-    // Cada provedor tem endpoints próprios (Focus NFe, PlugNotas, etc.).
-    // ─────────────────────────────────────────────────────────────────────────
     throw new Error(`Emissão real via provedor "${fisc.provedor}" ainda não implementada. Use o modo simulado por enquanto.`);
   }
 
@@ -1201,6 +1273,136 @@ export function emitirNFCe(pedidoId, { simulado = false } = {}) {
 
 export function listarNFCe(limit = 20) {
   return db.prepare("SELECT id, pedido_id, numero, serie, ambiente, chave, status, motivo, valor_total, qr_code_url, provedor, created_at FROM nfce_emitidas WHERE COALESCE(motor,'novo') = 'novo' ORDER BY created_at DESC LIMIT ?").all(limit);
+}
+
+// ─── Integração real: Focus NFe (provedor terceirizado) ──────────────────────
+// Focus NFe processa a emissão de forma assíncrona: aqui só disparamos a
+// chamada e gravamos como 'processando'; verificarPendentesFocus() (polling)
+// consulta o status depois e atualiza o registro. Preferimos polling a webhook
+// porque o PDV roda na máquina do lojista, que normalmente não tem IP público
+// pra receber notificação de volta.
+const FOCUS_URL_PRODUCAO = "https://api.focusnfe.com.br/v2";
+const FOCUS_URL_HOMOLOG = "https://homologacao.focusnfe.com.br/v2";
+const focusBaseUrl = (ambiente) => (ambiente === "producao" ? FOCUS_URL_PRODUCAO : FOCUS_URL_HOMOLOG);
+// Focus NFe autentica via HTTP Basic usando o token como usuário (sem senha).
+const focusAuthHeader = (token) => "Basic " + Buffer.from(`${token}:`).toString("base64");
+// Focus NFe: 1=Simples Nacional, 3=Lucro Presumido/Real (MEI cai no Simples).
+const focusRegime = (regime) => (regime === "normal" ? 3 : 1);
+
+async function focusGarantirEmpresaCadastrada(fisc) {
+  if (fisc.focus_empresa_id) return fisc.focus_empresa_id;
+
+  const token = fiscDecriptar(fisc.provedor_token);
+  if (!token) throw new Error("Configure o token do Focus NFe na aba Fiscal.");
+  const pfxBase64 = fiscDecriptar(fisc.cert_data);
+  const senhaCert = fiscDecriptar(fisc.cert_senha);
+  if (!pfxBase64) throw new Error("Envie o certificado A1 antes de emitir.");
+
+  const form = new FormData();
+  form.append("nome", fisc.razao_social || fisc.nome_fantasia || "");
+  form.append("nome_fantasia", fisc.nome_fantasia || "");
+  form.append("cnpj", (fisc.cnpj || "").replace(/\D/g, ""));
+  form.append("inscricao_estadual", fisc.inscricao_estadual || "");
+  form.append("regime_tributario", String(focusRegime(fisc.regime_tributario)));
+  form.append("logradouro", fisc.logradouro || "");
+  form.append("numero", fisc.numero || "");
+  form.append("bairro", fisc.bairro || "");
+  form.append("municipio", fisc.municipio || "");
+  form.append("uf", fisc.uf || "");
+  form.append("cep", (fisc.cep || "").replace(/\D/g, ""));
+  form.append("habilita_nfce", "true");
+  form.append("arquivo_certificado_base64", pfxBase64);
+  form.append("senha_certificado", senhaCert);
+
+  const r = await fetch(`${focusBaseUrl(fisc.ambiente)}/empresas`, {
+    method: "POST",
+    headers: { Authorization: focusAuthHeader(token) },
+    body: form,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.mensagem || data.erro || `Focus NFe: falha ao cadastrar empresa (HTTP ${r.status})`);
+
+  const empresaId = String(data.id || "");
+  if (empresaId) db.prepare("UPDATE fiscal_config SET focus_empresa_id = ? WHERE id = 1").run(empresaId);
+  return empresaId;
+}
+
+// Mapeia o payload "natural" (montarPayloadNFCe) pro schema esperado pela Focus NFe.
+function montarPayloadFocus(payload) {
+  return {
+    natureza_operacao: "Venda ao consumidor",
+    data_emissao: new Date().toISOString(),
+    presenca_comprador: "1",
+    modalidade_frete: "9",
+    cnpj_emitente: (payload.emitente.cnpj || "").replace(/\D/g, ""),
+    valor_produtos: payload.valor_total,
+    valor_total: payload.valor_total,
+    cpf_destinatario: payload.consumidor?.cpf || undefined,
+    nome_destinatario: payload.consumidor?.nome || undefined,
+    forma_pagamento: "0", // à vista
+    formas_pagamento: [{ forma_pagamento: payload.pagamento?.forma || "99", valor_pagamento: payload.pagamento?.valor || payload.valor_total }],
+    items: payload.itens.map(it => ({
+      numero_item: it.numero_item,
+      codigo_produto: it.codigo,
+      descricao: it.descricao,
+      cfop: it.cfop,
+      ncm: it.ncm,
+      quantidade_comercial: it.quantidade,
+      valor_unitario_comercial: it.valor_unitario,
+      quantidade_tributavel: it.quantidade,
+      valor_unitario_tributavel: it.valor_unitario,
+      unidade_comercial: it.unidade || "UN",
+      unidade_tributavel: it.unidade || "UN",
+      valor_bruto: it.valor_total,
+      icms_origem: "0",
+      icms_situacao_tributaria: "102", // Simples Nacional sem permissão de crédito
+    })),
+  };
+}
+
+async function emitirNFCeFocus(id, payload, fisc) {
+  await focusGarantirEmpresaCadastrada(fisc);
+  const token = fiscDecriptar(fisc.provedor_token);
+  const corpo = montarPayloadFocus(payload);
+  const r = await fetch(`${focusBaseUrl(fisc.ambiente)}/nfce?ref=${encodeURIComponent(id)}`, {
+    method: "POST",
+    headers: { Authorization: focusAuthHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify(corpo),
+  });
+  const data = await r.json().catch(() => ({}));
+  // 202 = aceito, ainda processando (comportamento normal e esperado aqui)
+  if (!r.ok && r.status !== 202) {
+    throw new Error(data.mensagem || data.erro || `Focus NFe: falha ao emitir (HTTP ${r.status})`);
+  }
+  return data;
+}
+
+// Varre as notas 'processando' do motor Focus e consulta o status atual —
+// chamado periodicamente por um setInterval em server/index.js.
+export async function verificarPendentesFocus() {
+  const pendentes = db.prepare("SELECT * FROM nfce_emitidas WHERE COALESCE(motor,'novo') = 'novo' AND provedor = 'focus' AND status = 'processando'").all();
+  if (pendentes.length === 0) return { verificadas: 0 };
+  const fisc = db.prepare("SELECT * FROM fiscal_config WHERE id = 1").get() || {};
+  const token = fiscDecriptar(fisc.provedor_token);
+  if (!token) return { verificadas: 0 };
+
+  let atualizadas = 0;
+  for (const nota of pendentes) {
+    try {
+      const r = await fetch(`${focusBaseUrl(fisc.ambiente)}/nfce/${encodeURIComponent(nota.id)}`, {
+        headers: { Authorization: focusAuthHeader(token) },
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) continue;
+      const statusFocus = data.status; // processando_autorizacao | autorizado | erro_autorizacao | cancelado
+      if (statusFocus === "processando_autorizacao") continue;
+      const statusLocal = statusFocus === "autorizado" ? "autorizada" : (statusFocus === "cancelado" ? "cancelada" : "rejeitada");
+      db.prepare(`UPDATE nfce_emitidas SET status = ?, protocolo = ?, motivo = ?, chave = ?, qr_code_url = ?, retorno_json = ? WHERE id = ?`)
+        .run(statusLocal, data.numero_recibo || "", data.mensagem_sefaz || "", data.chave_nfe || "", data.caminho_danfe || "", JSON.stringify(data), nota.id);
+      atualizadas++;
+    } catch { /* tenta de novo no próximo ciclo */ }
+  }
+  return { verificadas: pendentes.length, atualizadas };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1426,7 +1628,8 @@ export function montarXmlNFCeAntigo(pedido, fisc, cnpj, { numero, serie, tpAmb }
   const cfopPadrao = fisc.cfop_padrao || "5102";
   const crt = fisc.regime_tributario === "mei" ? "4" : "1";
 
-  // Itens
+  // Itens — puxa NCM/CEST/UM/EAN do cadastro do produto quando existir.
+  // Precedência: item (snapshot) → cadastro → default do estabelecimento.
   const itens = (pedido.itens || []).map((it, i) => {
     const adicionais = it.adicionais || [];
     const vAdic = adicionais.reduce((s, a) => s + (a.preco || 0) * (a.quantidade || 1), 0);
@@ -1435,17 +1638,31 @@ export function montarXmlNFCeAntigo(pedido, fisc, cnpj, { numero, serie, tpAmb }
     const vProd = Math.round(vUnit * qtd * 100) / 100;
     const nomeCompleto = it.produto_nome + (adicionais.length ? " c/ " + adicionais.map(a => a.nome).join(", ") : "");
     const xProd = (tpAmb === "2" && i === 0) ? HOMOLOG_XPROD : txtFiscal(nomeCompleto);
-    return { seq: i + 1, cProd: txtFiscal(it.produto_id || String(i + 1), 60), xProd, ncm: (it.ncm || ncmPadrao), cfop: (it.cfop || cfopPadrao), qtd, vUnit, vProd };
+    let prod = null;
+    if (it.produto_id) { try { prod = buscarProduto(it.produto_id); } catch {} }
+    let porPeso = false;
+    if (prod) {
+      try { const cfg = typeof prod.config === "string" ? JSON.parse(prod.config || "{}") : (prod.config || {}); porPeso = cfg.venda_por_peso === true; } catch {}
+    }
+    const umProduto = (prod?.um || "").trim().toUpperCase();
+    const um = porPeso ? "KG" : (umProduto || "UN");
+    const ncm = ((it.ncm || prod?.ncm || ncmPadrao) + "").replace(/\D/g, "").padStart(8, "0").slice(0, 8);
+    const cest = ((it.cest || prod?.cest || "") + "").replace(/\D/g, "").slice(0, 7);
+    const ean = ((it.codigo_barras || prod?.codigo_barras || "") + "").replace(/\D/g, "");
+    const cEAN = /^(\d{8}|\d{12,14})$/.test(ean) ? ean : "SEM GTIN";
+    return { seq: i + 1, cProd: txtFiscal(prod?.codigo || it.codigo || it.produto_id || String(i + 1), 60), xProd, ncm, cest, cEAN, cfop: (it.cfop || cfopPadrao), um, qtd, vUnit, vProd };
   });
   const vNF = Math.round(itens.reduce((s, it) => s + it.vProd, 0) * 100) / 100;
 
   const detXml = itens.map(it =>
     `<det nItem="${it.seq}">` +
     `<prod>` +
-    `<cProd>${it.cProd}</cProd><cEAN>SEM GTIN</cEAN><xProd>${it.xProd}</xProd>` +
-    `<NCM>${it.ncm}</NCM><CFOP>${it.cfop}</CFOP>` +
-    `<uCom>UN</uCom><qCom>${dec(it.qtd, 4)}</qCom><vUnCom>${dec(it.vUnit)}</vUnCom><vProd>${dec(it.vProd)}</vProd>` +
-    `<cEANTrib>SEM GTIN</cEANTrib><uTrib>UN</uTrib><qTrib>${dec(it.qtd, 4)}</qTrib><vUnTrib>${dec(it.vUnit)}</vUnTrib>` +
+    `<cProd>${it.cProd}</cProd><cEAN>${it.cEAN}</cEAN><xProd>${it.xProd}</xProd>` +
+    `<NCM>${it.ncm}</NCM>` +
+    (it.cest ? `<CEST>${it.cest.padStart(7, "0")}</CEST>` : "") +
+    `<CFOP>${it.cfop}</CFOP>` +
+    `<uCom>${it.um}</uCom><qCom>${dec(it.qtd, 4)}</qCom><vUnCom>${dec(it.vUnit)}</vUnCom><vProd>${dec(it.vProd)}</vProd>` +
+    `<cEANTrib>${it.cEAN}</cEANTrib><uTrib>${it.um}</uTrib><qTrib>${dec(it.qtd, 4)}</qTrib><vUnTrib>${dec(it.vUnit)}</vUnTrib>` +
     `<indTot>1</indTot>` +
     `</prod>` +
     `<imposto><ICMS><ICMSSN102><orig>0</orig><CSOSN>102</CSOSN></ICMSSN102></ICMS></imposto>` +
@@ -1621,6 +1838,37 @@ export function obterXmlNFCeAntigo(id) {
   return r;
 }
 
+// ─── RELATÓRIO FISCAL MENSAL (envio automático pra contabilidade via n8n) ────
+// Reúne as notas autorizadas do mês (dos dois motores) pra montar o e-mail.
+export function montarRelatorioFiscalMensal(anoMes) {
+  const notas = db.prepare(
+    `SELECT id, numero, serie, motor, chave, valor_total, qr_code_url, created_at
+     FROM nfce_emitidas
+     WHERE status = 'autorizada' AND strftime('%Y-%m', created_at) = ?
+     ORDER BY created_at ASC`
+  ).all(anoMes);
+  const total = notas.reduce((s, n) => s + (n.valor_total || 0), 0);
+  return { periodo: anoMes, quantidade: notas.length, total, notas };
+}
+
+export function marcarRelatorioFiscalEnviado(anoMes) {
+  db.prepare("UPDATE fiscal_config SET relatorio_ultimo_mes_enviado = ? WHERE id = 1").run(anoMes);
+}
+
+// Verifica se o relatório do mês anterior já deve ser enviado (dia configurado
+// já passou) e ainda não foi (evita duplicar). Retorna null se não é hora ainda.
+export function verificarEnvioRelatorioFiscalPendente() {
+  const r = db.prepare("SELECT * FROM fiscal_config WHERE id = 1").get() || {};
+  if (!r.email_contabilidade || !r.n8n_webhook_relatorio) return null;
+  if (new Date().getDate() < (r.relatorio_dia_mes || 5)) return null;
+  const d = new Date();
+  d.setDate(1);              // evita overflow de mês (ex: dia 31 - 1 mês vira mês errado)
+  d.setMonth(d.getMonth() - 1);
+  const mesReferencia = d.toISOString().slice(0, 7); // YYYY-MM
+  if (r.relatorio_ultimo_mes_enviado === mesReferencia) return null;
+  return { mesReferencia, email_contabilidade: r.email_contabilidade, n8n_webhook_relatorio: r.n8n_webhook_relatorio };
+}
+
 // ─── ANALYTICS DO CARDÁPIO (T10) ─────────────────────────────────────────────
 
 export function registrarVisita() {
@@ -1713,16 +1961,32 @@ export function getRankingVendas() {
 
 // ─── CATEGORIAS ─────────────────────────────────────────────────────────────
 
-export function listarCategorias({ cardapio_id } = {}) {
+export function listarCategorias({ cardapio_id, incluirCardapios = false } = {}) {
+  let rows;
   if (cardapio_id) {
-    return db.prepare(`
+    rows = db.prepare(`
       SELECT c.* FROM categorias c
       INNER JOIN cardapio_categorias cc ON cc.categoria_id = c.id
       WHERE cc.cardapio_id = ? AND c.deleted_at IS NULL
       ORDER BY c.ordem ASC, c.nome ASC
     `).all(cardapio_id);
+  } else {
+    rows = db.prepare("SELECT * FROM categorias WHERE deleted_at IS NULL ORDER BY ordem ASC, nome ASC").all();
   }
-  return db.prepare("SELECT * FROM categorias WHERE deleted_at IS NULL ORDER BY ordem ASC, nome ASC").all();
+  // Anexa lista de cardápios de cada categoria (útil pra view "Todos") e sinaliza órfãs.
+  if (incluirCardapios) {
+    const cardStmt = db.prepare(`
+      SELECT ca.id, ca.nome, ca.icone FROM cardapios ca
+      INNER JOIN cardapio_categorias cc ON cc.cardapio_id = ca.id
+      WHERE cc.categoria_id = ?
+      ORDER BY ca.ordem ASC, ca.nome ASC
+    `);
+    for (const r of rows) {
+      r.cardapios = cardStmt.all(r.id);
+      r.orfao = r.cardapios.length === 0;
+    }
+  }
+  return rows;
 }
 
 export function buscarCategoria(id) {
@@ -1782,20 +2046,35 @@ export function excluirCategoria(id) {
 
 // ─── ADICIONAIS ─────────────────────────────────────────────────────────────
 
-export function listarAdicionais(apenasDisponiveis = false, { cardapio_id } = {}) {
+export function listarAdicionais(apenasDisponiveis = false, { cardapio_id, incluirCardapios = false } = {}) {
   const filtroDisp = apenasDisponiveis ? "AND a.disponivel = 1" : "";
+  let rows;
   if (cardapio_id) {
-    return db.prepare(`
+    rows = db.prepare(`
       SELECT a.* FROM adicionais a
       INNER JOIN cardapio_adicionais ca ON ca.adicional_id = a.id
       WHERE ca.cardapio_id = ? AND a.deleted_at IS NULL ${filtroDisp}
       ORDER BY a.nome
     `).all(cardapio_id);
+  } else {
+    const sql = apenasDisponiveis
+      ? "SELECT * FROM adicionais a WHERE a.disponivel = 1 AND a.deleted_at IS NULL ORDER BY a.nome"
+      : "SELECT * FROM adicionais a WHERE a.deleted_at IS NULL ORDER BY a.nome";
+    rows = db.prepare(sql).all();
   }
-  const sql = apenasDisponiveis
-    ? "SELECT * FROM adicionais a WHERE a.disponivel = 1 AND a.deleted_at IS NULL ORDER BY a.nome"
-    : "SELECT * FROM adicionais a WHERE a.deleted_at IS NULL ORDER BY a.nome";
-  return db.prepare(sql).all();
+  if (incluirCardapios) {
+    const cardStmt = db.prepare(`
+      SELECT ca.id, ca.nome, ca.icone FROM cardapios ca
+      INNER JOIN cardapio_adicionais cac ON cac.cardapio_id = ca.id
+      WHERE cac.adicional_id = ?
+      ORDER BY ca.ordem ASC, ca.nome ASC
+    `);
+    for (const r of rows) {
+      r.cardapios = cardStmt.all(r.id);
+      r.orfao = r.cardapios.length === 0;
+    }
+  }
+  return rows;
 }
 
 export function buscarAdicional(id) {
@@ -1859,30 +2138,210 @@ function normalizarConfigJson(config) {
   try { return JSON.stringify(config); } catch { return null; }
 }
 
-export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config }) {
+// Mapeia (ou cria) categoria de estoque a partir do nome de categoria do produto.
+// Espelho por categoria mantém o filtro do Estoque ("Por cardápio") coerente.
+function garantirCategoriaEstoquePorNome(nomeCat) {
+  const n = (nomeCat || "").trim();
+  if (!n) return null;
+  const ex = db.prepare("SELECT id FROM estoque_categorias WHERE lower(nome) = lower(?)").get(n);
+  if (ex) return ex.id;
   const id = gerarId();
-  db.prepare(
-    "INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel !== undefined ? (disponivel ? 1 : 0) : 1, (codigo || "").trim(), normalizarConfigJson(config) || "{}");
-  return buscarProduto(id);
+  try { db.prepare("INSERT INTO estoque_categorias (id, nome) VALUES (?, ?)").run(id, n); return id; }
+  catch { const r = db.prepare("SELECT id FROM estoque_categorias WHERE lower(nome) = lower(?)").get(n); return r?.id || null; }
 }
 
-export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config }) {
+// Sincroniza um estoque_item de REVENDA espelhado por código do produto.
+// Chamado ao salvar produto com pertence_estoque=1. Sem código próprio nem
+// código de barras não faz nada (sem chave estável não dá pra espelhar).
+export function sincronizarEspelhoEstoqueDoProduto(produto) {
+  if (!produto) return null;
+  const chave = String(produto.codigo || produto.codigo_barras || "").trim();
+  if (!chave) return null;
+  const catId = garantirCategoriaEstoquePorNome(produto.categoria);
+  const existente = db.prepare("SELECT * FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(chave);
+  const um = (produto.um || "un").trim();
+  const custo = Number(produto.custo) || 0;
+  if (existente) {
+    db.prepare(`UPDATE estoque_itens
+      SET nome = ?, unidade = ?, custo_manual = ?,
+          categoria_id = COALESCE(?, categoria_id),
+          tipo = CASE WHEN tipo IN ('insumo','interno') THEN tipo ELSE 'revenda' END,
+          ativo = 1
+      WHERE id = ?`)
+      .run(produto.nome, um, custo, catId, existente.id);
+    return existente.id;
+  }
+  const id = gerarId();
+  db.prepare(`INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, saldo_atual, custo_manual, ativo, eh_insumo, tipo)
+              VALUES (?, ?, ?, ?, ?, 0, ?, 1, 0, 'revenda')`)
+    .run(id, chave, produto.nome, um, catId, custo);
+  return id;
+}
+
+// Desativa o espelho quando o cliente desmarca "Pertence ao estoque" — não apaga
+// pra preservar histórico de movimentações do item.
+function desativarEspelhoEstoqueDoProduto(produto) {
+  const chave = String(produto?.codigo || produto?.codigo_barras || "").trim();
+  if (!chave) return;
+  db.prepare("UPDATE estoque_itens SET ativo = 0 WHERE codigo = ? AND deleted_at IS NULL AND tipo = 'revenda'").run(chave);
+}
+
+export function criarProduto({ nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config,
+                               codigo_barras, ncm, cest, um, pertence_estoque }) {
+  const id = gerarId();
+  db.prepare(
+    "INSERT INTO produtos (id, nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config, codigo_barras, ncm, cest, um, pertence_estoque) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    id, nome, descricao || "", preco, custo || 0, categoria || "", imagem || "",
+    disponivel !== undefined ? (disponivel ? 1 : 0) : 1,
+    (codigo || "").trim(), normalizarConfigJson(config) || "{}",
+    (codigo_barras || "").trim(), (ncm || "").trim(), (cest || "").trim(),
+    (um || "un").trim(), pertence_estoque ? 1 : 0
+  );
+  const criado = buscarProduto(id);
+  if (pertence_estoque) sincronizarEspelhoEstoqueDoProduto(criado);
+  return criado;
+}
+
+export function atualizarProduto(id, { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config,
+                                        codigo_barras, ncm, cest, um, pertence_estoque }) {
+  const anterior = buscarProduto(id);
+  if (!anterior) return null;
   const result = db.prepare(
-    "UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo), config = COALESCE(?, config) WHERE id = ? AND deleted_at IS NULL"
-  ).run(nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0, codigo != null ? String(codigo).trim() : null, normalizarConfigJson(config), id);
+    `UPDATE produtos SET
+       nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?,
+       codigo = COALESCE(?, codigo),
+       config = COALESCE(?, config),
+       codigo_barras = COALESCE(?, codigo_barras),
+       ncm = COALESCE(?, ncm),
+       cest = COALESCE(?, cest),
+       um = COALESCE(?, um),
+       pertence_estoque = COALESCE(?, pertence_estoque)
+     WHERE id = ? AND deleted_at IS NULL`
+  ).run(
+    nome, descricao || "", preco, custo || 0, categoria || "", imagem || "", disponivel ? 1 : 0,
+    codigo != null ? String(codigo).trim() : null,
+    normalizarConfigJson(config),
+    codigo_barras != null ? String(codigo_barras).trim() : null,
+    ncm != null ? String(ncm).trim() : null,
+    cest != null ? String(cest).trim() : null,
+    um != null ? String(um).trim() : null,
+    pertence_estoque != null ? (pertence_estoque ? 1 : 0) : null,
+    id
+  );
   if (result.changes === 0) return null;
-  return buscarProduto(id);
+  const atualizado = buscarProduto(id);
+  // Espelho de estoque: liga/desliga só quando muda o flag pertence_estoque.
+  if (pertence_estoque != null) {
+    if (pertence_estoque) sincronizarEspelhoEstoqueDoProduto(atualizado);
+    else if (anterior.pertence_estoque) desativarEspelhoEstoqueDoProduto(atualizado);
+  } else if (atualizado.pertence_estoque) {
+    // Não mudou o flag mas está ligado — reflete nome/UM/custo/categoria no espelho.
+    sincronizarEspelhoEstoqueDoProduto(atualizado);
+  }
+  return atualizado;
 }
 
 export function buscarProdutoPorCodigo(codigo) {
   const c = (codigo || "").trim();
   if (!c) return null;
-  return db.prepare("SELECT * FROM produtos WHERE codigo = ? AND deleted_at IS NULL AND disponivel = 1").get(c);
+  // Bate tanto no código interno quanto no EAN — a mesma rota serve pra leitor de código de barras.
+  return db.prepare("SELECT * FROM produtos WHERE (codigo = ? OR codigo_barras = ?) AND deleted_at IS NULL AND disponivel = 1").get(c, c);
 }
 
 export function excluirProduto(id) {
   return db.prepare("UPDATE produtos SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
+}
+
+// ─── IMPORTAÇÃO EM LOTE ─────────────────────────────────────────────────────
+// Recebe { itens: [...], cardapio_id }. Idempotente: se o produto já existe
+// pelo mesmo `codigo`, atualiza. Se veio categoria nova, cria e vincula ao
+// cardápio informado. Retorna resumo (criados/atualizados/erros/categorias).
+export function importarProdutosEmLote({ itens, cardapio_id }) {
+  const relatorio = { criados: 0, atualizados: 0, erros: [], categorias_criadas: [] };
+  if (!Array.isArray(itens) || itens.length === 0) return relatorio;
+
+  // Cache de categorias existentes por nome (case-insensitive) — evita 1 query por linha
+  const cats = db.prepare("SELECT id, nome FROM categorias WHERE deleted_at IS NULL").all();
+  const catPorNome = new Map(cats.map(c => [c.nome.toLowerCase(), c]));
+
+  const vinculaCat = cardapio_id
+    ? db.prepare("INSERT OR IGNORE INTO cardapio_categorias (cardapio_id, categoria_id) VALUES (?, ?)")
+    : null;
+
+  const garantirCategoria = (nomeCat) => {
+    const n = (nomeCat || "").trim();
+    if (!n) return "";
+    let c = catPorNome.get(n.toLowerCase());
+    if (!c) {
+      const nova = criarCategoria({ nome: n, permite_adicionais: false, cardapio_id });
+      c = { id: nova.id, nome: nova.nome };
+      catPorNome.set(n.toLowerCase(), c);
+      relatorio.categorias_criadas.push(nova.nome);
+    } else if (vinculaCat) {
+      try { vinculaCat.run(cardapio_id, c.id); } catch {}
+    }
+    return c.nome;
+  };
+
+  for (const [i, raw] of itens.entries()) {
+    try {
+      const nome = String(raw.nome || "").trim();
+      const preco = Number(raw.preco);
+      if (!nome) { relatorio.erros.push({ linha: i + 1, msg: "sem nome" }); continue; }
+      if (!isFinite(preco) || preco < 0) { relatorio.erros.push({ linha: i + 1, msg: `preço inválido em "${nome}"` }); continue; }
+
+      const categoriaNome = garantirCategoria(raw.categoria);
+      const payload = {
+        nome, preco,
+        descricao: raw.descricao || "",
+        custo: Number(raw.custo) || 0,
+        categoria: categoriaNome,
+        imagem: "",
+        disponivel: raw.disponivel !== false,
+        codigo: String(raw.codigo || "").trim(),
+        codigo_barras: String(raw.codigo_barras || "").trim(),
+        ncm: String(raw.ncm || "").trim(),
+        cest: String(raw.cest || "").trim(),
+        um: String(raw.um || "un").trim(),
+        pertence_estoque: raw.pertence_estoque ? 1 : 0,
+      };
+
+      // Idempotência: se veio código, tenta reaproveitar produto existente.
+      const chaveCodigo = payload.codigo || payload.codigo_barras;
+      const existente = chaveCodigo
+        ? db.prepare("SELECT id FROM produtos WHERE (codigo = ? OR codigo_barras = ?) AND deleted_at IS NULL").get(chaveCodigo, chaveCodigo)
+        : null;
+
+      if (existente) {
+        atualizarProduto(existente.id, payload);
+        relatorio.atualizados++;
+      } else {
+        const criado = criarProduto(payload);
+        // Saldo inicial no espelho (opcional)
+        const saldoIni = Number(raw.estoque_inicial);
+        const minimo = Number(raw.estoque_minimo);
+        if (payload.pertence_estoque && (isFinite(saldoIni) || isFinite(minimo))) {
+          const chave = payload.codigo || payload.codigo_barras;
+          if (chave) {
+            const item = db.prepare("SELECT id FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(chave);
+            if (item) {
+              const sets = [];
+              const vals = [];
+              if (isFinite(saldoIni)) { sets.push("saldo_atual = ?"); vals.push(saldoIni); }
+              if (isFinite(minimo)) { sets.push("estoque_minimo = ?"); vals.push(minimo); }
+              vals.push(item.id);
+              db.prepare(`UPDATE estoque_itens SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+            }
+          }
+        }
+        relatorio.criados++;
+      }
+    } catch (err) {
+      relatorio.erros.push({ linha: i + 1, msg: err.message });
+    }
+  }
+  return relatorio;
 }
 
 // ─── PROMOÇÕES (produtos com eh_promocao = 1) ───────────────────────────────
@@ -2102,9 +2561,13 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
     const tipoEnt = ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega';
     inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, desc, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
     for (const item of itens) {
-      // Buscar custo do produto no banco
+      // Buscar custo do produto no banco. Se o frontend enviou custo_unitario
+      // (pizzaria v2 com multiplicador por tamanho), usa esse valor no lugar
+      // do custo base do produto.
       const produtoDB = buscarProduto(item.produto_id);
-      const custoProduto = produtoDB ? produtoDB.custo : 0;
+      const custoProduto = (item.custo_unitario != null && !isNaN(Number(item.custo_unitario)))
+        ? Number(item.custo_unitario)
+        : (produtoDB ? produtoDB.custo : 0);
       // Somar custos dos adicionais
       const adicionaisComCusto = (item.adicionais || []).map(ad => {
         const adDB = buscarAdicional(ad.id);
@@ -2349,7 +2812,9 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
       adicIdsRecebidos.add(a.id);
       const existe = db.prepare("SELECT id FROM adicionais WHERE id = ?").get(a.id);
       if (existe) {
-        db.prepare("UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ?, max_quantidade = ?, categoria_id = ? WHERE id = ?")
+        // deleted_at = NULL: estar presente neste push significa que o item está
+        // ativo no PDV — reverte uma poda (removido) de uma sincronização anterior.
+        db.prepare("UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ?, max_quantidade = ?, categoria_id = ?, deleted_at = NULL WHERE id = ?")
           .run(a.nome, a.preco, a.custo ?? 0, a.disponivel ?? 1, a.max_quantidade ?? 0, a.categoria_id ?? null, a.id);
         resultado.adicionais.atualizado++;
       } else {
@@ -2365,7 +2830,9 @@ export function upsertCatalogoSync({ categorias = [], adicionais = [], produtos 
       prodIdsRecebidos.add(p.id);
       const existe = db.prepare("SELECT id FROM produtos WHERE id = ?").get(p.id);
       if (existe) {
-        db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo), config = ? WHERE id = ?")
+        // deleted_at = NULL: estar presente neste push significa que o produto está
+        // ativo no PDV — reverte uma poda (removido) de uma sincronização anterior.
+        db.prepare("UPDATE produtos SET nome = ?, descricao = ?, preco = ?, custo = ?, categoria = ?, imagem = ?, disponivel = ?, codigo = COALESCE(?, codigo), config = ?, deleted_at = NULL WHERE id = ?")
           .run(p.nome, p.descricao ?? "", p.preco, p.custo ?? 0, p.categoria ?? "", p.imagem ?? "", p.disponivel ?? 1, p.codigo != null ? String(p.codigo).trim() : null, typeof p.config === "string" ? p.config : JSON.stringify(p.config || {}), p.id);
         resultado.produtos.atualizado++;
       } else {
@@ -2814,29 +3281,66 @@ export function buscarEstoqueItemPorCodigo(codigo) {
   return db.prepare("SELECT * FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(codigo);
 }
 
-export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo }) {
+// Código curto alfanumérico (7 chars, sem 0/1/O/I pra evitar confusão visual)
+function gerarCodigoEstoque() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let c = "";
+  for (let i = 0; i < 7; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
+export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo }) {
   const id = gerarId();
+  // Auto-gera código quando o cliente não informar (nova UX: o cliente não
+  // precisa mais decorar/inventar SKU). Retenta em caso de colisão.
+  let codigoFinal = codigo && String(codigo).trim() ? String(codigo).trim().toUpperCase() : null;
+  if (!codigoFinal) {
+    for (let tent = 0; tent < 20; tent++) {
+      const cand = gerarCodigoEstoque();
+      if (!db.prepare("SELECT 1 FROM estoque_itens WHERE codigo = ?").get(cand)) {
+        codigoFinal = cand;
+        break;
+      }
+    }
+    if (!codigoFinal) codigoFinal = gerarCodigoEstoque() + Date.now().toString(36).slice(-3).toUpperCase();
+  }
+  // Novo modelo: `tipo` explícito (revenda|insumo|interno). Fallback pro legado `eh_insumo`
+  // se o cliente veio de uma versão antiga. Insumo mantém eh_insumo=1 pra não quebrar as
+  // fichas técnicas existentes.
+  const tipoFinal = (tipo && ["revenda", "insumo", "interno"].includes(tipo))
+    ? tipo
+    : (eh_insumo ? "insumo" : "revenda");
+  const insumoInt = tipoFinal === "insumo" ? 1 : (eh_insumo ? 1 : 0);
   db.prepare(`
-    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
+    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, codigoFinal, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
     estoque_minimo || 0, estoque_maximo || 0, Number(custo_manual) || 0,
-    eh_insumo === undefined ? 1 : (eh_insumo ? 1 : 0));
+    insumoInt, tipoFinal);
   return buscarEstoqueItem(id);
 }
 
-export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo }) {
-  // custo_manual e eh_insumo são opcionais: só atualizam se vierem no payload
+export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo }) {
+  // custo_manual, eh_insumo e tipo são opcionais: só atualizam se vierem no payload.
+  // Se veio `tipo`, sincroniza `eh_insumo` (revenda/interno → 0, insumo → 1) pra
+  // manter consistência com ficha técnica antiga.
   const setCusto = custo_manual !== undefined ? ", custo_manual=?" : "";
-  const setInsumo = eh_insumo !== undefined ? ", eh_insumo=?" : "";
+  const setInsumo = (eh_insumo !== undefined || tipo !== undefined) ? ", eh_insumo=?" : "";
+  const setTipo = tipo !== undefined ? ", tipo=?" : "";
   const params = [codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
     estoque_minimo || 0, estoque_maximo || 0, ativo !== false ? 1 : 0];
   if (custo_manual !== undefined) params.push(Number(custo_manual) || 0);
-  if (eh_insumo !== undefined) params.push(eh_insumo ? 1 : 0);
+  if (eh_insumo !== undefined || tipo !== undefined) {
+    const insumoInt = tipo !== undefined
+      ? (tipo === "insumo" ? 1 : 0)
+      : (eh_insumo ? 1 : 0);
+    params.push(insumoInt);
+  }
+  if (tipo !== undefined) params.push(tipo);
   params.push(id);
   const r = db.prepare(`
     UPDATE estoque_itens SET codigo=?, nome=?, unidade=?, categoria_id=?, fornecedor_id=?,
-    estoque_minimo=?, estoque_maximo=?, ativo=?${setCusto}${setInsumo} WHERE id=? AND deleted_at IS NULL
+    estoque_minimo=?, estoque_maximo=?, ativo=?${setCusto}${setInsumo}${setTipo} WHERE id=? AND deleted_at IS NULL
   `).run(...params);
   if (r.changes === 0) return null;
   recalcularCMVPorInsumo(id); // mantém o CMV dos produtos em dia com o custo do item
@@ -2899,12 +3403,32 @@ export function registrarEntrada({ item_id, quantidade, custo_unitario, forneced
   txn();
   recalcularCMVPorInsumo(item_id); // entrada mudou o custo médio → atualiza CMV dos produtos
 
+  // Integração Estoque↔Financeiro (opt-in): a entrada vira uma saída realizada
+  // no Financeiro do mês (compra de mercadoria/insumo). Categoria auto: "Estoque".
+  try {
+    if (obterConfig("estoque_conectado_financeiro") === "1") {
+      const valorTotal = Math.round(qtd * custo * 100) / 100;
+      if (valorTotal > 0) {
+        criarLancamento({
+          tipo: "saida",
+          descricao: `Entrada de estoque — ${item.nome}${nf ? " · NF " + nf : ""}`,
+          valor: valorTotal,
+          data: data || new Date().toISOString().split("T")[0],
+          cat: "Estoque / Insumos",
+          status: "realizado",
+          obs: `Auto: ${qtd} ${item.unidade || "un"} × R$ ${custo.toFixed(2)}${obs ? " · " + obs : ""}`,
+        });
+      }
+    }
+  } catch (e) { /* falha na integração não deve reverter a entrada */ }
+
   return db.prepare("SELECT * FROM estoque_entradas WHERE id = ?").get(id);
 }
 
 export function registrarEntradaLote(entradas) {
   // entradas = [{ item_id, quantidade, custo_unitario, fornecedor_id, data, nf, obs }]
   const resultado = [];
+  const itensProcessados = new Map(); // item_id → { nome, unidade, totalValor, entradaData }
   const txn = db.transaction(() => {
     for (const e of entradas) {
       if (!e.item_id || !e.quantidade) continue;
@@ -2922,11 +3446,38 @@ export function registrarEntradaLote(entradas) {
       db.prepare("UPDATE estoque_itens SET saldo_atual=?, custo_medio=? WHERE id=?")
         .run(Math.round(novoSaldo * 1000) / 1000, Math.round(novoCustoMedio * 100) / 100, e.item_id);
       resultado.push(db.prepare("SELECT * FROM estoque_entradas WHERE id = ?").get(id));
+      const acc = itensProcessados.get(e.item_id) || { nome: item.nome, unidade: item.unidade, qtd: 0, valor: 0, data: e.data || new Date().toISOString().split("T")[0], nfs: [] };
+      acc.qtd += qtd;
+      acc.valor += qtd * custo;
+      if (e.nf && !acc.nfs.includes(e.nf)) acc.nfs.push(e.nf);
+      itensProcessados.set(e.item_id, acc);
     }
   });
   txn();
   // Atualiza o CMV dos produtos que usam os itens que receberam entrada
   [...new Set(entradas.map(e => e.item_id).filter(Boolean))].forEach(itemId => recalcularCMVPorInsumo(itemId));
+
+  // Integração Estoque↔Financeiro: um lançamento por item processado (o lote
+  // pode ter várias entradas do mesmo item — soma-se em uma linha só).
+  try {
+    if (obterConfig("estoque_conectado_financeiro") === "1") {
+      for (const [_itemId, acc] of itensProcessados) {
+        const valorTotal = Math.round(acc.valor * 100) / 100;
+        if (valorTotal > 0) {
+          criarLancamento({
+            tipo: "saida",
+            descricao: `Entrada de estoque — ${acc.nome}${acc.nfs.length ? " · NF " + acc.nfs.join("/") : ""}`,
+            valor: valorTotal,
+            data: acc.data,
+            cat: "Estoque / Insumos",
+            status: "realizado",
+            obs: `Auto: ${acc.qtd} ${acc.unidade || "un"}`,
+          });
+        }
+      }
+    }
+  } catch (e) { /* falha na integração não deve reverter as entradas */ }
+
   return resultado;
 }
 
@@ -3392,10 +3943,49 @@ export function atualizarCardapio(id, { nome, descricao, icone, cor, ativo, orde
   );
 }
 
-export function excluirCardapio(id) {
+// Preview: quantas categorias/adicionais SUMIRIAM se este cardápio fosse
+// excluído em cascata (i.e., não pertencem a nenhum outro cardápio).
+// Usado pelo dialog de confirmação de exclusão.
+export function contarOrfaosCardapio(cardapioId) {
+  const cats = db.prepare(`
+    SELECT c.id, c.nome FROM categorias c
+    INNER JOIN cardapio_categorias cc ON cc.categoria_id = c.id AND cc.cardapio_id = ?
+    WHERE c.deleted_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM cardapio_categorias cc2
+        WHERE cc2.categoria_id = c.id AND cc2.cardapio_id != ?
+      )
+  `).all(cardapioId, cardapioId);
+  const adis = db.prepare(`
+    SELECT a.id, a.nome FROM adicionais a
+    INNER JOIN cardapio_adicionais ca ON ca.adicional_id = a.id AND ca.cardapio_id = ?
+    WHERE a.deleted_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM cardapio_adicionais ca2
+        WHERE ca2.adicional_id = a.id AND ca2.cardapio_id != ?
+      )
+  `).all(cardapioId, cardapioId);
+  return { categoriasExclusivas: cats, adicionaisExclusivos: adis };
+}
+
+export function excluirCardapio(id, { cascade = false } = {}) {
+  // Se cascade, primeiro colhe as categorias/adicionais exclusivas deste
+  // cardápio (antes de destruir os vínculos) e apaga em soft-delete.
+  let orfaos = { categoriasExclusivas: [], adicionaisExclusivos: [] };
+  if (cascade) {
+    orfaos = contarOrfaosCardapio(id);
+  }
   db.prepare("DELETE FROM cardapio_categorias WHERE cardapio_id = ?").run(id);
   db.prepare("DELETE FROM cardapio_adicionais WHERE cardapio_id = ?").run(id);
   db.prepare("DELETE FROM cardapios WHERE id = ?").run(id);
+  if (cascade) {
+    for (const c of orfaos.categoriasExclusivas) excluirCategoria(c.id);
+    for (const a of orfaos.adicionaisExclusivos) excluirAdicional(a.id);
+  }
+  return {
+    categoriasRemovidas: orfaos.categoriasExclusivas.length,
+    adicionaisRemovidos: orfaos.adicionaisExclusivos.length,
+  };
 }
 
 export function definirCategoriasCardapio(cardapioId, categoriaIds) {

@@ -126,7 +126,8 @@ export const api = {
     listar: () => request("/cardapios"),
     criar: (data) => request("/cardapios", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/cardapios/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-    excluir: (id) => request(`/cardapios/${id}`, { method: "DELETE" }),
+    excluir: (id, { cascade = false } = {}) => request(`/cardapios/${id}${cascade ? "?cascade=1" : ""}`, { method: "DELETE" }),
+    previewExclusao: (id) => request(`/cardapios/${id}/preview-exclusao`),
     definirCategorias: (id, categorias) => request(`/cardapios/${id}/categorias`, { method: "PUT", body: JSON.stringify({ categorias }) }),
     definirAdicionais: (id, adicionais) => request(`/cardapios/${id}/adicionais`, { method: "PUT", body: JSON.stringify({ adicionais }) }),
   },
@@ -134,8 +135,10 @@ export const api = {
   // Categorias
   categorias: {
     listar: (opts = {}) => {
-      const q = opts.cardapio_id ? `?cardapio_id=${encodeURIComponent(opts.cardapio_id)}` : "";
-      return request(`/categorias${q}`);
+      const qs = [];
+      if (opts.cardapio_id) qs.push(`cardapio_id=${encodeURIComponent(opts.cardapio_id)}`);
+      if (opts.incluir_cardapios) qs.push("incluir_cardapios=1");
+      return request(`/categorias${qs.length ? "?" + qs.join("&") : ""}`);
     },
     criar: (data) => request("/categorias", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/categorias/${id}`, { method: "PUT", body: JSON.stringify(data) }),
@@ -146,8 +149,10 @@ export const api = {
   // Adicionais
   adicionais: {
     listar: (opts = {}) => {
-      const q = opts.cardapio_id ? `?cardapio_id=${encodeURIComponent(opts.cardapio_id)}` : "";
-      return request(`/adicionais${q}`);
+      const qs = [];
+      if (opts.cardapio_id) qs.push(`cardapio_id=${encodeURIComponent(opts.cardapio_id)}`);
+      if (opts.incluir_cardapios) qs.push("incluir_cardapios=1");
+      return request(`/adicionais${qs.length ? "?" + qs.join("&") : ""}`);
     },
     criar: (data) => request("/adicionais", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/adicionais/${id}`, { method: "PUT", body: JSON.stringify(data) }),
@@ -161,6 +166,7 @@ export const api = {
     criar: (data) => request("/produtos", { method: "POST", body: JSON.stringify(data) }),
     atualizar: (id, data) => request(`/produtos/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     excluir: (id) => request(`/produtos/${id}`, { method: "DELETE" }),
+    importar: (itens, cardapio_id) => request("/produtos/importar", { method: "POST", body: JSON.stringify({ itens, cardapio_id }) }),
     imagens: {
       listar: (id) => request(`/produtos/${id}/imagens`),
       adicionar: (id, imagem, ordem) => request(`/produtos/${id}/imagens`, { method: "POST", body: JSON.stringify({ imagem, ordem }) }),
