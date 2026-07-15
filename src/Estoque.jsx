@@ -149,7 +149,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
   const [editando, setEditando] = useState(null);
   // Tipo do item: revenda (produto direto de venda) | insumo (ficha técnica) | interno (uso do estabelecimento)
   const [tipoFiltro, setTipoFiltro] = useState("todos"); // todos|revenda|insumo|interno
-  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", tipo: "revenda" });
+  const [form, setForm] = useState({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", tipo: "revenda", codigo_barras: "", ncm: "", cest: "", descricao: "", preco_venda: "" });
   const [saving, setSaving] = useState(false);
 
   const tipoDe = (i) => i.tipo || (i.eh_insumo ? "insumo" : "revenda");
@@ -161,16 +161,28 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
   }, [itens]);
 
   const itensFiltrados = useMemo(() => {
-    const q = busca.toLowerCase();
+    const raw = busca.trim();
+    const q = raw.toLowerCase();
     return itens.filter(i => {
       if (tipoFiltro !== "todos" && tipoDe(i) !== tipoFiltro) return false;
-      return !q || i.nome.toLowerCase().includes(q) || i.codigo.toLowerCase().includes(q);
+      if (!raw) return true;
+      const nome = (i.nome || "").toLowerCase();
+      const codigo = (i.codigo || "").toLowerCase();
+      const ean = (i.codigo_barras || "").toLowerCase();
+      // Heurística: termo curto (2-3 chars) casa com o código interno (SKU);
+      // termo numérico mais longo casa com código de barras (EAN/GTIN);
+      // termo com letras (sílabas/palavras) casa com o nome do produto.
+      const somenteNumeros = /^\d+$/.test(raw);
+      if (raw.length <= 3) return codigo.includes(q) || nome.includes(q);
+      if (somenteNumeros) return ean.includes(q) || codigo.includes(q);
+      return nome.includes(q) || codigo.includes(q) || ean.includes(q);
     });
   }, [itens, busca, tipoFiltro]);
 
   const abrirNovo = () => {
     setEditando(null);
-    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", tipo: tipoFiltro !== "todos" ? tipoFiltro : "revenda" });
+    setForm({ codigo: "", nome: "", unidade: "un", categoria_id: "", fornecedor_id: "", estoque_minimo: "", estoque_maximo: "", custo_manual: "", tipo: tipoFiltro !== "todos" ? tipoFiltro : "revenda",
+      codigo_barras: "", ncm: "", cest: "", descricao: "", preco_venda: "" });
     setModalAberto(true);
   };
 
@@ -182,6 +194,8 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
       estoque_minimo: item.estoque_minimo || "", estoque_maximo: item.estoque_maximo || "",
       custo_manual: (item.custo_manual != null && item.custo_manual !== 0) ? item.custo_manual : "",
       tipo: tipoDe(item),
+      codigo_barras: item.codigo_barras || "", ncm: item.ncm || "", cest: item.cest || "",
+      descricao: item.descricao || "", preco_venda: (item.preco_venda != null && item.preco_venda !== 0) ? item.preco_venda : "",
     });
     setModalAberto(true);
   };
@@ -202,6 +216,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
         custo_manual: parseFloat(form.custo_manual) || 0,
         tipo: form.tipo || "revenda",
         eh_insumo: form.tipo === "insumo",
+        preco_venda: parseFloat(form.preco_venda) || 0,
       };
       if (editando) {
         await api.estoque.itens.atualizar(editando.id, { ...data, ativo: editando.ativo });
@@ -251,7 +266,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
       ) : (
       <>
       <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
-        <input className="search" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar item..." style={{ maxWidth: 260 }} />
+        <input className="search" value={busca} onChange={e => setBusca(e.target.value)} placeholder="Buscar por código, código de barras ou nome..." style={{ maxWidth: 320 }} />
         <div style={{ display: "flex", gap: 4, background: "#f5f5f4", padding: 3, borderRadius: 10 }}>
           {[
             { k: "todos",   l: "Todos",     n: itens.length },
@@ -277,7 +292,7 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "2px solid #e7e5e4" }}>
-                {["Código", "Nome", "Unidade", "Categoria", "Saldo", "Custo Médio", "Status", ""].map(h => (
+                {["Código", "Item", "NCM/Cest", "Unidade", "Categoria", "Valor", "Saldo em estoque", "Custo Médio", "Status", ""].map(h => (
                   <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontSize: 11, color: "#78716c", fontWeight: 600, whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>
@@ -295,9 +310,22 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
                                  :                    { l: "REVENDA", bg: "#eff6ff", fg: "#2563eb", title: "Produto vendido diretamente" };
                       return <span title={meta.title} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, padding: "1px 6px", borderRadius: 20, background: meta.bg, color: meta.fg, verticalAlign: "middle" }}>{meta.l}</span>;
                     })()}
+                    {(i.codigo_barras || i.descricao) && (
+                      <div style={{ fontSize: 10.5, color: "#a8a29e", marginTop: 2, fontWeight: 400 }}>
+                        {i.codigo_barras ? <span style={{ fontFamily: "monospace" }}>EAN {i.codigo_barras}</span> : null}
+                        {i.codigo_barras && i.descricao ? " · " : ""}
+                        {i.descricao || ""}
+                      </div>
+                    )}
                   </td>
-                  <td style={{ padding: "10px 10px", color: "#78716c" }}>{i.unidade}</td>
+                  <td style={{ padding: "10px 10px", color: "#78716c", fontSize: 11.5 }}>
+                    {i.ncm || i.cest
+                      ? <>{i.ncm ? `NCM ${i.ncm}` : ""}{i.ncm && i.cest ? " · " : ""}{i.cest ? `CEST ${i.cest}` : ""}</>
+                      : "—"}
+                  </td>
+                  <td style={{ padding: "10px 10px", color: "#78716c", textTransform: "uppercase" }}>{i.unidade}</td>
                   <td style={{ padding: "10px 10px", color: "#78716c" }}>{i.categoria_nome || "—"}</td>
+                  <td style={{ padding: "10px 10px" }}>{i.preco_venda > 0 ? fmtR(i.preco_venda) : "—"}</td>
                   <td style={{ padding: "10px 10px", fontWeight: 600, color: i.saldo_atual <= 0 ? "#dc2626" : i.estoque_minimo > 0 && i.saldo_atual <= i.estoque_minimo ? "#d97706" : "#15803d" }}>
                     {fmtN(i.saldo_atual)} {i.unidade}
                   </td>
@@ -388,6 +416,33 @@ function Itens({ itens, categorias, fornecedores, onReload, showToast }) {
                 </div>
               </div>
               <div>
+                <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>DESCRIÇÃO</label>
+                <input style={inp} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Opcional" />
+              </div>
+              {/* Campos fiscais/cadastrais — opcionais. Itens de revenda vinculados a um
+                  produto ("Pertence ao estoque?") já vêm preenchidos automaticamente e
+                  são atualizados sempre que o produto for salvo novamente. */}
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>CÓDIGO DE BARRAS (EAN)</label>
+                  <input style={inp} value={form.codigo_barras} onChange={e => setForm({ ...form, codigo_barras: e.target.value })} placeholder="Ex: 7891234567890" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>VALOR (R$)</label>
+                  <input style={inp} type="number" step="0.01" min="0" value={form.preco_venda} onChange={e => setForm({ ...form, preco_venda: e.target.value })} placeholder="0,00" />
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>NCM</label>
+                  <input style={inp} value={form.ncm} onChange={e => setForm({ ...form, ncm: e.target.value })} placeholder="8 dígitos" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 4 }}>CEST</label>
+                  <input style={inp} value={form.cest} onChange={e => setForm({ ...form, cest: e.target.value })} placeholder="7 dígitos" />
+                </div>
+              </div>
+              <div>
                 <label style={{ fontSize: 11, color: "#78716c", fontWeight: 600, display: "block", marginBottom: 6 }}>TIPO DO ITEM</label>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
                   {[
@@ -436,8 +491,19 @@ function EntradaRapida({ itens, fornecedores, onReload, showToast }) {
   const [detalhesAbertos, setDetalhesAbertos] = useState(false);
 
   const itensFiltrados = useMemo(() => {
-    const q = busca.toLowerCase();
-    return itens.filter(i => i.ativo && (!q || i.nome.toLowerCase().includes(q) || i.codigo.toLowerCase().includes(q))).slice(0, 10);
+    const raw = busca.trim();
+    const q = raw.toLowerCase();
+    const somenteNumeros = /^\d+$/.test(raw);
+    return itens.filter(i => {
+      if (!i.ativo) return false;
+      if (!raw) return true;
+      const nome = (i.nome || "").toLowerCase();
+      const codigo = (i.codigo || "").toLowerCase();
+      const ean = (i.codigo_barras || "").toLowerCase();
+      if (raw.length <= 3) return codigo.includes(q) || nome.includes(q);
+      if (somenteNumeros) return ean.includes(q) || codigo.includes(q);
+      return nome.includes(q) || codigo.includes(q) || ean.includes(q);
+    }).slice(0, 10);
   }, [itens, busca]);
 
   const selecionarItem = (item) => {

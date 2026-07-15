@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { api } from "./api";
 import Lixeira from "./Lixeira";
 import Logo from "./Logo";
+// FiscalTab foi movido para dentro do SuporteApp (SecaoFiscal) — não fica mais
+// exposto na config do cliente para evitar sonegação. Ver src/SuporteApp.jsx.
 
 const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
 
@@ -23,6 +25,7 @@ const DIAS_SEMANA = [
 const NAV_TABS = [
   { key: "geral", icon: "⚙️", label: "Geral" },
   { key: "conexao", icon: "🔗", label: "Conexão" },
+  ...(IS_ONLINE ? [] : [{ key: "rede", icon: "🖧", label: "Rede local" }]),
   { key: "lixeira", icon: "🗑️", label: "Lixeira" },
 ];
 
@@ -36,6 +39,109 @@ const SETORES_FUNC = [
   { key: "config", icon: "⚙️", label: "Configurações" },
 ];
 const labelSetor = (k) => (SETORES_FUNC.find(s => s.key === k) || {}).label || k;
+
+// ─── ASSINATURA NEXUS (PDV desktop) ──────────────────────────────────────────
+function AssinaturaNexusCard({ showToast }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [pix, setPix] = useState(null);
+  const [gerando, setGerando] = useState(false);
+  const [polling, setPolling] = useState(false);
+  const [copiado, setCopiado] = useState(false);
+
+  useEffect(() => {
+    if (!window.licenca?.status) { setLoading(false); return; }
+    window.licenca.status().then(setStatus).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const gerarPix = async () => {
+    setGerando(true);
+    try {
+      const r = await window.licenca.gerarCobranca();
+      if (!r.ok) { showToast(r.motivo || "Erro ao gerar cobrança", "#dc2626"); return; }
+      setPix(r);
+      setPolling(true);
+    } catch { showToast("Sem conexão com o servidor", "#dc2626"); }
+    finally { setGerando(false); }
+  };
+
+  useEffect(() => {
+    if (!polling) return;
+    const iv = setInterval(async () => {
+      try {
+        const r = await window.licenca.statusPagamento();
+        if (r.pago) {
+          clearInterval(iv);
+          setPolling(false);
+          setPix(null);
+          showToast("Pagamento confirmado! Reiniciando...");
+          setTimeout(() => window.licenca.reiniciar(), 2000);
+        }
+      } catch {}
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [polling]);
+
+  if (loading || !window.licenca?.status) return null;
+  if (!status || status.estado === "erro") return null;
+
+  const diasRestantes = status.dias_restantes ?? 0;
+  const expiraEm = status.expira_em ? new Date(status.expira_em).toLocaleDateString("pt-BR") : "—";
+  const urgente = diasRestantes <= 5;
+  const badgeCor = status.estado === "ativo" && !urgente
+    ? { bg: "#dcfce7", cor: "#16a34a", txt: "Ativa" }
+    : status.estado === "tolerancia"
+      ? { bg: "#fef3c7", cor: "#92400e", txt: "Vencida (tolerância)" }
+      : urgente
+        ? { bg: "#fef3c7", cor: "#92400e", txt: `${diasRestantes} dia${diasRestantes !== 1 ? "s" : ""} restante${diasRestantes !== 1 ? "s" : ""}` }
+        : { bg: "#dcfce7", cor: "#16a34a", txt: "Ativa" };
+
+  return (
+    <div className="card">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={{ fontSize: 15, fontWeight: 600 }}>Assinatura Nexus</div>
+        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: badgeCor.bg, color: badgeCor.cor }}>
+          {badgeCor.txt}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14 }}>
+        {status.cliente && <span>Cliente: <b>{status.cliente}</b> · </span>}
+        {status.plano && <span>Plano: <b>{status.plano}</b> · </span>}
+        Expira em: <b>{expiraEm}</b>
+        {diasRestantes > 0 && <span> ({diasRestantes} dia{diasRestantes !== 1 ? "s" : ""})</span>}
+      </div>
+
+      {!pix ? (
+        <button onClick={gerarPix} disabled={gerando}
+          style={{ ...cfgBtn, width: "100%", padding: 11, background: urgente ? "#dc2626" : "#15803d", opacity: gerando ? 0.6 : 1 }}>
+          {gerando ? "Gerando..." : urgente ? "⚠️ Renovar agora (Pix)" : "🔄 Renovar assinatura (Pix)"}
+        </button>
+      ) : (
+        <div style={{ background: "#fafaf9", border: "1px solid #e7e5e4", borderRadius: 10, padding: 16, textAlign: "center" }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Pague via Pix para renovar</div>
+          {pix.qrCodeBase64 && (
+            <img src={pix.qrCodeBase64} alt="QR Pix" style={{ width: 200, height: 200, margin: "0 auto 10px", display: "block", borderRadius: 8 }} />
+          )}
+          {pix.copyPaste && (
+            <div style={{ display: "flex", gap: 6, justifyContent: "center", marginBottom: 8 }}>
+              <input readOnly value={pix.copyPaste} style={{ ...cfgInp, flex: 1, maxWidth: 340, fontSize: 11, fontFamily: "monospace" }} onFocus={e => e.target.select()} />
+              <button onClick={() => { navigator.clipboard.writeText(pix.copyPaste); setCopiado(true); setTimeout(() => setCopiado(false), 2000); }}
+                style={{ ...cfgBtn, background: copiado ? "#15803d" : "#1c1917", fontSize: 12 }}>
+                {copiado ? "✅ Copiado" : "📋 Copiar"}
+              </button>
+            </div>
+          )}
+          {pix.amount && <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", marginBottom: 4 }}>
+            Valor: {Number(pix.amount).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+          </div>}
+          <div style={{ fontSize: 11, color: "#a8a29e" }}>Aguardando confirmação do pagamento...</div>
+          <button onClick={() => { setPix(null); setPolling(false); }}
+            style={{ ...cfgDel, marginTop: 10, padding: "6px 14px" }}>Cancelar</button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── LOGIN E ACESSO (PDV) ────────────────────────────────────────────────────
 // No PDV desktop o login nasce DESLIGADO (acesso direto). Aqui o dono ativa a
@@ -353,6 +459,9 @@ function GeralTab() {
 
         {/* ── BOT WHATSAPP + DADOS DO ESTABELECIMENTO (só online) ── */}
         {IS_ONLINE && <BotWhatsAppCard showToast={showToast} />}
+
+        {/* ── ASSINATURA NEXUS (só PDV desktop) ────────────────────── */}
+        {!IS_ONLINE && <AssinaturaNexusCard showToast={showToast} />}
 
         {/* ── LOGIN E ACESSO (só PDV desktop) ────────────────────────── */}
         <LoginAcessoCard showToast={showToast} />
@@ -766,9 +875,254 @@ function ConexaoTab() {
   );
 }
 
+// ─── REDE LOCAL (multi-máquina) ──────────────────────────────────────────────
+// Um estabelecimento com mais de um computador (ex: caixa + cozinha, ou
+// múltiplos caixas) elege UMA máquina como "servidor" (dona do banco de
+// dados) — as demais entram em "modo cliente" e só abrem a janela apontando
+// pro IP dela na rede local. Sem sincronização, sem conflito: é o mesmo banco
+// sendo acessado direto pela rede, então tudo fica consolidado num só lugar.
+function RedeLocalTab() {
+  const [cfg, setCfg] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [modoSel, setModoSel] = useState("servidor");
+  const [ip, setIp] = useState("");
+  const [testando, setTestando] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [toast, setToast] = useState("");
+  const [copiadoIp, setCopiadoIp] = useState("");
+  const [diagRede, setDiagRede] = useState(null);
+  const [corrigindoFw, setCorrigindoFw] = useState(false);
+
+  const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 3000); };
+
+  useEffect(() => {
+    if (!window.rede) { setLoading(false); return; }
+    window.rede.obter().then(c => {
+      setCfg(c);
+      setModoSel(c.modo);
+      setIp(c.servidorHost || "");
+    }).catch(() => {}).finally(() => setLoading(false));
+    window.rede.diagnostico?.().then(setDiagRede).catch(() => {});
+  }, []);
+
+  const corrigirFirewall = async () => {
+    setCorrigindoFw(true);
+    try {
+      const r = await window.rede.criarRegraFirewall();
+      if (r.ok) {
+        showToast("Regra de firewall criada com sucesso!");
+        window.rede.diagnostico?.().then(setDiagRede).catch(() => {});
+      } else {
+        showToast(r.motivo || "Erro ao criar regra", "#dc2626");
+      }
+    } catch (e) { showToast(e.message, "#dc2626"); }
+    finally { setCorrigindoFw(false); }
+  };
+
+  const copiarIp = async (endereco) => {
+    try {
+      await navigator.clipboard.writeText(endereco);
+      setCopiadoIp(endereco);
+      setTimeout(() => setCopiadoIp(""), 2000);
+    } catch {}
+  };
+
+  const testarConexao = async () => {
+    if (!ip.trim()) return showToast("Informe o endereço da máquina servidor", "#dc2626");
+    setTestando(true);
+    setTestResult(null);
+    try {
+      const r = await window.rede.testar(ip.trim());
+      setTestResult(r);
+      if (!r.ok) showToast(r.motivo || "Falha na conexão", "#dc2626");
+    } catch (e) { showToast(e.message, "#dc2626"); }
+    finally { setTestando(false); }
+  };
+
+  const salvarESairComoServidor = async () => {
+    setSalvando(true);
+    try {
+      await window.rede.salvar({ modo: "servidor", servidorHost: "" });
+      showToast("Salvo! Reiniciando...");
+    } catch (e) { showToast(e.message, "#dc2626"); setSalvando(false); }
+  };
+
+  const salvarComoCliente = async () => {
+    if (!ip.trim()) return showToast("Informe e teste o endereço antes de salvar", "#dc2626");
+    if (!confirm(`Esta máquina vai parar de guardar dados próprios e passar a usar o banco de dados de ${ip.trim()}. Continuar?`)) return;
+    setSalvando(true);
+    try {
+      await window.rede.salvar({ modo: "cliente", servidorHost: ip.trim() });
+      showToast("Salvo! Reiniciando...");
+    } catch (e) { showToast(e.message, "#dc2626"); setSalvando(false); }
+  };
+
+  if (!window.rede) {
+    return (
+      <div className="anim card" style={{ maxWidth: 640 }}>
+        <div style={{ fontSize: 13, color: "#78716c" }}>Recurso disponível apenas no Nexus PDV desktop.</div>
+      </div>
+    );
+  }
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
+
+  return (
+    <div className="anim">
+      <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 640 }}>
+
+        <div className="card">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Multi-máquina (rede local)</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 18, lineHeight: 1.5 }}>
+            Se o estabelecimento tem mais de um computador (ex: caixa + cozinha, ou vários caixas),
+            escolha UMA máquina para ser o <b>servidor</b> — ela guarda o banco de dados. As demais
+            entram em <b>modo cliente</b>, apontando pra ela na rede local. Tudo fica consolidado num
+            único financeiro, em tempo real, sem sincronização.
+          </div>
+
+          {/* Situação atual */}
+          <div style={{ ...cfgRow, marginBottom: 18, background: cfg?.modo === "cliente" ? "#eff6ff" : "#f0fdf4", borderColor: cfg?.modo === "cliente" ? "#bfdbfe" : "#bbf7d0" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600 }}>
+              {cfg?.modo === "cliente" ? `🖥️ Modo cliente — conectada a ${cfg.servidorHost}:${cfg.porta}` : "🖧 Modo servidor (padrão) — esta máquina guarda os dados"}
+            </span>
+          </div>
+
+          {/* Escolha de modo */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            <button onClick={() => setModoSel("servidor")}
+              style={{ flex: 1, padding: "10px 12px", borderRadius: 10, textAlign: "left", cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                border: `1.5px solid ${modoSel === "servidor" ? "#15803d" : "#e7e5e4"}`, background: modoSel === "servidor" ? "#f0fdf4" : "#fff" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: modoSel === "servidor" ? "#15803d" : "#1c1917" }}>🖧 Servidor principal</div>
+              <div style={{ fontSize: 10.5, color: "#a8a29e", marginTop: 2 }}>Guarda o banco de dados nesta máquina</div>
+            </button>
+            <button onClick={() => setModoSel("cliente")}
+              style={{ flex: 1, padding: "10px 12px", borderRadius: 10, textAlign: "left", cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                border: `1.5px solid ${modoSel === "cliente" ? "#2563eb" : "#e7e5e4"}`, background: modoSel === "cliente" ? "#eff6ff" : "#fff" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: modoSel === "cliente" ? "#2563eb" : "#1c1917" }}>🖥️ Conectar a um servidor</div>
+              <div style={{ fontSize: 10.5, color: "#a8a29e", marginTop: 2 }}>Usa o banco de outra máquina da rede</div>
+            </button>
+          </div>
+
+          {modoSel === "servidor" ? (
+            <div>
+              <div style={{ fontSize: 12, color: "#78716c", marginBottom: 10 }}>
+                Digite um destes endereços na tela "Rede local" das outras máquinas:
+              </div>
+              {(cfg?.meusIps || []).length === 0 ? (
+                <div style={{ fontSize: 12, color: "#a8a29e" }}>Nenhuma rede detectada — conecte esta máquina ao Wi-Fi ou cabo de rede.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: cfg?.modo === "cliente" ? 16 : 0 }}>
+                  {cfg.meusIps.map(endereco => (
+                    <div key={endereco} style={{ ...cfgRow, padding: "8px 12px" }}>
+                      <span style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 600 }}>{endereco}:{cfg.porta}</span>
+                      <button onClick={() => copiarIp(endereco)}
+                        title="Copia só o IP — a porta é fixa e não entra no campo da outra máquina"
+                        style={{ ...cfgBtn, background: copiadoIp === endereco ? "#15803d" : "#1c1917", padding: "5px 12px", fontSize: 11 }}>
+                        {copiadoIp === endereco ? "✅ Copiado" : "📋 Copiar IP"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {cfg?.modo === "cliente" && (
+                <button onClick={salvarESairComoServidor} disabled={salvando}
+                  style={{ ...cfgBtn, width: "100%", padding: 11, marginTop: 16, opacity: salvando ? 0.6 : 1 }}>
+                  {salvando ? "Salvando..." : "Tornar esta máquina o servidor"}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#78716c", letterSpacing: "0.06em", marginBottom: 6 }}>
+                ENDEREÇO DA MÁQUINA SERVIDOR
+              </label>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <input value={ip} onChange={e => { setIp(e.target.value); setTestResult(null); }}
+                  placeholder="192.168.0.10" style={{ ...cfgInp, flex: 1, fontFamily: "monospace" }} />
+                <button onClick={testarConexao} disabled={testando}
+                  style={{ ...cfgBtn, background: "#1c1917", opacity: testando ? 0.6 : 1, whiteSpace: "nowrap" }}>
+                  {testando ? "Testando..." : "🔌 Testar"}
+                </button>
+              </div>
+
+              {testResult && (
+                <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 8,
+                  background: testResult.ok ? "#f0fdf4" : "#fef2f2", border: `1px solid ${testResult.ok ? "#bbf7d0" : "#fecaca"}` }}>
+                  {testResult.ok
+                    ? <div style={{ fontSize: 12.5, color: "#15803d" }}>✅ Conectado com sucesso</div>
+                    : <div style={{ fontSize: 12.5, color: "#dc2626" }}>❌ {testResult.motivo}</div>}
+                </div>
+              )}
+
+              <button onClick={salvarComoCliente} disabled={salvando || !testResult?.ok}
+                style={{ ...cfgBtn, width: "100%", padding: 11, opacity: (salvando || !testResult?.ok) ? 0.5 : 1 }}>
+                {salvando ? "Salvando..." : "💾 Salvar e reiniciar como cliente"}
+              </button>
+              {!testResult?.ok && (
+                <div style={{ fontSize: 11, color: "#a8a29e", textAlign: "center", marginTop: 8 }}>
+                  Teste a conexão com sucesso antes de salvar.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Diagnóstico de rede */}
+        {diagRede && !diagRede.ok && (
+          <div className="card" style={{ background: "#fef2f2", border: "1px solid #fecaca" }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: "#991b1b", marginBottom: 8 }}>🔍 Diagnóstico de rede</div>
+            {diagRede.problemas.map((p, i) => (
+              <div key={i} style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 12, color: "#dc2626", fontWeight: 600, marginBottom: 3 }}>
+                  {p.tipo === "rede_publica" ? "🌐 Rede pública detectada" : "🛡️ Firewall sem regra"}
+                </div>
+                <div style={{ fontSize: 11.5, color: "#7f1d1d", lineHeight: 1.5 }}>{p.descricao}</div>
+                {p.tipo === "rede_publica" && (
+                  <div style={{ fontSize: 11, color: "#92400e", marginTop: 4, padding: "8px 10px", background: "#fffbeb", borderRadius: 6, lineHeight: 1.6 }}>
+                    <b>Como corrigir:</b> {p.solucao}
+                  </div>
+                )}
+                {p.tipo === "sem_regra_firewall" && (
+                  <>
+                    <button onClick={corrigirFirewall} disabled={corrigindoFw}
+                      style={{ ...cfgBtn, marginTop: 6, background: "#dc2626", fontSize: 11, padding: "7px 14px", opacity: corrigindoFw ? 0.6 : 1 }}>
+                      {corrigindoFw ? "Aguardando confirmação..." : "🛡️ Criar regra de firewall automaticamente"}
+                    </button>
+                    <div style={{ fontSize: 10.5, color: "#7f1d1d", marginTop: 5 }}>
+                      O Windows vai abrir uma janela pedindo permissão — clique em "Sim" para continuar.
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {diagRede?.ok && (
+          <div className="card" style={{ background: "#f0fdf4", border: "1px solid #bbf7d0" }}>
+            <div style={{ fontSize: 12.5, color: "#15803d", fontWeight: 600 }}>✅ Rede configurada corretamente para multi-máquina</div>
+          </div>
+        )}
+
+        <div className="card" style={{ background: "#fffbeb", border: "1px solid #fde68a" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>⚠️ Antes de configurar</div>
+          <ul style={{ fontSize: 11.5, color: "#a16207", lineHeight: 1.7, paddingLeft: 18 }}>
+            <li>Todas as máquinas precisam estar na mesma rede (Wi-Fi ou cabo).</li>
+            <li>A máquina servidor deve ficar sempre ligada durante o expediente — se ela desligar, as outras param de funcionar até ela voltar.</li>
+            <li>Ative o login por funcionário em Configurações → Geral, já que a rede fica acessível pelas outras máquinas.</li>
+            <li>O perfil da rede deve estar como <b>Privado</b> (não Público) para que as máquinas se enxerguem.</li>
+          </ul>
+        </div>
+      </div>
+
+      {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
+    </div>
+  );
+}
+
 // ─── CONFIG APP ──────────────────────────────────────────────────────────────
-export default function ConfigApp({ onNavegar }) {
-  const [aba, setAba] = useState("geral");
+export default function ConfigApp({ onNavegar, abaInicial }) {
+  const [aba, setAba] = useState(abaInicial || "geral");
 
   return (
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", color: "#1c1917" }}>
@@ -816,6 +1170,7 @@ export default function ConfigApp({ onNavegar }) {
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
         {aba === "geral" && <GeralTab />}
         {aba === "conexao" && <ConexaoTab />}
+        {aba === "rede" && <RedeLocalTab />}
         {aba === "lixeira" && <Lixeira />}
       </div>
     </div>

@@ -12,6 +12,7 @@ const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "
 
 // ─── CATEGORIAS ──────────────────────────────────────────────────────────────
 function CategoriasTab({ cardapioAtivo, cardapioNome }) {
+  const modoTodos = cardapioAtivo === "__todos__";
   const [categorias, setCategorias] = useState([]);
   const [novaCat, setNovaCat] = useState("");
   const [novaCatAdicionais, setNovaCatAdicionais] = useState(false);
@@ -20,13 +21,17 @@ function CategoriasTab({ cardapioAtivo, cardapioNome }) {
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
-  useEffect(() => {
+  const recarregar = () => {
     setLoading(true);
-    api.categorias.listar({ cardapio_id: cardapioAtivo })
+    const opts = modoTodos
+      ? { incluir_cardapios: true }
+      : { cardapio_id: cardapioAtivo, incluir_cardapios: true };
+    api.categorias.listar(opts)
       .then(setCategorias)
       .catch(() => showToast("Erro ao carregar", "#dc2626"))
       .finally(() => setLoading(false));
-  }, [cardapioAtivo]);
+  };
+  useEffect(() => { recarregar(); }, [cardapioAtivo]);
 
   const adicionar = async () => {
     const nome = novaCat.trim();
@@ -82,51 +87,84 @@ function CategoriasTab({ cardapioAtivo, cardapioNome }) {
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
 
+  const nOrfaos = categorias.filter(c => c.orfao).length;
+
   return (
     <div className="anim">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Categorias {cardapioNome ? `— ${cardapioNome}` : ""}</div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>
+          Categorias {modoTodos ? "— 🌐 Todos os cardápios" : cardapioNome ? `— ${cardapioNome}` : ""}
+        </div>
       </div>
       <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>
-        {categorias.length} categoria{categorias.length !== 1 ? "s" : ""} deste cardápio
+        {categorias.length} categoria{categorias.length !== 1 ? "s" : ""}
+        {modoTodos
+          ? (nOrfaos > 0
+              ? ` no total — ${nOrfaos} órfã${nOrfaos !== 1 ? "s" : ""} (sem cardápio)`
+              : " no total")
+          : " deste cardápio"}
       </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-          Categorias para classificar os produtos no cardápio. Marque "Permite adicionais" para categorias como Lanches.
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
-          <input value={novaCat} onChange={e => setNovaCat(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionar()}
-            placeholder="Nova categoria" style={{ ...cfgInp, flex: 1 }} />
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#78716c", whiteSpace: "nowrap", cursor: "pointer" }}>
-            <input type="checkbox" checked={novaCatAdicionais} onChange={e => setNovaCatAdicionais(e.target.checked)} style={{ accentColor: "#15803d" }} />
-            Adicionais
-          </label>
-          <button onClick={adicionar} style={cfgBtn}>+ Criar</button>
-        </div>
+        {modoTodos ? (
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 12, lineHeight: 1.5 }}>
+            Visão consolidada de <b>todas as categorias</b> — inclusive as <b>órfãs</b> (que perderam
+            o cardápio quando ele foi excluído). Aqui você pode limpar categorias sobrando.
+            Para criar ou reordenar, volte para um cardápio específico.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+              Categorias para classificar os produtos no cardápio. Marque "Permite adicionais" para categorias como Lanches.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+              <input value={novaCat} onChange={e => setNovaCat(e.target.value)} onKeyDown={e => e.key === "Enter" && adicionar()}
+                placeholder="Nova categoria" style={{ ...cfgInp, flex: 1 }} />
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#78716c", whiteSpace: "nowrap", cursor: "pointer" }}>
+                <input type="checkbox" checked={novaCatAdicionais} onChange={e => setNovaCatAdicionais(e.target.checked)} style={{ accentColor: "#15803d" }} />
+                Adicionais
+              </label>
+              <button onClick={adicionar} style={cfgBtn}>+ Criar</button>
+            </div>
+          </>
+        )}
 
         {categorias.length === 0 ? (
           <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhuma categoria.</div>
         ) : (
           <>
-            <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 8, fontStyle: "italic" }}>
-              A ordem abaixo é a mesma do cardápio do cliente. Use as setas para reorganizar.
-            </div>
+            {!modoTodos && (
+              <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 8, fontStyle: "italic" }}>
+                A ordem abaixo é a mesma do cardápio do cliente. Use as setas para reorganizar.
+              </div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {categorias.map((c, idx) => (
-                <div key={c.id} style={cfgRow}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <button onClick={() => mover(c.id, -1)} disabled={idx === 0}
-                        style={{ background: idx === 0 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === 0 ? "not-allowed" : "pointer", color: idx === 0 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>{"▲"}</button>
-                      <button onClick={() => mover(c.id, 1)} disabled={idx === categorias.length - 1}
-                        style={{ background: idx === categorias.length - 1 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === categorias.length - 1 ? "not-allowed" : "pointer", color: idx === categorias.length - 1 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>{"▼"}</button>
-                    </div>
-                    <span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 700, minWidth: 18 }}>{idx + 1}.</span>
+                <div key={c.id} style={{ ...cfgRow, ...(c.orfao ? { background: "#fef2f2", borderColor: "#fecaca" } : {}) }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    {!modoTodos && (
+                      <>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <button onClick={() => mover(c.id, -1)} disabled={idx === 0}
+                            style={{ background: idx === 0 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === 0 ? "not-allowed" : "pointer", color: idx === 0 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>{"▲"}</button>
+                          <button onClick={() => mover(c.id, 1)} disabled={idx === categorias.length - 1}
+                            style={{ background: idx === categorias.length - 1 ? "#fafaf9" : "#fff", border: "1px solid #e7e5e4", borderRadius: 4, padding: "1px 6px", fontSize: 10, cursor: idx === categorias.length - 1 ? "not-allowed" : "pointer", color: idx === categorias.length - 1 ? "#d6d3d1" : "#57534e", fontFamily: "'DM Sans', sans-serif", lineHeight: 1 }}>{"▼"}</button>
+                        </div>
+                        <span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 700, minWidth: 18 }}>{idx + 1}.</span>
+                      </>
+                    )}
                     <span style={{ fontSize: 14, fontWeight: 600 }}>{c.nome}</span>
                     {c.permite_adicionais && (
                       <span style={{ background: "#f0fdf4", color: "#15803d", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>Adicionais</span>
                     )}
+                    {modoTodos && c.orfao && (
+                      <span style={{ background: "#fecaca", color: "#7f1d1d", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>ÓRFÃ</span>
+                    )}
+                    {modoTodos && Array.isArray(c.cardapios) && c.cardapios.map(cd => (
+                      <span key={cd.id} style={{ background: "#f5f5f4", color: "#57534e", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 999 }}>
+                        {cd.icone} {cd.nome}
+                      </span>
+                    ))}
                   </div>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     {c.permite_adicionais && (
@@ -157,6 +195,7 @@ function CategoriasTab({ cardapioAtivo, cardapioNome }) {
 
 // ─── ADICIONAIS ──────────────────────────────────────────────────────────────
 function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
+  const modoTodos = cardapioAtivo === "__todos__";
   const [adicionais, setAdicionais] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "", categoria: "" });
@@ -168,9 +207,11 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
 
   useEffect(() => {
     setLoading(true);
+    const optsAd = modoTodos ? { incluir_cardapios: true } : { cardapio_id: cardapioAtivo, incluir_cardapios: true };
+    const optsCat = modoTodos ? {} : { cardapio_id: cardapioAtivo };
     Promise.all([
-      api.adicionais.listar({ cardapio_id: cardapioAtivo }),
-      api.categorias.listar({ cardapio_id: cardapioAtivo }),
+      api.adicionais.listar(optsAd),
+      api.categorias.listar(optsCat),
     ])
       .then(([ads, cats]) => { setAdicionais(ads); setCategorias(cats); })
       .catch(() => showToast("Erro ao carregar", "#dc2626"))
@@ -207,39 +248,60 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
 
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
 
+  const nOrfaosAd = adicionais.filter(a => a.orfao).length;
+
   return (
     <div className="anim">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>Adicionais {cardapioNome ? `— ${cardapioNome}` : ""}</div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 600 }}>
+          Adicionais {modoTodos ? "— 🌐 Todos os cardápios" : cardapioNome ? `— ${cardapioNome}` : ""}
+        </div>
       </div>
-      <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>{adicionais.length} adicional{adicionais.length !== 1 ? "es" : ""} deste cardápio</div>
+      <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 2, marginBottom: 20 }}>
+        {adicionais.length} adicional{adicionais.length !== 1 ? "es" : ""}
+        {modoTodos
+          ? (nOrfaosAd > 0
+              ? ` no total — ${nOrfaosAd} órfão${nOrfaosAd !== 1 ? "s" : ""} (sem cardápio)`
+              : " no total")
+          : " deste cardápio"}
+      </div>
 
       <div className="card" style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
-          Itens extras que o cliente pode adicionar aos produtos. Vincule a uma <b>categoria</b> para que o adicional apareça só nela (ex: adicionais de bebidas), ou deixe em <b>Todas</b> para valer em qualquer produto com adicionais habilitados.
-        </div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
-            placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
-          <input value={novoAd.preco} onChange={e => setNovoAd({ ...novoAd, preco: e.target.value })}
-            placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
-          <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
-            placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
-          <select value={novoAd.categoria} onChange={e => setNovoAd({ ...novoAd, categoria: e.target.value })}
-            style={{ ...cfgInp, cursor: "pointer", minWidth: 150 }}>
-            <option value="">Todas as categorias</option>
-            {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-          </select>
-          <button onClick={adicionar} style={cfgBtn}>+ Criar</button>
-        </div>
+        {modoTodos ? (
+          <div style={{ fontSize: 12, color: "#78716c", marginBottom: 12, lineHeight: 1.5 }}>
+            Visão consolidada de <b>todos os adicionais</b> — inclusive os <b>órfãos</b> (que perderam
+            o cardápio quando ele foi excluído). Aqui você pode limpar adicionais sobrando.
+            Para criar, volte para um cardápio específico.
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
+              Itens extras que o cliente pode adicionar aos produtos. Vincule a uma <b>categoria</b> para que o adicional apareça só nela (ex: adicionais de bebidas), ou deixe em <b>Todas</b> para valer em qualquer produto com adicionais habilitados.
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+              <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
+                placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
+              <input value={novoAd.preco} onChange={e => setNovoAd({ ...novoAd, preco: e.target.value })}
+                placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
+              <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
+                placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
+              <select value={novoAd.categoria} onChange={e => setNovoAd({ ...novoAd, categoria: e.target.value })}
+                style={{ ...cfgInp, cursor: "pointer", minWidth: 150 }}>
+                <option value="">Todas as categorias</option>
+                {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
+              </select>
+              <button onClick={adicionar} style={cfgBtn}>+ Criar</button>
+            </div>
+          </>
+        )}
 
         {adicionais.length === 0 ? (
           <div style={{ textAlign: "center", padding: 16, color: "#a8a29e", fontSize: 13 }}>Nenhum adicional cadastrado.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {adicionais.map(a => (
-              <div key={a.id} style={cfgRow}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div key={a.id} style={{ ...cfgRow, ...(a.orfao ? { background: "#fef2f2", borderColor: "#fecaca" } : {}) }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 13, fontWeight: 600 }}>{a.nome}</span>
                   <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>{fmtPreco(a.preco)}</span>
                   {a.custo > 0 && <span style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmtPreco(a.custo)}</span>}
@@ -249,6 +311,14 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
                   <span style={{ background: a.disponivel ? "#dcfce7" : "#fee2e2", color: a.disponivel ? "#15803d" : "#dc2626", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
                     {a.disponivel ? "Ativo" : "Inativo"}
                   </span>
+                  {modoTodos && a.orfao && (
+                    <span style={{ background: "#fecaca", color: "#7f1d1d", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>ÓRFÃO</span>
+                  )}
+                  {modoTodos && Array.isArray(a.cardapios) && a.cardapios.map(cd => (
+                    <span key={cd.id} style={{ background: "#f5f5f4", color: "#57534e", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 999 }}>
+                      {cd.icone} {cd.nome}
+                    </span>
+                  ))}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
                   <button onClick={() => toggleDisponivel(a)}
@@ -471,8 +541,39 @@ function CardapiosTab({ onChange }) {
   };
 
   const excluir = async (id) => {
-    if (!confirm("Excluir este cardápio?")) return;
-    try { await api.cardapios.excluir(id); await carregar(); onChange?.(); showToast("Excluído"); }
+    // Preview: descobre quantas categorias/adicionais SUMIRIAM junto (exclusivas
+    // deste cardápio). O usuário decide se apaga junto ou mantém pra reaproveitar.
+    let preview;
+    try { preview = await api.cardapios.previewExclusao(id); }
+    catch { preview = { categoriasExclusivas: [], adicionaisExclusivos: [] }; }
+    const nCats = preview.categoriasExclusivas?.length || 0;
+    const nAds  = preview.adicionaisExclusivos?.length || 0;
+
+    let msg = "Excluir este cardápio?";
+    let cascade = false;
+    if (nCats > 0 || nAds > 0) {
+      const partes = [];
+      if (nCats > 0) partes.push(`${nCats} categoria${nCats !== 1 ? "s" : ""}`);
+      if (nAds > 0) partes.push(`${nAds} adicional${nAds !== 1 ? "es" : ""}`);
+      msg =
+        `Excluir este cardápio?\n\n` +
+        `Existem ${partes.join(" e ")} que só aparecem neste cardápio.\n\n` +
+        `OK  → excluir cardápio + ${partes.join(" + ")}\n` +
+        `Cancelar → NÃO faz nada.\n\n` +
+        `(Para apenas remover o cardápio mantendo as categorias/adicionais, arraste-as primeiro para outro cardápio.)`;
+      cascade = true;
+    }
+    if (!confirm(msg)) return;
+
+    try {
+      const r = await api.cardapios.excluir(id, { cascade });
+      await carregar();
+      onChange?.();
+      const extras = [];
+      if (r?.categoriasRemovidas) extras.push(`${r.categoriasRemovidas} categoria${r.categoriasRemovidas !== 1 ? "s" : ""}`);
+      if (r?.adicionaisRemovidos) extras.push(`${r.adicionaisRemovidos} adicional${r.adicionaisRemovidos !== 1 ? "es" : ""}`);
+      showToast(extras.length ? `Excluído + ${extras.join(" + ")}` : "Excluído");
+    }
     catch (e) { showToast(e.message, "#dc2626"); }
   };
 
@@ -538,17 +639,12 @@ function CardapiosTab({ onChange }) {
         pizzaria ganha tamanhos, meio a meio e bordas; açaí ganha complementos inclusos; e assim por diante.
       </p>
 
-      {/* Criar novo: nome + tipo de segmento */}
+      {/* Criar novo: tipo de segmento → nome + botão criar */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-          <input style={{ ...cfgInp, flex: "1 1 220px" }} value={novoNome} onChange={e => setNovoNome(e.target.value)}
-            placeholder="Nome do cardápio (ex: Pizzas da Casa)" onKeyDown={e => e.key === "Enter" && criar()} />
-          <button style={cfgBtn} onClick={criar}>+ Criar cardápio</button>
-        </div>
         <div style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>
           Tipo do cardápio
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8, marginBottom: 14 }}>
           {TIPOS_CARDAPIO.map(t => {
             const seg = SEGMENTOS[t];
             const sel = novoTipo === t;
@@ -566,6 +662,11 @@ function CardapiosTab({ onChange }) {
               </button>
             );
           })}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input style={{ ...cfgInp, flex: "1 1 220px" }} value={novoNome} onChange={e => setNovoNome(e.target.value)}
+            placeholder="Nome do cardápio (ex: Pizzas da Casa)" onKeyDown={e => e.key === "Enter" && criar()} />
+          <button style={cfgBtn} onClick={criar}>+ Criar cardápio</button>
         </div>
       </div>
 
@@ -625,18 +726,55 @@ function CardapiosTab({ onChange }) {
                   <span style={{ fontSize: 11, color: "#a8a29e" }}>{infoSegmento(editando.tipo).desc}</span>
                 </div>
 
-                {/* Config específica: PIZZARIA — meio a meio + bordas */}
+                {/* Config específica: PIZZARIA — tamanhos + meio a meio + bordas */}
                 {infoSegmento(editando.tipo).recursos.meioAMeio && (
                   <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 8 }}>🍕 Pizza meio a meio</div>
+                    {/* ── TAMANHOS DE PIZZA ── */}
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>🍕 Tamanhos de pizza</div>
+                    <div style={{ fontSize: 11, color: "#a16207", marginBottom: 8, lineHeight: 1.5 }}>
+                      Definidos UMA vez aqui e herdados por todos os sabores. Cada sabor só preenche o preço em cada tamanho.
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 78px 90px 100px 40px", gap: 6, fontSize: 10, fontWeight: 700, color: "#a16207", padding: "0 4px", marginBottom: 4, letterSpacing: "0.04em", textTransform: "uppercase" }}>
+                      <span>Nome</span><span>Fatias</span><span>Máx. sabores</span><span title="Fator que multiplica o CMV base do sabor. Ex: Broto 0.4, Grande 1.0, Gigante 1.2. Vazio = calcula automaticamente pela razão de fatias.">CMV ×</span><span></span>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                      {(editando.configObj?.tamanhos_pizza || []).map((t, i) => (
+                        <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 78px 90px 100px 40px", gap: 6, alignItems: "center" }}>
+                          <input style={{ ...cfgInp, padding: "6px 10px", fontSize: 12 }} value={t.nome}
+                            onChange={e => setCfg({ tamanhos_pizza: (editando.configObj?.tamanhos_pizza || []).map((x, j) => j === i ? { ...x, nome: e.target.value } : x) })}
+                            placeholder="Ex: Grande" />
+                          <input style={{ ...cfgInp, padding: "6px 10px", fontSize: 12 }} type="number" min="1" step="1" value={t.fatias || ""}
+                            onChange={e => setCfg({ tamanhos_pizza: (editando.configObj?.tamanhos_pizza || []).map((x, j) => j === i ? { ...x, fatias: parseInt(e.target.value, 10) || 0 } : x) })}
+                            placeholder="8" />
+                          <input style={{ ...cfgInp, padding: "6px 10px", fontSize: 12 }} type="number" min="1" step="1" value={t.max_sabores || ""}
+                            onChange={e => setCfg({ tamanhos_pizza: (editando.configObj?.tamanhos_pizza || []).map((x, j) => j === i ? { ...x, max_sabores: parseInt(e.target.value, 10) || 0 } : x) })}
+                            placeholder="2" />
+                          <input style={{ ...cfgInp, padding: "6px 10px", fontSize: 12 }} type="number" min="0" step="0.05" value={t.multiplicador_cmv ?? ""}
+                            onChange={e => setCfg({ tamanhos_pizza: (editando.configObj?.tamanhos_pizza || []).map((x, j) => j === i ? { ...x, multiplicador_cmv: e.target.value === "" ? null : parseFloat(e.target.value) } : x) })}
+                            placeholder="auto" title="Multiplicador do CMV. Ex: 0.5 = pizza usa metade do custo do tamanho de referência." />
+                          <button onClick={() => setCfg({ tamanhos_pizza: (editando.configObj?.tamanhos_pizza || []).filter((_, j) => j !== i) })}
+                            style={{ ...cfgDel, padding: "5px 10px" }}>×</button>
+                        </div>
+                      ))}
+                      <button onClick={() => setCfg({ tamanhos_pizza: [...(editando.configObj?.tamanhos_pizza || []), { nome: "", fatias: 8, max_sabores: 2, multiplicador_cmv: null, ordem: (editando.configObj?.tamanhos_pizza || []).length }] })}
+                        style={{ ...cfgBtn, background: "#fff", color: "#92400e", border: "1.5px solid #fde68a", padding: "6px 14px", fontSize: 12, alignSelf: "flex-start" }}>
+                        + Adicionar tamanho
+                      </button>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#a16207", background: "#fef3c7", padding: "8px 12px", borderRadius: 8, marginBottom: 8, lineHeight: 1.5 }}>
+                      💡 <b>CMV × por tamanho:</b> ajusta o custo dos ingredientes. Deixe em branco para <b>auto</b> (proporção de fatias). Exemplo típico: Broto 0.5, Média 0.8, Grande 1.0, Gigante 1.2.
+                    </div>
+
+                    {/* ── MEIO A MEIO ── */}
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 8, marginTop: 8, borderTop: "1px solid #fde68a", paddingTop: 12 }}>Meio a meio</div>
                     <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
                       <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                         <input type="checkbox" checked={(editando.configObj?.meio_a_meio ?? true) !== false}
                           onChange={e => setCfg({ meio_a_meio: e.target.checked })} />
-                        Permitir 2 sabores (metade/metade)
+                        Permitir pizzas com múltiplos sabores
                       </label>
                       <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
-                        Preço do meio a meio:
+                        Preço quando há &gt; 1 sabor:
                         <select style={{ ...cfgInp, padding: "5px 8px", fontSize: 12 }} value={editando.configObj?.regra_preco || "maior"}
                           onChange={e => setCfg({ regra_preco: e.target.value })}>
                           <option value="maior">Sabor mais caro</option>
@@ -644,6 +782,8 @@ function CardapiosTab({ onChange }) {
                         </select>
                       </label>
                     </div>
+
+                    {/* ── BORDAS ── */}
                     <div style={{ fontSize: 12, fontWeight: 700, color: "#92400e", marginBottom: 6 }}>Bordas recheadas (opcional)</div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                       {(editando.configObj?.bordas || []).map((b, i) => (
@@ -754,19 +894,23 @@ function CardapiosTab({ onChange }) {
 // Cardápios como raiz do fluxo: o cliente cria um cardápio (Lanches, Pastéis),
 // depois cadastra categorias/adicionais/produtos/promoções DENTRO desse cardápio.
 const NAV_TABS = [
-  { key: "cardapios",  label: "Cardápios",  icon: "\u{1F4CB}" },
   { key: "produtos",   label: "Produtos",   icon: "\u{1F354}" },
+  { key: "promocoes",  label: "Promoções",  icon: "\u{1F525}" },
+  { key: "cardapios",  label: "Cardápios",  icon: "\u{1F4CB}" },
   { key: "categorias", label: "Categorias", icon: "\u{1F4C2}" },
   { key: "adicionais", label: "Adicionais", icon: "\u{2795}" },
-  { key: "promocoes",  label: "Promoções",  icon: "\u{1F525}" },
   { key: "desempenho", label: "Desempenho", icon: "\u{1F4CA}" },
 ];
 
 // Abas que precisam de um cardápio selecionado (as demais são globais)
 const ABAS_POR_CARDAPIO = new Set(["produtos", "categorias", "adicionais", "promocoes"]);
+// Abas onde a view "🌐 Todos os cardápios" (agregada) faz sentido — usada
+// pra achar categorias/adicionais órfãos depois que um cardápio é excluído.
+const ABAS_COM_TODOS = new Set(["categorias", "adicionais"]);
+const TODOS_SENTINEL = "__todos__";
 
 export default function ProdutosApp({ onNavegar }) {
-  const [aba, setAba] = useState("cardapios");
+  const [aba, setAba] = useState("produtos");
   const [cardapios, setCardapios] = useState([]);
   const [cardapioAtivo, setCardapioAtivo] = useState(() => localStorage.getItem("nl_cardapio_ativo") || "");
 
@@ -800,6 +944,17 @@ export default function ProdutosApp({ onNavegar }) {
 
   const cardapioAtual = cardapios.find(c => c.id === cardapioAtivo);
   const precisaCardapio = ABAS_POR_CARDAPIO.has(aba);
+  const modoTodos = cardapioAtivo === TODOS_SENTINEL;
+  const podeModoTodos = ABAS_COM_TODOS.has(aba);
+
+  // Se o usuário trocar pra uma aba onde "Todos" não faz sentido, volta pro
+  // primeiro cardápio automaticamente.
+  useEffect(() => {
+    if (modoTodos && !podeModoTodos && cardapios[0]) {
+      setCardapioAtivo(cardapios[0].id);
+      localStorage.setItem("nl_cardapio_ativo", cardapios[0].id);
+    }
+  }, [aba, modoTodos, podeModoTodos, cardapios]);
 
   return (
     <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", background: "#f5f5f4", minHeight: "100vh", color: "#1c1917" }}>
@@ -867,6 +1022,22 @@ export default function ProdutosApp({ onNavegar }) {
                 <span>{c.nome}</span>
               </button>
             ))}
+            {podeModoTodos && (
+              <button onClick={() => trocarCardapio(TODOS_SENTINEL)}
+                title="Ver TUDO de todos os cardápios (inclusive itens órfãos)"
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 14px", borderRadius: 999,
+                  border: `1.5px dashed ${modoTodos ? "#F38C24" : "#e7e5e4"}`,
+                  background: modoTodos ? "#fff7ed" : "#fafaf9",
+                  color: modoTodos ? "#c2410c" : "#78716c",
+                  fontWeight: modoTodos ? 700 : 500,
+                  fontSize: 12.5, cursor: "pointer", fontFamily: "'DM Sans', sans-serif",
+                }}>
+                <span>🌐</span>
+                <span>Todos os cardápios</span>
+              </button>
+            )}
           </div>
           <div style={{ flex: 1 }} />
           <button onClick={() => setAba("cardapios")}
@@ -883,7 +1054,7 @@ export default function ProdutosApp({ onNavegar }) {
         ) : (
           <>
             {aba === "cardapios" && <CardapiosTab onChange={recarregarCardapios} />}
-            {aba === "produtos" && <Produtos cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} cardapioTipo={cardapioAtual?.tipo || "snack_bar"} />}
+            {aba === "produtos" && <Produtos cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} cardapioTipo={cardapioAtual?.tipo || "snack_bar"} cardapio={cardapioAtual} />}
             {aba === "categorias" && <CategoriasTab cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
             {aba === "adicionais" && <AdicionaisTab cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}
             {aba === "promocoes" && <Promocoes cardapioAtivo={cardapioAtivo} cardapioNome={cardapioAtual?.nome} />}

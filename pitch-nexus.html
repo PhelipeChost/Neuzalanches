@@ -1,0 +1,1225 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexus · Pitch comercial — Frente de Caixa SaaS</title>
+<style>
+  :root {
+    --green: #15803d;
+    --green-dark: #166534;
+    --green-soft: #f0fdf4;
+    --orange: #F38C24;
+    --orange-dark: #d97706;
+    --orange-soft: #fff7ed;
+    --ink: #1c1917;
+    --muted: #57534e;
+    --soft: #78716c;
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --line: #e7e5e4;
+    --line-strong: #d6d3d1;
+    --red: #dc2626;
+    --red-soft: #fef2f2;
+    --blue: #2563eb;
+    --blue-soft: #eff6ff;
+  }
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@600;700;800;900&family=Fraunces:ital,wght@1,400;1,500;1,600&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+    font-size: 15px;
+  }
+  .container { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  /* Hero */
+  .hero {
+    background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
+    color: #fff;
+    padding: 60px 0 70px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(243,140,36,0.07) 1px, transparent 0);
+    background-size: 24px 24px;
+    pointer-events: none;
+  }
+  .hero-inner { position: relative; }
+  .brand-mark {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 8px 16px; background: rgba(243,140,36,0.12); border: 1px solid rgba(243,140,36,0.3);
+    border-radius: 100px; margin-bottom: 24px;
+  }
+  .brand-mark .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 12px var(--orange); }
+  .brand-mark span { font-family: 'Inter', sans-serif; font-weight: 800; font-size: 12px; letter-spacing: 0.12em; color: var(--orange); }
+  .hero h1 {
+    font-family: 'Inter', sans-serif;
+    font-size: 44px; font-weight: 900; letter-spacing: -1.5px;
+    line-height: 1.05; margin-bottom: 14px;
+  }
+  .hero h1 .highlight { color: var(--orange); }
+  .hero p.sub { font-size: 17px; color: #d6d3d1; max-width: 620px; line-height: 1.55; }
+  .hero .meta { margin-top: 28px; display: flex; gap: 20px; flex-wrap: wrap; font-size: 12px; color: #a8a29e; }
+  .hero .meta span b { color: #fff; font-weight: 600; }
+
+  /* TOC */
+  .toc {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px 24px; margin: -30px auto 40px; max-width: 920px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+    position: relative; z-index: 2;
+  }
+  .toc h3 { font-family: 'Inter', sans-serif; font-size: 11px; letter-spacing: 0.12em; color: var(--soft); font-weight: 700; margin-bottom: 14px; text-transform: uppercase; }
+  .toc ol { list-style: none; counter-reset: toc; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+  .toc li { counter-increment: toc; }
+  .toc a {
+    display: flex; align-items: baseline; gap: 10px;
+    text-decoration: none; color: var(--ink); font-size: 14px; font-weight: 500;
+    padding: 6px 0;
+    transition: color 0.15s;
+  }
+  .toc a:hover { color: var(--green); }
+  .toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: 'Inter', sans-serif; font-weight: 800; font-size: 11px; color: var(--orange);
+    letter-spacing: 0.05em;
+  }
+
+  /* Sections */
+  section.block { padding: 56px 0; border-bottom: 1px solid var(--line); }
+  section.block:last-of-type { border-bottom: none; }
+  section.block.darkish { background: linear-gradient(180deg, #fafaf9 0%, #f5f5f4 100%); }
+  .eyebrow {
+    font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 700;
+    color: var(--green); letter-spacing: 0.14em; text-transform: uppercase;
+    display: inline-flex; align-items: center; gap: 8px;
+    margin-bottom: 14px;
+  }
+  .eyebrow::before {
+    content: ""; width: 18px; height: 2px; background: var(--green);
+  }
+  h2.section-title {
+    font-family: 'Inter', sans-serif; font-size: 30px; font-weight: 800;
+    letter-spacing: -0.6px; margin-bottom: 12px; line-height: 1.15;
+  }
+  .lede { font-size: 16px; color: var(--muted); max-width: 720px; margin-bottom: 36px; line-height: 1.6; }
+  h3.sub { font-family: 'Inter', sans-serif; font-size: 19px; font-weight: 700; margin: 32px 0 12px; letter-spacing: -0.3px; }
+  h4 { font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 700; margin: 18px 0 8px; }
+  p { margin-bottom: 12px; }
+  ul, ol { margin: 8px 0 14px 22px; }
+  ul li, ol li { margin-bottom: 6px; }
+
+  /* Principles */
+  .principles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 12px; }
+  .principle {
+    background: var(--surface); border: 1.5px solid var(--line); border-radius: 14px;
+    padding: 22px 22px 24px; position: relative; overflow: hidden;
+  }
+  .principle .num {
+    font-family: 'Inter', sans-serif; font-weight: 900; font-size: 38px;
+    color: var(--green-soft); position: absolute; right: 14px; top: 6px; line-height: 1;
+    letter-spacing: -2px;
+  }
+  .principle h4 { font-size: 15px; margin-top: 0; margin-bottom: 6px; color: var(--green-dark); }
+  .principle p { font-size: 13.5px; color: var(--muted); margin: 0; line-height: 1.5; }
+
+  /* Acts */
+  .act {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+    padding: 26px 28px; margin-bottom: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+  .act-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .act-num {
+    font-family: 'Fraunces', serif; font-style: italic;
+    font-size: 30px; font-weight: 600; color: var(--orange); line-height: 1; letter-spacing: -1px;
+  }
+  .act-title { font-family: 'Inter', sans-serif; font-size: 20px; font-weight: 800; letter-spacing: -0.3px; }
+  .act-time {
+    margin-left: auto; font-size: 11px; color: var(--soft); font-weight: 600;
+    background: var(--soft); color: #fff; padding: 3px 10px; border-radius: 100px;
+    letter-spacing: 0.04em;
+  }
+  .act-goal {
+    background: var(--orange-soft); border-left: 3px solid var(--orange);
+    padding: 10px 14px; border-radius: 0 8px 8px 0; font-size: 13.5px;
+    color: var(--ink); margin-bottom: 14px;
+  }
+  .act-goal b { color: var(--orange-dark); }
+  .step-list { list-style: none; margin: 0; padding: 0; }
+  .step-list li {
+    display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line);
+  }
+  .step-list li:last-child { border-bottom: none; }
+  .step-list li::before {
+    content: ""; flex: 0 0 6px; width: 6px; height: 6px; background: var(--green);
+    border-radius: 50%; margin-top: 9px;
+  }
+  .step-list strong { color: var(--ink); font-weight: 700; }
+
+  /* Speech bubbles */
+  .dialog {
+    background: linear-gradient(180deg, #fafaf9 0%, #f5f5f4 100%);
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin: 12px 0;
+  }
+  .dialog .turn { display: flex; gap: 12px; margin-bottom: 10px; }
+  .dialog .turn:last-child { margin-bottom: 0; }
+  .dialog .who {
+    flex: 0 0 60px; font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 800;
+    letter-spacing: 0.08em; color: var(--soft); padding-top: 4px; text-transform: uppercase;
+  }
+  .dialog .turn.you .who { color: var(--green); }
+  .dialog .turn.them .who { color: var(--orange-dark); }
+  .dialog .bubble {
+    flex: 1; background: #fff; border: 1px solid var(--line);
+    padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5;
+  }
+  .dialog .turn.you .bubble { background: var(--green-soft); border-color: #bbf7d0; }
+  .dialog .turn.them .bubble { background: #fff; }
+  .dialog .bubble em { color: var(--soft); font-style: normal; font-size: 12.5px; display: block; margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 6px; }
+
+  /* Q&A cards */
+  .qa-group { margin-bottom: 26px; }
+  .qa-group-title {
+    font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 800;
+    color: var(--orange-dark); letter-spacing: 0.06em; margin-bottom: 12px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .qa-group-title::before {
+    content: ""; width: 24px; height: 2px; background: var(--orange);
+  }
+  details.qa {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    margin-bottom: 8px; overflow: hidden; transition: box-shadow 0.15s;
+  }
+  details.qa[open] { box-shadow: 0 6px 24px rgba(0,0,0,0.06); border-color: var(--green); }
+  details.qa summary {
+    list-style: none; cursor: pointer; padding: 14px 18px;
+    display: flex; align-items: center; gap: 14px;
+    font-weight: 600; color: var(--ink); font-size: 14.5px;
+  }
+  details.qa summary::-webkit-details-marker { display: none; }
+  details.qa summary::after {
+    content: "+"; margin-left: auto; font-family: 'Inter', sans-serif; font-size: 20px;
+    color: var(--green); font-weight: 600; line-height: 1; transition: transform 0.2s;
+  }
+  details.qa[open] summary::after { content: "−"; }
+  .qa-quote { color: var(--red); font-style: italic; }
+  .qa-answer { padding: 0 18px 18px; border-top: 1px dashed var(--line); padding-top: 16px; }
+  .qa-answer p { margin-bottom: 10px; font-size: 14px; color: var(--muted); }
+  .qa-answer p strong { color: var(--ink); }
+  .qa-tag {
+    display: inline-block; background: var(--green-soft); color: var(--green-dark);
+    font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 100px;
+    margin-right: 6px; margin-top: 6px;
+  }
+  .qa-script {
+    background: var(--ink); color: #fafaf9; padding: 14px 16px; border-radius: 10px;
+    margin-top: 12px; font-family: 'Fraunces', serif; font-style: italic;
+    font-size: 14.5px; line-height: 1.55;
+  }
+  .qa-script::before {
+    content: "“"; font-size: 28px; color: var(--orange); line-height: 0; margin-right: 4px; vertical-align: -8px;
+  }
+  .qa-script::after { content: "”"; font-size: 28px; color: var(--orange); line-height: 0; margin-left: 4px; vertical-align: -10px; }
+
+  /* Filters table */
+  .signals { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+  .signal-col {
+    background: var(--surface); border: 1.5px solid var(--line); border-radius: 14px; padding: 20px 22px;
+  }
+  .signal-col.yes { border-color: var(--green); background: var(--green-soft); }
+  .signal-col.no { border-color: #fecaca; background: var(--red-soft); }
+  .signal-col h4 { margin-top: 0; font-family: 'Inter', sans-serif; font-size: 14px; }
+  .signal-col.yes h4 { color: var(--green-dark); }
+  .signal-col.no h4 { color: var(--red); }
+  .signal-col ul { margin: 8px 0 0 16px; }
+  .signal-col li { font-size: 13.5px; line-height: 1.55; color: var(--ink); margin-bottom: 8px; }
+  .signal-col.yes li::marker { color: var(--green); }
+  .signal-col.no li::marker { color: var(--red); }
+
+  /* Trial closes */
+  .trial {
+    background: var(--surface); border-left: 4px solid var(--blue); border-radius: 0 12px 12px 0;
+    padding: 14px 18px; margin-bottom: 10px;
+  }
+  .trial-q { font-weight: 700; color: var(--ink); font-size: 14.5px; margin-bottom: 4px; }
+  .trial-why { font-size: 13px; color: var(--muted); }
+
+  /* Video section */
+  .video-meta {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 30px;
+  }
+  .video-meta .mtag {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; text-align: left;
+  }
+  .video-meta .mtag .lbl { font-size: 10px; font-weight: 800; color: var(--soft); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 3px; }
+  .video-meta .mtag .val { font-family: 'Inter', sans-serif; font-size: 16px; font-weight: 800; color: var(--ink); }
+
+  .storyboard { display: grid; grid-template-columns: 1fr; gap: 0; }
+  .scene {
+    display: grid; grid-template-columns: 100px 1fr; gap: 18px;
+    padding: 22px 0; border-bottom: 1px solid var(--line);
+  }
+  .scene:last-of-type { border-bottom: none; }
+  .scene-time {
+    font-family: 'Inter', sans-serif; font-weight: 900; font-size: 14px;
+    color: var(--orange); letter-spacing: 0.04em;
+    background: var(--orange-soft); padding: 8px 0; border-radius: 8px; text-align: center;
+    height: fit-content;
+  }
+  .scene-time .lbl { display: block; font-size: 9px; color: var(--soft); font-weight: 600; letter-spacing: 0.08em; margin-bottom: 2px; }
+  .scene-body h4 {
+    margin: 0 0 6px; font-family: 'Inter', sans-serif; font-size: 16px; font-weight: 800;
+  }
+  .scene-body .visual {
+    background: #fafaf9; border-left: 3px solid var(--ink);
+    padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 8px 0;
+    font-size: 13.5px;
+  }
+  .scene-body .visual b { color: var(--ink); }
+  .scene-body .audio {
+    background: var(--green-soft); border-left: 3px solid var(--green);
+    padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 8px 0;
+    font-size: 13.5px; font-style: italic; color: var(--green-dark);
+  }
+  .scene-body .vo {
+    background: #1c1917; color: #fff;
+    padding: 12px 14px; border-radius: 10px; margin: 10px 0;
+    font-family: 'Fraunces', serif; font-style: italic; font-size: 15px; line-height: 1.5;
+  }
+  .scene-body .vo::before { content: "🎙️ "; font-style: normal; }
+
+  /* Take list */
+  .takes {
+    background: #1c1917; color: #fafaf9; padding: 26px 28px; border-radius: 16px; margin-top: 20px;
+  }
+  .takes h3 { color: var(--orange); font-family: 'Inter', sans-serif; font-size: 16px; margin: 0 0 14px; }
+  .takes ol { margin-left: 22px; }
+  .takes li { font-size: 14px; line-height: 1.6; margin-bottom: 7px; color: #e7e5e4; }
+  .takes li b { color: #fff; }
+
+  /* Pocket cards */
+  .pocket-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 14px; }
+  .pcard {
+    background: var(--surface); border: 1.5px solid var(--ink); border-radius: 14px;
+    padding: 18px 20px; position: relative;
+  }
+  .pcard .lbl {
+    font-family: 'Inter', sans-serif; font-size: 9px; letter-spacing: 0.14em; color: var(--red);
+    font-weight: 800; text-transform: uppercase; margin-bottom: 4px;
+  }
+  .pcard .objection {
+    font-family: 'Fraunces', serif; font-style: italic; font-size: 17px; font-weight: 500;
+    color: var(--ink); margin-bottom: 12px; line-height: 1.3;
+  }
+  .pcard .response {
+    background: var(--green-soft); padding: 10px 12px; border-radius: 8px;
+    font-size: 13px; color: var(--green-dark); border-left: 3px solid var(--green);
+  }
+
+  /* Callout boxes */
+  .callout {
+    background: var(--orange-soft); border: 1.5px solid var(--orange);
+    border-radius: 12px; padding: 18px 22px; margin: 20px 0;
+  }
+  .callout .ctag {
+    display: inline-block; background: var(--orange); color: #fff;
+    font-size: 10px; font-weight: 800; padding: 3px 10px; border-radius: 100px;
+    letter-spacing: 0.08em; margin-bottom: 8px; text-transform: uppercase;
+  }
+  .callout p { margin-bottom: 6px; font-size: 14px; color: var(--ink); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout strong { color: var(--orange-dark); }
+
+  .warn {
+    background: var(--red-soft); border: 1.5px solid #fecaca;
+    border-radius: 12px; padding: 18px 22px; margin: 20px 0;
+  }
+  .warn .ctag {
+    display: inline-block; background: var(--red); color: #fff;
+    font-size: 10px; font-weight: 800; padding: 3px 10px; border-radius: 100px;
+    letter-spacing: 0.08em; margin-bottom: 8px; text-transform: uppercase;
+  }
+  .warn p { font-size: 14px; color: var(--ink); margin-bottom: 6px; }
+  .warn p:last-child { margin-bottom: 0; }
+
+  /* Footer */
+  footer.foot {
+    background: #1c1917; color: #d6d3d1;
+    padding: 50px 0 40px; margin-top: 40px; text-align: center;
+  }
+  footer.foot h3 { font-family: 'Inter', sans-serif; color: var(--orange); font-size: 13px; letter-spacing: 0.14em; font-weight: 800; margin-bottom: 14px; }
+  footer.foot p.tag { font-family: 'Fraunces', serif; font-style: italic; font-size: 22px; color: #fff; line-height: 1.3; max-width: 540px; margin: 0 auto 14px; }
+  footer.foot .sig { font-size: 12px; color: var(--soft); margin-top: 14px; }
+
+  /* Responsive */
+  @media (max-width: 720px) {
+    .container { padding: 0 18px; }
+    .hero { padding: 40px 0 50px; }
+    .hero h1 { font-size: 30px; letter-spacing: -1px; }
+    .hero p.sub { font-size: 15px; }
+    .toc { padding: 16px 20px; margin: -20px 18px 30px; }
+    .toc ol { grid-template-columns: 1fr; }
+    section.block { padding: 36px 0; }
+    h2.section-title { font-size: 24px; }
+    .principles { grid-template-columns: 1fr; }
+    .signals { grid-template-columns: 1fr; }
+    .video-meta { grid-template-columns: 1fr 1fr; }
+    .pocket-cards { grid-template-columns: 1fr; }
+    .scene { grid-template-columns: 1fr; }
+    .scene-time { text-align: left; padding: 6px 12px; }
+    .dialog .turn { flex-direction: column; gap: 4px; }
+    .dialog .who { flex: 0; }
+    .act { padding: 22px 20px; }
+  }
+
+  /* ─── PRINT — A4, sem corte de blocos ─────────────────────────────────────── */
+  @media print {
+    @page { size: A4; margin: 10mm 11mm 11mm; }
+
+    body { font-size: 8.4pt; line-height: 1.38; background: #fff; }
+    .hero, section.block, footer.foot { break-inside: auto; }
+    .container { padding: 0; max-width: 100%; }
+
+    /* Hero compacto, sem dominar a página */
+    .hero { background: none !important; color: var(--ink); padding: 0 0 7pt; border-bottom: 1px solid var(--line-strong); margin-bottom: 10pt; }
+    .hero::before { display: none; }
+    .hero-inner { padding: 0; }
+    .hero h1 { font-size: 17pt; line-height: 1.1; letter-spacing: -0.3px; margin-bottom: 4pt; color: var(--ink); }
+    .hero h1 .highlight { color: var(--orange-dark); }
+    .hero p.sub { font-size: 8.5pt; color: var(--muted); margin-bottom: 4pt; line-height: 1.4; max-width: 100%; }
+    .hero .brand-mark { background: none; border-color: var(--orange-dark); padding: 2px 7px; margin-bottom: 6pt; }
+    .hero .brand-mark span { font-size: 6.5pt; color: var(--orange-dark); }
+    .hero .brand-mark .dot { background: var(--orange-dark); box-shadow: none; width: 6px; height: 6px; }
+    .hero .meta { display: none; }
+
+    /* TOC compacto, ainda fecha a pagina 1 */
+    .toc { box-shadow: none; padding: 9pt 12pt; margin: 0; page-break-after: always; page-break-inside: avoid; }
+    .toc h3 { font-size: 7.5pt; margin-bottom: 6pt; }
+    .toc ol { gap: 3pt 20pt; }
+    .toc a { font-size: 8.5pt; padding: 2pt 0; }
+    .toc a::before { font-size: 7.5pt; }
+
+    /* Secoes podem quebrar entre cards; cards individuais nao quebram */
+    section.block { padding: 10pt 0 12pt; border-bottom: 0.5px solid var(--line); page-break-inside: auto; }
+    section.block.darkish { background: #fafaf9; }
+
+    .eyebrow { font-size: 7pt; margin-bottom: 4pt; }
+    .eyebrow::before { width: 12px; }
+    h2.section-title { font-size: 13.5pt; margin-bottom: 4pt; letter-spacing: -0.2px; line-height: 1.15; page-break-after: avoid; }
+    .lede { font-size: 8.5pt; margin-bottom: 9pt; line-height: 1.4; page-break-after: avoid; }
+    h3.sub { font-size: 10.5pt; margin: 11pt 0 4pt; page-break-after: avoid; }
+    h4 { font-size: 9pt; margin: 6pt 0 3pt; page-break-after: avoid; }
+    p { margin-bottom: 4pt; }
+    ul, ol { margin: 3pt 0 6pt 16pt; }
+    ul li, ol li { margin-bottom: 2.5pt; }
+
+    /* Principios */
+    .principles { gap: 6pt; margin-top: 3pt; }
+    .principle { padding: 10pt 12pt; page-break-inside: avoid; break-inside: avoid; }
+    .principle h4 { font-size: 9.5pt; margin-bottom: 3pt; margin-top: 0; }
+    .principle p { font-size: 8.2pt; line-height: 1.38; }
+    .principle .num { font-size: 22pt; }
+
+    /* Atos: deixa quebrar entre etapas (sao muito grandes pra caber inteiros) */
+    .act { padding: 10pt 12pt; margin-bottom: 7pt; box-shadow: none; page-break-inside: auto; }
+    .act-head { margin-bottom: 6pt; gap: 8pt; page-break-after: avoid; }
+    .act-num { font-size: 17pt; }
+    .act-title { font-size: 11.5pt; }
+    .act-time { font-size: 7pt; padding: 2pt 7pt; }
+    .act-goal { font-size: 8.5pt; padding: 5pt 9pt; margin-bottom: 6pt; page-break-after: avoid; }
+    .step-list li { padding: 3pt 0; font-size: 8.5pt; line-height: 1.38; break-inside: avoid; }
+    .step-list li::before { width: 4px; height: 4px; margin-top: 6px; flex: 0 0 4px; }
+
+    /* Dialogo: SEMPRE inteiro (e o golden moment do material) */
+    .dialog { padding: 8pt 10pt; margin: 7pt 0; page-break-inside: avoid; break-inside: avoid; }
+    .dialog .turn { margin-bottom: 4pt; gap: 7pt; break-inside: avoid; }
+    .dialog .who { font-size: 6.8pt; flex: 0 0 42px; padding-top: 2pt; }
+    .dialog .bubble { font-size: 8.3pt; padding: 5pt 9pt; line-height: 1.38; border-radius: 8px; }
+    .dialog .bubble em { font-size: 7.8pt; padding-top: 3pt; }
+
+    /* Q&A — abertos, cada um inteiro */
+    .qa-group { margin-bottom: 9pt; page-break-inside: auto; }
+    .qa-group-title { font-size: 8.5pt; margin-bottom: 6pt; }
+    .qa-group-title::before { width: 16px; }
+    details.qa { border: 1px solid var(--line); margin-bottom: 4pt; box-shadow: none !important; page-break-inside: avoid; break-inside: avoid; }
+    details.qa[open] { box-shadow: none; border-color: var(--line); }
+    details.qa summary { padding: 5pt 10pt; font-size: 8.8pt; cursor: default; }
+    details.qa summary::after { display: none; }
+    details.qa .qa-answer { display: block !important; padding: 6pt 10pt 8pt; }
+    .qa-answer p { font-size: 8.2pt; margin-bottom: 4pt; line-height: 1.4; }
+    .qa-quote { font-size: 8.8pt; }
+    .qa-tag { font-size: 7.2pt; padding: 1.5pt 6pt; margin-top: 3pt; }
+    .qa-script { font-size: 8.5pt; padding: 6pt 10pt; margin-top: 6pt; line-height: 1.4; }
+    .qa-script::before, .qa-script::after { font-size: 18pt; }
+
+    /* Sinais (verde / vermelho) */
+    .signals { gap: 8pt; margin: 9pt 0; page-break-inside: avoid; break-inside: avoid; }
+    .signal-col { padding: 10pt 12pt; page-break-inside: avoid; break-inside: avoid; }
+    .signal-col h4 { font-size: 9.5pt; margin-bottom: 4pt; }
+    .signal-col li { font-size: 8pt; margin-bottom: 3pt; line-height: 1.38; }
+    .signal-col ul { margin-left: 14pt; }
+
+    /* Testes de comprometimento */
+    .trial { padding: 6pt 10pt; margin-bottom: 4pt; page-break-inside: avoid; break-inside: avoid; }
+    .trial-q { font-size: 8.6pt; margin-bottom: 2pt; }
+    .trial-why { font-size: 7.8pt; line-height: 1.38; }
+
+    /* Video */
+    .video-meta { gap: 5pt; margin-bottom: 10pt; page-break-inside: avoid; break-inside: avoid; }
+    .video-meta .mtag { padding: 6pt 9pt; }
+    .video-meta .mtag .lbl { font-size: 6.5pt; }
+    .video-meta .mtag .val { font-size: 9.5pt; }
+
+    .storyboard { gap: 0; }
+    .scene { padding: 8pt 0; gap: 10pt; page-break-inside: avoid; break-inside: avoid; }
+    .scene-time { font-size: 8.5pt; padding: 5pt 0; }
+    .scene-time .lbl { font-size: 6.5pt; }
+    .scene-body h4 { font-size: 9.5pt; margin-bottom: 3pt; margin-top: 0; }
+    .scene-body .visual,
+    .scene-body .audio { font-size: 8.2pt; padding: 5pt 9pt; margin: 3pt 0; line-height: 1.38; }
+    .scene-body .vo { background: #f5f5f4; color: var(--ink); border: 1px solid var(--ink); padding: 6pt 9pt; font-size: 8.5pt; margin: 4pt 0; line-height: 1.38; }
+
+    /* Lista de takes */
+    .takes { background: #fff; color: var(--ink); border: 1.5px solid var(--ink); padding: 10pt 14pt; margin-top: 10pt; page-break-inside: avoid; break-inside: avoid; }
+    .takes h3 { color: var(--ink); font-size: 9.5pt; margin-bottom: 6pt; }
+    .takes li { color: var(--ink); font-size: 8.2pt; margin-bottom: 2.5pt; line-height: 1.4; }
+
+    /* Cartoes de bolso */
+    .pocket-cards { gap: 7pt; margin-top: 6pt; page-break-inside: auto; }
+    .pcard { padding: 8pt 10pt; page-break-inside: avoid; break-inside: avoid; }
+    .pcard .lbl { font-size: 6.8pt; }
+    .pcard .objection { font-size: 10.5pt; margin-bottom: 5pt; line-height: 1.2; }
+    .pcard .response { font-size: 8.2pt; padding: 5pt 8pt; line-height: 1.38; }
+
+    /* Caixas (callout / warn) */
+    .callout, .warn { padding: 8pt 12pt; margin: 9pt 0; page-break-inside: avoid; break-inside: avoid; }
+    .callout .ctag, .warn .ctag { font-size: 6.8pt; padding: 1.5pt 7pt; margin-bottom: 4pt; }
+    .callout p, .warn p { font-size: 8.5pt; margin-bottom: 3pt; line-height: 1.4; }
+
+    /* Rodape */
+    footer.foot { background: none; color: var(--ink); padding: 14pt 0; margin-top: 14pt; border-top: 1px solid var(--line-strong); page-break-inside: avoid; }
+    footer.foot h3 { color: var(--ink); font-size: 8pt; margin-bottom: 6pt; }
+    footer.foot p.tag { color: var(--ink); font-size: 12pt; margin-bottom: 6pt; }
+    footer.foot .sig { font-size: 7.5pt; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- HERO -->
+<header class="hero">
+  <div class="container hero-inner">
+    <div class="brand-mark"><span class="dot"></span><span>NEXUS · MATERIAL INTERNO</span></div>
+    <h1>Como entrar, ler o salão e <span class="highlight">fechar venda</span> num restaurante que você nunca pisou.</h1>
+    <p class="sub">Pitch comercial para visitas de campo do <b>Frente de Caixa SaaS</b>. Modelo conversacional que constrói necessidade <b>antes</b> de mencionar preço — e separa cliente real de promessa vazia <b>antes</b> de você sair do estabelecimento.</p>
+    <div class="meta">
+      <span>📋 <b>Uso:</b> imprima, leve no bolso, releia antes de cada visita</span>
+      <span>🎯 <b>Meta da visita:</b> agendar a apresentação formal — não vender na hora</span>
+    </div>
+  </div>
+</header>
+
+<!-- TOC -->
+<div class="container">
+  <nav class="toc">
+    <h3>Índice</h3>
+    <ol>
+      <li><a href="#principios">Os 3 princípios que mudam o jogo</a></li>
+      <li><a href="#atos">A visita em 3 atos</a></li>
+      <li><a href="#qa">Banco de perguntas e respostas</a></li>
+      <li><a href="#filtros">Sinais — cliente real × promessa vazia</a></li>
+      <li><a href="#testes">Testes de comprometimento</a></li>
+      <li><a href="#video">Estrutura do vídeo comercial</a></li>
+      <li><a href="#cartoes">Cartões de bolso (objeções)</a></li>
+      <li><a href="#fechamento">Fechamento e próximo passo</a></li>
+    </ol>
+  </nav>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 1. PRINCÍPIOS -->
+<section class="block" id="principios">
+  <div class="container">
+    <span class="eyebrow">Princípios fundadores</span>
+    <h2 class="section-title">Os 3 princípios que mudam o jogo</h2>
+    <p class="lede">Antes de qualquer roteiro, decore isso. É o que separa quem vende de quem dá apresentação. Quando uma situação fugir do roteiro, volte pros princípios.</p>
+
+    <div class="principles">
+      <div class="principle">
+        <div class="num">01</div>
+        <h4>Dor antes de preço</h4>
+        <p>Quem diz "tá caro" não conhece o tamanho do problema. Seu trabalho é fazer o dono <b>sentir</b> quanto custa <b>não ter</b> antes de qualquer número aparecer.</p>
+      </div>
+      <div class="principle">
+        <div class="num">02</div>
+        <h4>Pergunta vale mais que afirmação</h4>
+        <p>"Quantos pedidos você perdeu ontem?" vale 100× "nosso sistema reduz perda de pedidos". A boca dele diagnostica. A sua só confirma.</p>
+      </div>
+      <div class="principle">
+        <div class="num">03</div>
+        <h4>Sem próximo passo, é não</h4>
+        <p>Se você sai sem uma <b>data</b>, <b>nome</b> ou <b>compromisso concreto</b>, a venda morreu. "Vou pensar" é não educado. Nunca aceite isso como saída.</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="ctag">A lei do preço</span>
+      <p><strong>O preço só "tá caro" quando a dor está pequena.</strong> Se o dono está perdendo R$ 800/mês em pedidos esquecidos, R$ 397/mês vira <em>investimento</em>. Se ele não enxerga os R$ 800, vira <em>despesa</em>. Sua função na visita não é defender o preço — é fazer ele ver os R$ 800.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 2. ATOS -->
+<section class="block darkish" id="atos">
+  <div class="container">
+    <span class="eyebrow">Estratégia em campo</span>
+    <h2 class="section-title">A visita em 3 atos</h2>
+    <p class="lede">Você não chega vendendo. Chega como cliente. Observa, conversa, marca. Cada ato tem objetivo claro — não pule etapas.</p>
+
+    <!-- ATO 1 -->
+    <article class="act">
+      <header class="act-head">
+        <div class="act-num">Ato I</div>
+        <div class="act-title">Reconhecimento — você é cliente, ainda</div>
+        <div class="act-time">15-25 min</div>
+      </header>
+
+      <div class="act-goal"><b>Objetivo:</b> mapear a operação <em>antes</em> de se identificar. O que você vê em silêncio agora vira a munição da conversa.</div>
+
+      <ul class="step-list">
+        <li><div><strong>Peça um lanche ou bebida.</strong> Sente onde dá pra ver o caixa, a cozinha e o salão. Não use o celular — observe.</div></li>
+        <li><div><strong>Cronometre o tempo do seu pedido.</strong> Do "boa tarde" até receber. Anote no celular depois.</div></li>
+        <li><div><strong>Como anotam pedidos?</strong> Caderno? Comanda papel? PDV velho? Tablet? Gritando pra cozinha?</div></li>
+        <li><div><strong>Onde estão os atritos?</strong> Cliente esperando no caixa, cozinha pedindo confirmação, garçom voltando à mesa pra anotar coisa esquecida, troco demorando, máquina de cartão lenta.</div></li>
+        <li><div><strong>Qual o perfil do dono?</strong> Está atrás do caixa? No salão? Na cozinha? Ele opera ou administra? Tem WhatsApp Business à mostra?</div></li>
+        <li><div><strong>Foto mental do cardápio.</strong> Tem QR Code na mesa? Tem cardápio impresso? Tem preços trocados/rabiscados? Quantos itens?</div></li>
+      </ul>
+
+      <h4>O que você está procurando</h4>
+      <p>Você está catalogando <strong>3 a 5 atritos concretos</strong> que vai mencionar no Ato II. Não dá pra falar "vocês têm problemas" — você fala <em>"reparei que sua atendente teve que ir até a cozinha 4 vezes em 20 minutos confirmar pedido. Isso é normal?"</em>. Isso é o que vira credibilidade.</p>
+    </article>
+
+    <!-- ATO 2 -->
+    <article class="act">
+      <header class="act-head">
+        <div class="act-num">Ato II</div>
+        <div class="act-title">Diálogo diagnóstico — você revela quem é</div>
+        <div class="act-time">8-12 min</div>
+      </header>
+
+      <div class="act-goal"><b>Objetivo:</b> fazer o dono <em>verbalizar</em> a dor. Quem fala mais nesse ato é ele, não você. Você só pergunta.</div>
+
+      <p>Pague a conta. Quando o dono ou alguém da família vier conferir, é a abertura. Não comece com "trabalho com sistema". Comece elogiando algo <em>específico e verdadeiro</em> que você viu.</p>
+
+      <div class="dialog">
+        <div class="turn you">
+          <div class="who">Você</div>
+          <div class="bubble">"Olha, esse hambúrguer estava muito bom mesmo. Você que faz, é equipe? Tô curioso, parece bem caseiro."
+          <em>Por quê: você abre com elogio sincero, não com venda. Faz o dono soltar a guarda.</em></div>
+        </div>
+        <div class="turn them">
+          <div class="who">Dono</div>
+          <div class="bubble">"Obrigado! É equipe pequena, eu, minha esposa e mais dois."</div>
+        </div>
+        <div class="turn you">
+          <div class="who">Você</div>
+          <div class="bubble">"E o movimento, como tá? Tô passando aqui há um tempo, lembro que sexta era cheio…"
+          <em>Por quê: você puxa ele pra falar do negócio. Ele vai começar a desabafar sozinho.</em></div>
+        </div>
+        <div class="turn them">
+          <div class="who">Dono</div>
+          <div class="bubble">"Ah, sexta é assim mesmo, fica corrido. Aí às vezes a gente acaba enrolando os pedidos…"</div>
+        </div>
+        <div class="turn you">
+          <div class="who">Você</div>
+          <div class="bubble">"E aí entra pelo WhatsApp? Vocês usam algum sistema, ou é tudo no caderno mesmo?"
+          <em>Por quê: você está mapeando a stack atual, descobrindo de onde os pedidos chegam.</em></div>
+        </div>
+        <div class="turn them">
+          <div class="who">Dono</div>
+          <div class="bubble">"WhatsApp, balcão, iFood, é uma confusão. Caderno não, eu uso um tablet aqui meio improvisado."</div>
+        </div>
+        <div class="turn you">
+          <div class="who">Você</div>
+          <div class="bubble">"Cara, é tenso isso. Pergunta meio chata: <b>no fim do mês você sabe quanto sobrou de verdade, ou é mais no sentimento?</b>"
+          <em>Por quê: pergunta de dor financeira disfarçada de curiosidade. Quase ninguém sabe. Quando ele admite "é no sentimento", você ganhou.</em></div>
+        </div>
+      </div>
+
+      <h4>As 5 perguntas-chave do diagnóstico</h4>
+      <p>Você não precisa fazer todas em sequência. Encaixa conforme a conversa flui. Cada uma abre uma dor.</p>
+      <ol>
+        <li><strong>Quantos pedidos vocês perderam essa semana?</strong> <em>(pedido errado conta, ouviu errado conta, esqueceu de fazer conta)</em></li>
+        <li><strong>No fim do mês, você sabe quanto ganhou de verdade ou tá mais no sentimento?</strong></li>
+        <li><strong>Quando sai um lanche errado, o que acontece? Cliente reclama, vocês refazem, ou ele come e nunca mais volta?</strong></li>
+        <li><strong>Cliente que vem só uma vez e some — vocês têm jeito de saber quem é? De chamar de volta?</strong></li>
+        <li><strong>Se você ficar doente uma semana, o que acontece com o negócio?</strong> <em>(testa dependência da operação na cabeça do dono)</em></li>
+      </ol>
+
+      <div class="callout">
+        <span class="ctag">A frase de virada</span>
+        <p>Depois de 2 ou 3 dores expostas, vire o jogo: <strong>"Olha, agora vou ser honesto com você. Eu trabalho com sistema pra restaurante. Não vim vender hoje. Vim conhecer o lugar. Mas tudo que você acabou de falar é justamente o que a gente resolve. <em>Posso te mostrar uma coisa rápida no celular, 2 minutos?"</em></strong></p>
+        <p>Se ele diz sim → você ganhou o Ato III. Se diz não → encerre com elegância, deixe o cartão, marque retorno.</p>
+      </div>
+    </article>
+
+    <!-- ATO 3 -->
+    <article class="act">
+      <header class="act-head">
+        <div class="act-num">Ato III</div>
+        <div class="act-title">Demonstração focada — você mostra resultado, não tela</div>
+        <div class="act-time">5-8 min</div>
+      </header>
+
+      <div class="act-goal"><b>Objetivo:</b> mostrar <em>uma</em> coisa que resolve <em>uma</em> dor que ele acabou de admitir. Não a turnê completa do produto.</div>
+
+      <p>Você abre o protótipo no celular: <code>reinonexusideal.com.br/prototipocompleto</code>. Mas <strong>não</strong> abre a tela do admin de cara — abre o cardápio público, na visão do cliente. Mostra como o cliente final pediria.</p>
+
+      <h4>Sequência de demo (não desvie)</h4>
+      <ol>
+        <li><strong>Cardápio público no celular dele.</strong> "Imagina seu cliente: ele escaneia um QR Code que tá colado na mesa, vê isso aqui, monta o pedido, finaliza. Você não fica tendo que perguntar 'e pra beber?', porque tá tudo aqui."</li>
+        <li><strong>Cozinha em tempo real.</strong> "E aí, na cozinha — esse painel aqui — o pedido <em>já caiu</em>. Sem você gritar, sem comanda perdida. Ah, e olha esse botão: <em>'Impressão automática'</em>. O cupom sai sozinho na impressora, com os adicionais separados, observação destacada. Quem é da cozinha já sabe o que fazer."</li>
+        <li><strong>DRE automático.</strong> "E essa é a parte que ninguém em PB tem. Fim do mês, sem você fazer planilha: <em>quanto entrou, quanto saiu, quanto sobrou de verdade</em>. Isso aqui é o que separa quem dirige o negócio de quem é dirigido por ele."</li>
+      </ol>
+
+      <p>Não mostre mais. Nem que ele peça. <em>"Cara, tem mais um monte de coisa, mas eu quero te mostrar com calma, no seu computador, sentado. <strong>Posso voltar quinta às 15h pra te mostrar com tudo?</strong>"</em></p>
+
+      <div class="callout">
+        <span class="ctag">Regra de ouro do Ato III</span>
+        <p><strong>Demo curta gera reunião. Demo completa gera "vou pensar".</strong> Toda vez que você mostra mais do que ele pediu, você dilui a curiosidade. Deixe-o querendo ver o resto.</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 3. Q&A -->
+<section class="block" id="qa">
+  <div class="container">
+    <span class="eyebrow">Banco de respostas</span>
+    <h2 class="section-title">Perguntas e respostas durante a visita</h2>
+    <p class="lede">Clique em cada objeção para ver a resposta. <strong>Decore o miolo, não as palavras.</strong> A linguagem se adapta ao dono. A lógica é fixa.</p>
+
+    <!-- GROUP: PREÇO -->
+    <div class="qa-group">
+      <div class="qa-group-title">Objeções de preço (as mais comuns)</div>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Tá caro.</span>” / “<span class="qa-quote">É muita coisa por mês.</span>”</summary>
+        <div class="qa-answer">
+          <p><strong>Não defenda o preço.</strong> Devolva a conta pra ele.</p>
+          <p>"Caro comparado a quê? Olha, deixa eu te perguntar: <strong>quantos pedidos você perdeu essa semana?</strong> Quantos clientes saíram porque o garçom não voltou? Vamos colocar um número."</p>
+          <p>Faça a conta com ele: ticket médio × pedidos perdidos por semana × 4 semanas. Quase sempre dá <em>múltiplos da mensalidade</em>.</p>
+          <div class="qa-script">A pergunta certa não é "o sistema é caro?". É: "o que tá me custando NÃO ter sistema?". 1 pedido a mais por dia já paga sozinho.</div>
+          <span class="qa-tag">Reframe</span><span class="qa-tag">Custo de não ter</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Não tenho esse dinheiro sobrando.</span>”</summary>
+        <div class="qa-answer">
+          <p>Não argumente preço. Argumente <strong>fluxo</strong>.</p>
+          <p>"Entendo. Mas pensa comigo: você paga o aluguel mesmo se for um mês ruim, paga o funcionário mesmo se for um mês ruim. <strong>Por que? Porque sem esses, não tem negócio.</strong> O sistema é igual: ele é o que garante que você sabe o que tá acontecendo no negócio. Sem ele, você tá voando às cegas."</p>
+          <p>Em seguida, ofereça <strong>um período-piloto</strong>: "Vou te fazer uma proposta. Primeiro mês a gente cobra meio. Você sente, mede, e decide se continua. Trato?"</p>
+          <span class="qa-tag">Empatia</span><span class="qa-tag">Risco compartilhado</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Tem mais barato no mercado.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Tem sim. iFood Shop, Anota AI, sistemas avulsos. Mas faz uma pergunta: você quer <strong>barato</strong>, ou quer <strong>resolver o seu problema</strong>?"</p>
+          <p>"Os outros resolvem pedido. <strong>A gente resolve gestão.</strong> Salão com mapa de mesas, QR Code com cardápio, cozinha em tempo real, DRE automático, controle de estoque, lançamento financeiro — tudo no mesmo lugar. Pra você ter isso com os outros, precisa contratar 3 sistemas. Aí o barato sai caro."</p>
+          <p>"Eu não tô aqui pra te vender o mais barato. Tô aqui pra te vender o que <strong>funciona</strong>."</p>
+          <span class="qa-tag">Reframe valor</span><span class="qa-tag">Diferenciação</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">E se eu não usar?</span>” / “<span class="qa-quote">E se não der certo?</span>”</summary>
+        <div class="qa-answer">
+          <p>"Pergunta válida. Por isso a gente faz <strong>implantação acompanhada</strong>. Não é 'tá aí o login, se vira'. A gente entra no seu cardápio, cadastra com você, configura impressora, faz a primeira semana junto. <strong>Você não usa porque não sabe usar — eu te garanto que vai usar.</strong>"</p>
+          <p>"E mais: a primeira mensalidade só começa depois que o sistema tá <strong>rodando de verdade</strong> com pedidos passando."</p>
+          <span class="qa-tag">Acompanhamento</span><span class="qa-tag">Garantia operacional</span>
+        </div>
+      </details>
+    </div>
+
+    <!-- GROUP: TEMPO -->
+    <div class="qa-group">
+      <div class="qa-group-title">Objeções de tempo / implementação</div>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Não tenho tempo pra implementar agora.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Justamente por isso a gente <strong>faz pra você</strong>. Implantação é nossa, não sua. Você me dá o cardápio, o WhatsApp do seu cliente, e a gente sobe. Em 3 dias tá rodando."</p>
+          <p>"O 'não tenho tempo' é exatamente o sintoma de quem mais precisa do sistema. Você não tem tempo <strong>porque</strong> tá fazendo tudo no improviso. Com sistema, sobra tempo."</p>
+          <span class="qa-tag">Inversão</span><span class="qa-tag">Implantação assistida</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Meu funcionário não vai entender.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Pra ele tem 2 telas: <strong>Cozinha</strong> — onde aparecem os pedidos com botão grande de 'Pronto' — e <strong>Frente de Caixa</strong> — onde ele clica na mesa, abre a comanda, fecha. <strong>Não tem manual.</strong> Se ele usa WhatsApp, ele usa isso."</p>
+          <p>"Se quiser, na implantação a gente <strong>treina o time</strong> no estabelecimento. 30 minutos com cada um."</p>
+          <span class="qa-tag">Treinamento</span><span class="qa-tag">UX simples</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Meu cliente não usa tecnologia.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Seu cliente usa WhatsApp? Usa Instagram? Usa iFood? Então ele usa tecnologia. <strong>O que ele não usa é coisa complicada.</strong>"</p>
+          <p>"Olha aqui [mostre o cardápio público]. Ele escaneia o QR da mesa, vê foto do hambúrguer, clica, finaliza. <strong>É mais simples do que pedir no balcão.</strong> E se ele preferir, o garçom abre a comanda normal, sem QR. Ninguém é obrigado a nada."</p>
+          <span class="qa-tag">Reframe</span><span class="qa-tag">Coexistência</span>
+        </div>
+      </details>
+    </div>
+
+    <!-- GROUP: STATUS QUO -->
+    <div class="qa-group">
+      <div class="qa-group-title">Objeções de "já tenho" / "estou bem assim"</div>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Já tenho um sistema.</span>”</summary>
+        <div class="qa-answer">
+          <p><strong>Nunca desafie o sistema atual de cara.</strong> Faça ele falar.</p>
+          <p>"Boa! Qual você usa? E ele faz o quê pra você?"</p>
+          <p>Escute. Procure por <strong>gaps</strong>: ele só faz pedido? Não faz DRE? Não tem QR de mesa? Não imprime na cozinha? Não tem cardápio público?</p>
+          <p>Quando ele admitir um gap: <strong>"Então o que você tem hoje é metade de um sistema. Tá pagando duas vezes — uma pra ele, e em produtividade perdida pra fazer o que ele não faz."</strong></p>
+          <span class="qa-tag">Diagnóstico de stack</span><span class="qa-tag">Custo escondido</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Faço tudo no caderno e funciona.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Funciona pra anotar. Mas funciona pra <strong>decidir</strong>? <strong>Quanto sobrou no mês passado?</strong>"</p>
+          <p>(Espere a resposta. Ele não vai saber exato.)</p>
+          <p>"Pois é. Caderno é memória, não é gestão. Você tá rodando o negócio no susto. Comigo, dia 1 do mês você abre o celular e vê: <strong>entradas, saídas, lucro, e onde tá vazando dinheiro</strong>. Quem tem isso decide. Quem não tem chuta."</p>
+          <span class="qa-tag">Reframe</span><span class="qa-tag">Gestão × Memória</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Tô bem do jeito que tá.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Que bom! É raro encontrar dono satisfeito. Posso te perguntar uma coisa franco?"</p>
+          <p>(Espere o sim.)</p>
+          <p>"Se eu te der uma forma de <strong>dobrar o seu lucro sem dobrar o trabalho</strong>, isso te interessa? Não é mágica. É deixar de perder o que você já tá perdendo sem ver."</p>
+          <p>"Se você toparia ouvir 10 minutos sobre isso, eu marco. Se não, sem problema — agradeço o lanche e a conversa."</p>
+          <span class="qa-tag">Inversão</span><span class="qa-tag">Risco baixo de ouvir</span>
+        </div>
+      </details>
+    </div>
+
+    <!-- GROUP: ADIAMENTO -->
+    <div class="qa-group">
+      <div class="qa-group-title">Objeções de adiamento (as mais perigosas)</div>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Vou pensar.</span>” / “<span class="qa-quote">Depois vejo.</span>”</summary>
+        <div class="qa-answer">
+          <p><strong>"Vou pensar" é não educado.</strong> Nunca aceite saída sem data.</p>
+          <p>"Claro, manda ver. Mas pra eu não ficar te enchendo o saco: <strong>até quando você pensa?</strong> Posso te ligar terça pra gente fechar?"</p>
+          <p>Se ele resistir a marcar data: "Olha, eu posso ser direto? Quando alguém me diz 'vou pensar' sem data, eu já entendi que é não. <strong>Prefiro o não agora a uma promessa.</strong> O que tá te travando de verdade?"</p>
+          <p>Essa pergunta abre. Ou aparece a objeção real, ou ele admite que não vai fechar — nos dois casos você economiza tempo.</p>
+          <div class="qa-script">Vou pensar sem data é não. Não com data é "preciso de mais argumento". Sua função é descobrir qual dos dois é.</div>
+          <span class="qa-tag">Filtro</span><span class="qa-tag">Anti-fantasma</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Vou ver com minha esposa / sócio / contador.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Show, faz parte. Quem é ela? Onde tá agora? <strong>Posso esperar 5 minutos pra você chamar ela aqui?</strong> Aí explico pra vocês dois juntos, ganha tempo."</p>
+          <p>Se ela não está: "Beleza. Quando ela tá aqui? Posso voltar amanhã às [hora] que vocês estão os dois?"</p>
+          <p>Sempre <strong>marque dia e hora</strong>. "Manda mensagem depois" = perdido.</p>
+          <span class="qa-tag">Decisor real</span><span class="qa-tag">Sem fantasma</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Deixa seu cartão que eu te ligo.</span>”</summary>
+        <div class="qa-answer">
+          <p><strong>Sinal vermelho.</strong> Ele tá te dispensando educadamente. 90% não liga.</p>
+          <p>"Deixo o cartão sim. Mas faz o seguinte: <strong>me chama no WhatsApp agora.</strong> Manda só 'oi', pra eu ficar com seu contato também. Aí semana que vem eu te chamo pra a gente ver isso direito."</p>
+          <p>Se ele se recusar a salvar seu WhatsApp na frente: ele não vai ligar. <strong>Aceite a derrota com elegância e saia.</strong> Não desperdice mais tempo.</p>
+          <p>Se ele mandar o oi: você acabou de ganhar um canal direto + um pequeno compromisso. A semana que vem você cobra de verdade.</p>
+          <span class="qa-tag">Mini-compromisso</span><span class="qa-tag">Teste de interesse</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Esse mês tá apertado, mês que vem a gente fala.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Justo. Mas marca comigo já: <strong>dia 5 do mês que vem, posso te ligar?</strong>"</p>
+          <p>(Se ele aceitar a data, salve no celular na frente dele.)</p>
+          <p>"Anotei. Olha, vou te falar uma coisa: ano passado um cliente nosso me disse a mesma coisa em janeiro. A gente fechou em março. Nesses 2 meses, ele perdeu uns R$ 1.500 em pedidos errados. <strong>O sistema não é o gasto — o atraso pra ter sistema é.</strong>"</p>
+          <span class="qa-tag">Data firme</span><span class="qa-tag">Custo do atraso</span>
+        </div>
+      </details>
+    </div>
+
+    <!-- GROUP: TECNOFOBIA / MEDO -->
+    <div class="qa-group">
+      <div class="qa-group-title">Medos não-ditos (você precisa escutar entrelinha)</div>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">E se você sumir? E se o sistema cair?</span>”</summary>
+        <div class="qa-answer">
+          <p>"Pergunta certa. A gente tem servidor próprio, backup diário, suporte WhatsApp direto comigo. <strong>Você não tá comprando software — tá comprando alguém que atende quando der ruim.</strong>"</p>
+          <p>"E mais: se a gente sumir, seu cardápio, seus produtos, seus pedidos, tudo isso é exportável. Você não fica preso."</p>
+          <span class="qa-tag">Confiança</span><span class="qa-tag">Lock-in zero</span>
+        </div>
+      </details>
+
+      <details class="qa">
+        <summary>“<span class="qa-quote">Não quero meu pessoal sabendo o financeiro.</span>”</summary>
+        <div class="qa-answer">
+          <p>"Compreensível. Por isso tem <strong>3 níveis de acesso</strong>: você (dono) vê tudo. Frente de caixa vê só comanda e pedido — não vê DRE, não vê fluxo. Cozinha vê só pedido. <strong>Cada um vê só o que precisa.</strong>"</p>
+          <span class="qa-tag">Controle de acesso</span>
+        </div>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 4. FILTROS -->
+<section class="block darkish" id="filtros">
+  <div class="container">
+    <span class="eyebrow">Anti-promessa vazia</span>
+    <h2 class="section-title">Sinais — cliente real × promessa vazia</h2>
+    <p class="lede">Promessa vazia custa caro: você prepara contrato, agenda implantação, prepara material, e o cara some. <strong>Leia esses sinais ao vivo, na conversa.</strong> Cinco sim na coluna verde = cliente real. Três ou mais na vermelha = sai elegante.</p>
+
+    <div class="signals">
+      <div class="signal-col yes">
+        <h4>✓ Sinais de cliente REAL</h4>
+        <ul>
+          <li><strong>Faz perguntas específicas:</strong> "e se o cliente cancelar?", "o estoque baixa sozinho?", "como o cartão integra?"</li>
+          <li><strong>Pergunta "quanto custa?"</strong> com curiosidade, não com defesa</li>
+          <li><strong>Chama alguém pra ouvir:</strong> esposa, filho, sócio — sinal forte de que está levando a sério</li>
+          <li><strong>Pega o celular pra mostrar o cardápio atual</strong> ou o sistema que usa hoje</li>
+          <li><strong>Marca dia e hora</strong> sem você ter que arrancar</li>
+          <li><strong>Te dá o WhatsApp na frente, salva o seu contato na frente</strong></li>
+          <li><strong>Conta uma história ruim recente:</strong> "semana passada perdi um pedido grande..."</li>
+          <li><strong>Pergunta sobre referência:</strong> "tem outro cliente que eu posso ver funcionando?"</li>
+        </ul>
+      </div>
+
+      <div class="signal-col no">
+        <h4>✗ Sinais de promessa VAZIA</h4>
+        <ul>
+          <li><strong>"Vou pensar"</strong> sem data, mesmo depois de você pedir uma</li>
+          <li><strong>"Deixa o cartão"</strong> mas se recusa a te chamar no WhatsApp na hora</li>
+          <li><strong>Concorda com tudo</strong> rápido demais — "perfeito, perfeito, perfeito"</li>
+          <li><strong>Não faz uma pergunta sequer</strong> — não tá processando</li>
+          <li><strong>Fica olhando o celular / o caixa</strong> enquanto você fala</li>
+          <li><strong>Marca, mas mudou a data 2× quando você confirmou</strong></li>
+          <li><strong>"Vou ver com meu pessoal"</strong> sem dizer quem é</li>
+          <li><strong>Fala de preço antes de você falar:</strong> "isso aí deve ser caro, né?"</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="warn">
+      <span class="ctag">A regra dos 3 dias</span>
+      <p><strong>Cliente real confirma a reunião agendada em até 24h pelo WhatsApp.</strong> Cliente vazio some por dias e responde "hoje não vou poder" 30 min antes — ou nem responde.</p>
+      <p>Se a primeira reunião marcada foi remarcada e a segunda também, <strong>é não</strong>. Pare de investir tempo. Anote o telefone numa lista de "talvez no futuro" e siga.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 5. TESTES -->
+<section class="block" id="testes">
+  <div class="container">
+    <span class="eyebrow">Validação de comprometimento</span>
+    <h2 class="section-title">Testes de comprometimento (trial closes)</h2>
+    <p class="lede">São <strong>perguntas pequenas</strong> que pedem um <strong>compromisso pequeno</strong>. Quem não topa o pequeno nunca vai topar o grande. Use 2 a 3 por visita.</p>
+
+    <div class="trial">
+      <div class="trial-q">"Pega seu celular um instante. Quero te mostrar como o cliente vê o cardápio."</div>
+      <div class="trial-why">Por quê: se ele pega o celular na hora, tá presente. Se enrola ou olha pro telefone com cara de "ah, depois" = baixo engajamento.</div>
+    </div>
+
+    <div class="trial">
+      <div class="trial-q">"Se eu te liberasse 7 dias grátis pra testar, você se compromete a fazer no mínimo 3 pedidos de verdade pelo sistema nesses 7 dias?"</div>
+      <div class="trial-why">Por quê: teste-killer. Se ele não consegue se comprometer com 3 ações triviais, ele não vai implementar nada. Quem responde "sim, faço" tá dentro. Quem responde "ah, depende" tá fora.</div>
+    </div>
+
+    <div class="trial">
+      <div class="trial-q">"Se eu voltar amanhã às 15h pra te mostrar com calma, sentado, você consegue me dar 30 minutos sem interrupção?"</div>
+      <div class="trial-why">Por quê: compromisso de tempo concreto. Se ele dá nó na hora ("ah, amanhã não posso… semana que vem talvez"), o problema não é amanhã, é interesse.</div>
+    </div>
+
+    <div class="trial">
+      <div class="trial-q">"Antes de eu te mostrar mais, me responde: <strong>se isso funcionasse exatamente como eu falei, você implantaria?</strong>"</div>
+      <div class="trial-why">Por quê: o test close mais honesto. Se ele dizer "sim, implantava" — agora é só vencer a objeção real. Se ele dizer "ah, não sei" — você descobre que falta convicção e foca nisso.</div>
+    </div>
+
+    <div class="trial">
+      <div class="trial-q">"Me manda agora um 'oi' no meu WhatsApp pra a gente ficar conectado. [mostra o QR Code do seu contato no celular]"</div>
+      <div class="trial-why">Por quê: micro-compromisso físico. Quem manda mesmo, mostrou que o canal de comunicação tá aberto. Quem enrola, está saindo da conversa.</div>
+    </div>
+
+    <div class="trial">
+      <div class="trial-q">"Te peço uma coisa: tira uma foto do seu cardápio atual e me manda hoje no WhatsApp. Quero preparar uma demo personalizada pra você."</div>
+      <div class="trial-why">Por quê: pequeno esforço com custo zero. Se ele cumpre até o fim do dia = real. Se enrola 2 dias = fantasma se aproximando.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 6. VÍDEO -->
+<section class="block darkish" id="video">
+  <div class="container">
+    <span class="eyebrow">Produção audiovisual</span>
+    <h2 class="section-title">Estrutura do vídeo comercial</h2>
+    <p class="lede">Vídeo de 75 a 90 segundos, estilo "documentário cinematográfico curto". <strong>Não é tutorial.</strong> O objetivo é o dono se sentir <em>visto</em> nos primeiros 5 segundos e tomar uma decisão emocional. Gravado com o setup que você já tem.</p>
+
+    <div class="video-meta">
+      <div class="mtag"><div class="lbl">Duração</div><div class="val">75-90s</div></div>
+      <div class="mtag"><div class="lbl">Aspect ratio</div><div class="val">9:16 + 16:9</div></div>
+      <div class="mtag"><div class="lbl">Estilo</div><div class="val">Cinematic real</div></div>
+      <div class="mtag"><div class="lbl">Trilha</div><div class="val">Tensa → épica</div></div>
+    </div>
+
+    <h3 class="sub">Conceito central</h3>
+    <p>Abre com a <strong>dor crua</strong> que todo dono de restaurante pequeno conhece — o caos de um sábado à noite. Sobe a tensão. Revela o sistema como <strong>alívio</strong>. Termina com um <strong>desafio direto à câmera</strong> que filtra quem está pronto pra mudar de quem só vai assistir.</p>
+
+    <h3 class="sub">Storyboard cena a cena</h3>
+
+    <div class="storyboard">
+      <!-- Cena 1 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 1</span>0:00 - 0:08</div>
+        <div class="scene-body">
+          <h4>O caos do sábado à noite</h4>
+          <div class="visual"><b>Visual:</b> close em mãos apertando um caderno cheio de rabiscos, depois plano aberto de um balcão de lanchonete com 3 clientes esperando. Garçom anotando no caderno, dono gritando pedido pra cozinha, máquina de cartão piscando "erro". Câmera trêmula, luz amarelada.</div>
+          <div class="audio"><b>Áudio:</b> trilha tensa baixa, sons reais: cozinha, barulho de moeda, "cadê meu pedido?", máquina de cartão bipando.</div>
+        </div>
+      </div>
+
+      <!-- Cena 2 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 2</span>0:08 - 0:18</div>
+        <div class="scene-body">
+          <h4>As perguntas que ninguém quer responder</h4>
+          <div class="visual"><b>Visual:</b> cortes secos. Tela preta com texto em branco aparecendo em ritmo cardíaco.</div>
+          <div class="vo">"Quantos pedidos você perdeu essa semana? — Quantos clientes não voltaram? — No fim do mês, você sabe quanto sobrou? — Ou tá no sentimento?"</div>
+          <div class="audio"><b>Áudio:</b> trilha cresce, batidas. Cada pergunta tem um "tum" baixo.</div>
+        </div>
+      </div>
+
+      <!-- Cena 3 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 3</span>0:18 - 0:25</div>
+        <div class="scene-body">
+          <h4>A pausa — silêncio dramático</h4>
+          <div class="visual"><b>Visual:</b> close lento no rosto do dono (use você ou o sócio, expressão pensativa). Câmera estável. Fundo desfocado.</div>
+          <div class="audio"><b>Áudio:</b> trilha cai pra quase silêncio. Só respiração e barulho ambiente baixo.</div>
+          <div class="vo">"Existe um jeito de quem dirige o seu negócio... ser você."</div>
+        </div>
+      </div>
+
+      <!-- Cena 4 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 4</span>0:25 - 0:35</div>
+        <div class="scene-body">
+          <h4>A revelação do produto</h4>
+          <div class="visual"><b>Visual:</b> plano elegante do <strong>seu setup real</strong>: monitor com o painel Hub abrindo, celular ao lado mostrando o cardápio público, XP-80 imprimindo um cupom. Câmera desliza da esquerda pra direita.</div>
+          <div class="audio"><b>Áudio:</b> trilha sobe, virada épica. Som da impressora térmica imprimindo (textura).</div>
+          <div class="vo">"Nexus Frente de Caixa. Um sistema. Pra quem decide."</div>
+        </div>
+      </div>
+
+      <!-- Cena 5 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 5</span>0:35 - 0:45</div>
+        <div class="scene-body">
+          <h4>Demonstração 1 — QR Code → Cozinha</h4>
+          <div class="visual"><b>Visual:</b> mão do cliente escaneia um QR Code colado numa mesa (use uma mesa montada de propósito). Corta pro celular: ele monta o pedido. Corta pra Cozinha no monitor: o pedido aparece em tempo real. Corta pra XP-80: cupom sai.</div>
+          <div class="vo">"Seu cliente pede. Sua cozinha já sabe. Sua impressora já imprimiu."</div>
+        </div>
+      </div>
+
+      <!-- Cena 6 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 6</span>0:45 - 0:55</div>
+        <div class="scene-body">
+          <h4>Demonstração 2 — Mapa de mesas + DRE</h4>
+          <div class="visual"><b>Visual:</b> plano do tablet/monitor com o mapa de mesas (Frente de Caixa) — você toca em uma mesa, abre comanda. Corte pra DRE — você passa o dedo pela tela, gráficos aparecem.</div>
+          <div class="vo">"Salão sob controle. Caixa transparente. Lucro no claro."</div>
+        </div>
+      </div>
+
+      <!-- Cena 7 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 7</span>0:55 - 1:10</div>
+        <div class="scene-body">
+          <h4>O desafio à câmera (o filtro)</h4>
+          <div class="visual"><b>Visual:</b> você (ou o sócio) na frente da câmera, olhando direto. Plano frontal, estático. Iluminação séria. Sem corte.</div>
+          <div class="vo">"Se você assistiu até aqui, é porque alguma coisa que eu falei te tocou. Então me responde uma coisa, no espelho mesmo: você quer continuar trabalhando NO seu restaurante... ou quer começar a trabalhar PELO seu restaurante?"</div>
+          <div class="audio"><b>Áudio:</b> trilha em sustain, sem batida. Silêncio significativo entre as duas frases.</div>
+        </div>
+      </div>
+
+      <!-- Cena 8 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 8</span>1:10 - 1:25</div>
+        <div class="scene-body">
+          <h4>Chamada à ação</h4>
+          <div class="visual"><b>Visual:</b> texto sobre fundo limpo. Logo Nexus. WhatsApp + site aparecendo. Quando o número do WhatsApp aparece, ele "pisca" 1x.</div>
+          <div class="vo">"Marca uma conversa. 30 minutos. Sem compromisso. Vou te mostrar o seu negócio do jeito que você ainda não viu."</div>
+          <div class="audio"><b>Áudio:</b> trilha resolve em um acorde maior.</div>
+        </div>
+      </div>
+
+      <!-- Cena 9 -->
+      <div class="scene">
+        <div class="scene-time"><span class="lbl">CENA 9</span>1:25 - 1:30</div>
+        <div class="scene-body">
+          <h4>Tagline final</h4>
+          <div class="visual"><b>Visual:</b> tela preta, texto branco grande aparece letra por letra:</div>
+          <div class="vo">"Nexus. Quem controla, decide."</div>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="sub">Lista de takes a gravar (checklist)</h3>
+    <div class="takes">
+      <h3>📹 Setup + assets que você precisa capturar</h3>
+      <ol>
+        <li><b>Caos do balcão</b> — vá num horário cheio, peça permissão, grave o atendimento real (rosto pixelado se precisar). Som é tudo aqui.</li>
+        <li><b>Caderno close</b> — pegue um caderno usado de pedidos, abre numa página rabiscada, foco nos rabiscos.</li>
+        <li><b>Máquina de cartão piscando "erro"</b> — encena com a sua.</li>
+        <li><b>Hub Nexus abrindo</b> — grave o monitor no escuro, cursor entrando, hub renderizando suavemente.</li>
+        <li><b>XP-80 imprimindo</b> — câmera bem perto, foco no papel saindo. Som da impressora é parte da textura.</li>
+        <li><b>QR Code da mesa</b> — monte uma mesa de demonstração com o QR plastificado. Filme uma mão real escaneando.</li>
+        <li><b>Cardápio público no celular</b> — tela do iPhone/Android navegando, montando pedido, finalizando.</li>
+        <li><b>Mapa de mesas</b> — plano direto da tela do FrenteCaixa, com o cursor mexendo nas mesas (algumas verdes, amarelas, laranjas).</li>
+        <li><b>DRE</b> — câmera no monitor, pessoa rolando a tela, KPIs aparecendo.</li>
+        <li><b>Você direto na câmera</b> — fundo escuro, iluminação chave 45°. Decore a fala antes. Não leia.</li>
+        <li><b>Logo + CTA</b> — pode ser feito 100% em pós-produção.</li>
+      </ol>
+    </div>
+
+    <div class="callout">
+      <span class="ctag">Dica de bastidor</span>
+      <p><strong>Som ambiente real bate trilha falsa.</strong> Grave o som da cozinha de verdade, da impressora de verdade, da campainha do iFood de verdade. Mistura tudo na pós. O dono que assistir vai ouvir <em>o restaurante dele</em> no vídeo — e isso vende.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 7. CARTÕES DE BOLSO -->
+<section class="block" id="cartoes">
+  <div class="container">
+    <span class="eyebrow">Decore antes da visita</span>
+    <h2 class="section-title">Cartões de bolso — objeções rápidas</h2>
+    <p class="lede">Imprima essa página. Recorte. Carrega no bolso. Quando bater a objeção, você não precisa pensar — você lembra.</p>
+
+    <div class="pocket-cards">
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Tá caro."</div>
+        <div class="response">"Caro comparado a quê? Quanto você perdeu em pedido errado essa semana? 1 pedido por dia já paga sozinho."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Já tenho sistema."</div>
+        <div class="response">"Qual? E ele faz DRE? QR na mesa? Cozinha em tempo real? Estoque? Tudo junto? Pois é. O que você tem é metade de um sistema."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Vou pensar."</div>
+        <div class="response">"Tranquilo. Até quando? Posso te ligar terça? Se você não quer marcar, prefere o não agora — economizo seu tempo e o meu."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Tá bom assim."</div>
+        <div class="response">"Posso te perguntar uma coisa franco? Quanto você ganhou no mês passado? Exato. Pois é. 'Bem assim' é tá voando às cegas."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Não tenho tempo."</div>
+        <div class="response">"Justamente por isso. A implantação é nossa, não sua. Em 3 dias tá rodando. 'Não tenho tempo' é sintoma — não causa."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Deixa seu cartão."</div>
+        <div class="response">"Deixo. Mas me manda um 'oi' no WhatsApp agora, pra ficar trocado. Senão a gente se perde."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Vou ver com minha esposa."</div>
+        <div class="response">"Show. Quando ela tá aqui? Posso voltar amanhã que vocês estão os dois? Em 20 minutos resolvo."</div>
+      </div>
+
+      <div class="pcard">
+        <div class="lbl">Objeção</div>
+        <div class="objection">"Meu cliente não usa tecnologia."</div>
+        <div class="response">"Ele usa WhatsApp? Instagram? iFood? Usa tecnologia. Não usa coisa complicada. Olha aqui — mais simples que o balcão."</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- 8. FECHAMENTO -->
+<section class="block darkish" id="fechamento">
+  <div class="container">
+    <span class="eyebrow">Antes de sair</span>
+    <h2 class="section-title">O fechamento — sempre com data e nome</h2>
+    <p class="lede">Você não pode sair de uma visita sem três coisas anotadas no celular. Sem elas, a visita foi ar — bonita, mas sem nutriente.</p>
+
+    <ol style="margin-left: 22px; font-size: 15px;">
+      <li style="margin-bottom: 12px;"><strong>Nome de quem decide.</strong> Se não é o que tá na sua frente, anote quem é, telefone, e como conversar com ele.</li>
+      <li style="margin-bottom: 12px;"><strong>Data e hora da próxima conversa.</strong> Não "semana que vem". <em>Quinta às 15h.</em></li>
+      <li style="margin-bottom: 12px;"><strong>Um compromisso pequeno cumprido na hora.</strong> WhatsApp salvo, foto do cardápio enviada, "oi" mandado. Sem isso, é fantasma.</li>
+    </ol>
+
+    <div class="callout">
+      <span class="ctag">Frase de fechamento padrão</span>
+      <p><em>"Bom, agradeço demais a conversa. Combinado então: <b>quinta às 15h</b> eu volto pra te mostrar com calma. Te mando uma confirmação na <b>quarta de manhã</b>. Se nesse meio tempo aparecer alguma dúvida, é só me chamar — agora você já tem meu WhatsApp salvo aí. Manda bala."</em></p>
+    </div>
+
+    <div class="warn">
+      <span class="ctag">Lembrete brutal</span>
+      <p><strong>Visita que terminou em "vou pensar" sem data marcada vale ZERO no seu pipeline.</strong> Não comemore que foi bem recebido. Bom acolhimento ≠ venda. O único indicador que importa é: <em>tem próxima data marcada ou não?</em></p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<footer class="foot">
+  <div class="container">
+    <h3>NEXUS · FRENTE DE CAIXA SAAS</h3>
+    <p class="tag">Quem controla, decide.</p>
+    <p class="sig">Material interno de vendas · Versão 1 · Reservado à equipe Nexus</p>
+  </div>
+</footer>
+
+</body>
+</html>

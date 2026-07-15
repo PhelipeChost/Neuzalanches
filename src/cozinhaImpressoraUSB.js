@@ -349,3 +349,90 @@ export function gerarQRMesaBytes(mesa, qrMatrix, marca = MARCA_PADRAO) {
   b.feed(2).cut();
   return b.bytes();
 }
+
+// ─── CUPOM DE VENDA — NFC-e autorizada ou não-fiscal ────────────────────────
+const LABELS_PGTO = { pix: "PIX", credito: "CARTAO CREDITO", debito: "CARTAO DEBITO", dinheiro: "DINHEIRO", vale: "VALE", multiplo: "MULTIPLO" };
+
+// Agrupa a chave de acesso de 44 dígitos em blocos de 4 (formato padrão do DANFE-NFCe)
+function grupos4(s) {
+  return String(s || "").replace(/\D/g, "").replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
+function itensCupom(b, itens) {
+  for (const it of itens || []) {
+    b.align("left").bold(true).line(`${it.quantidade}x ${it.produto_nome}`).bold(false);
+    for (const a of it.adicionais || []) {
+      const q = (a.quantidade || 1) > 1 ? `${a.quantidade}x ` : "";
+      b.line(`  + ${q}${a.nome}`);
+    }
+    const total = (it.preco_unitario || 0) * (it.quantidade || 1) + (it.adicionais || []).reduce((s, a) => s + (a.preco || 0) * (a.quantidade || 1) * (it.quantidade || 1), 0);
+    b.line(padBetween(`  ${fmtBRL(it.preco_unitario)} un`, fmtBRL(total)));
+  }
+}
+
+// DANFE-NFCe simplificado (versão térmica): itens, total, chave de acesso
+// agrupada, protocolo e QR code de consulta. É uma representação reduzida —
+// não substitui o XML autorizado, que é o documento fiscal de fato; serve
+// só como comprovante impresso pro consumidor levar.
+export function gerarCupomNFCeBytes(pedido, itens, nota, marca = MARCA_PADRAO, qrMatrix = null) {
+  const b = new ESCPOS().init().codepageCP850();
+  tituloMarca(b, marca);
+
+  if (nota.ambiente === "homologacao") {
+    b.align("center").bold(true).line("AMBIENTE DE HOMOLOGACAO").line("SEM VALOR FISCAL").bold(false);
+  }
+  b.align("center").line("DANFE NFC-e").line("Documento Auxiliar da NF-e").line("de Consumidor Eletronica");
+  b.line("-".repeat(LARGURA));
+
+  itensCupom(b, itens);
+  b.line("-".repeat(LARGURA));
+  b.bold(true).line(padBetween("TOTAL", fmtBRL(pedido.total))).bold(false);
+  if (pedido.metodo_pagamento) b.line(`Pgto: ${LABELS_PGTO[pedido.metodo_pagamento] || pedido.metodo_pagamento}`);
+  b.line("-".repeat(LARGURA));
+
+  b.align("center");
+  b.line(`NFC-e no ${nota.numero || "?"}  serie ${nota.serie || "1"}`);
+  if (nota.chave) { b.feed(1); b.line("Chave de acesso"); b.line(grupos4(nota.chave)); }
+  if (nota.protocolo) b.line(`Protocolo: ${nota.protocolo}`);
+
+  if (qrMatrix) {
+    const scale = Math.max(3, Math.min(8, Math.floor(280 / (qrMatrix.size + 8))));
+    b.feed(1);
+    rasterQR(b, qrMatrix, scale);
+  }
+  b.feed(1);
+  b.line("Consulte pela Chave de Acesso em");
+  b.line("nfce.fazenda.sp.gov.br");
+  b.line("-".repeat(LARGURA));
+  b.line(new Date().toLocaleString("pt-BR"));
+  b.feed(2).cut();
+  return b.bytes();
+}
+
+// Recibo simples sem valor fiscal — impresso quando a venda não solicitou
+// (ou não teve, por qualquer motivo) NFC-e emitida.
+export function gerarCupomNaoFiscalBytes(pedido, itens, marca = MARCA_PADRAO) {
+  const b = new ESCPOS().init().codepageCP850();
+  tituloMarca(b, marca);
+  b.align("center").bold(true).line("CUPOM NAO FISCAL").line("SEM VALOR FISCAL").bold(false);
+  b.line("-".repeat(LARGURA));
+
+  itensCupom(b, itens);
+  b.line("-".repeat(LARGURA));
+  b.bold(true).line(padBetween("TOTAL", fmtBRL(pedido.total))).bold(false);
+  if (pedido.metodo_pagamento) b.line(`Pgto: ${LABELS_PGTO[pedido.metodo_pagamento] || pedido.metodo_pagamento}`);
+  b.line("-".repeat(LARGURA));
+  b.align("center").line(new Date().toLocaleString("pt-BR"));
+  b.feed(2).cut();
+  return b.bytes();
+}
+
+// Decide qual cupom imprimir (fiscal autorizado ou não-fiscal) e envia pro
+// agente local. `nota` vem de api.fiscal.notaPorPedido(pedido.id) — null ou
+// status != 'autorizada' cai no cupom não fiscal.
+export async function imprimirNotaPedido(pedido, itens, nota, marca, qrMatrix = null) {
+  const bytes = (nota && nota.status === "autorizada")
+    ? gerarCupomNFCeBytes(pedido, itens, nota, marca, qrMatrix)
+    : gerarCupomNaoFiscalBytes(pedido, itens, marca);
+  return imprimirBytesViaAgente(bytes);
+}

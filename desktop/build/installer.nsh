@@ -20,7 +20,18 @@
 !macroend
 
 !macro customInstall
-  ; hook depois da instalação — nada a fazer
+  ; Libera as portas do PDV no Firewall do Windows (redes privada/domínio) —
+  ; necessário pro modo multi-máquina (servidor/cliente na mesma rede local).
+  ; Não libera em rede "Pública" por segurança — a rede da loja precisa estar
+  ; classificada como Privada no Windows para as máquinas se enxergarem.
+  DetailPrint "Configurando Firewall do Windows para o Nexus PDV..."
+  nsExec::Exec 'netsh advfirewall firewall delete rule name="Nexus PDV"'
+  nsExec::Exec 'netsh advfirewall firewall add rule name="Nexus PDV" dir=in action=allow protocol=TCP localport=41730,41731 profile=private,domain'
+!macroend
+
+!macro customUnInstall
+  DetailPrint "Removendo regra de Firewall do Nexus PDV..."
+  nsExec::Exec 'netsh advfirewall firewall delete rule name="Nexus PDV"'
 !macroend
 
 ; Reescreve textos da página de boas-vindas do wizard (LangString exige o

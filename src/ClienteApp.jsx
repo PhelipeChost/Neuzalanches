@@ -106,7 +106,7 @@ const labelStyle = {
 };
 
 // ─── MODAL CHECKOUT (INFO CLIENTE + ENDEREÇO + PAGAMENTO) ─────────────────────
-function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
+function ModalCheckout({ onConfirm, onClose, totalCarrinho, nfceDisponivel }) {
   const [etapa, setEtapa] = useState("cliente");
   const [clienteNome, setClienteNome] = useState("");
   const [clienteTelefone, setClienteTelefone] = useState("");
@@ -123,6 +123,10 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
   const [copiadoPix, setCopiadoPix] = useState(false);
   const [precisaTroco, setPrecisaTroco] = useState(false);
   const [trocoPara, setTrocoPara] = useState("");
+  // Nota fiscal é opt-in no cardápio — só aparece se o estabelecimento tiver
+  // NFC-e ativada, e vem desmarcado por padrão (o cliente pede se quiser).
+  const [quererNota, setQuererNota] = useState(false);
+  const [cpfNota, setCpfNota] = useState("");
 
   useEffect(() => {
     api.pix.obter().then(setPixInfo).catch(() => {});
@@ -181,6 +185,8 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
       metodo_pagamento: metodoPagamento,
       troco_para: trocoNum,
       tipo_entrega: tipoEntrega,
+      emitir_nfce: nfceDisponivel && quererNota,
+      cliente_cpf: nfceDisponivel && quererNota ? cpfNota.replace(/\D/g, "") : "",
     });
   };
 
@@ -383,6 +389,21 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho }) {
                         Levaremos troco de {fmt(parseValor(trocoPara) - totalCarrinho)}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {nfceDisponivel && (
+              <div style={{ background: "var(--surface-warm)", border: "1.5px solid var(--border-dark)", borderRadius: 12, padding: "14px 18px", marginBottom: 18 }}>
+                <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+                  <input type="checkbox" checked={quererNota} onChange={e => setQuererNota(e.target.checked)} style={{ accentColor: "var(--brand)" }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>Quero nota fiscal deste pedido</span>
+                </label>
+                {quererNota && (
+                  <div style={{ marginTop: 12 }}>
+                    <label style={labelStyle}>CPF na nota (opcional — Nota Fiscal Paulista)</label>
+                    <input style={inputStyle} value={cpfNota} onChange={e => setCpfNota(e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
                   </div>
                 )}
               </div>
@@ -1488,6 +1509,7 @@ export default function ClienteApp() {
   const [pedidoEnviado, setPedidoEnviado] = useState(null);
   const [modalProduto, setModalProduto] = useState(null);
   const [nomeEstab, setNomeEstab] = useState("");
+  const [nfceDisponivel, setNfceDisponivel] = useState(false);
 
   // Tema (light/dark) com persistência
   const [tema, setTema] = useState(() => {
@@ -1510,7 +1532,7 @@ export default function ClienteApp() {
 
   useEffect(() => {
     fetchHorarioAberto().then(setAberto);
-    api.config.estabelecimento().then(e => setNomeEstab(e.nome_estabelecimento || "")).catch(() => {});
+    api.config.estabelecimento().then(e => { setNomeEstab(e.nome_estabelecimento || ""); setNfceDisponivel(!!e.nfce_disponivel); }).catch(() => {});
     const t = setInterval(() => fetchHorarioAberto().then(setAberto), 5 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
@@ -1632,7 +1654,7 @@ export default function ClienteApp() {
     setModalCheckout(true);
   };
 
-  const enviarPedido = async ({ cliente_nome, cliente_telefone, cliente_email, endereco, metodo_pagamento, troco_para, tipo_entrega }) => {
+  const enviarPedido = async ({ cliente_nome, cliente_telefone, cliente_email, endereco, metodo_pagamento, troco_para, tipo_entrega, emitir_nfce, cliente_cpf }) => {
     if (carrinho.length === 0) return;
     setEnviando(true);
     try {
@@ -1647,6 +1669,8 @@ export default function ClienteApp() {
         troco_para,
         tipo_entrega,
         endereco,
+        emitir_nfce,
+        cliente_cpf,
       });
       setCarrinho([]);
       setObs("");
@@ -2356,6 +2380,7 @@ export default function ClienteApp() {
           totalCarrinho={totalCarrinho}
           onConfirm={enviarPedido}
           onClose={() => setModalCheckout(false)}
+          nfceDisponivel={nfceDisponivel}
         />
       )}
 

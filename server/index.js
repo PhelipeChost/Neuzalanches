@@ -42,9 +42,9 @@ import {
   listarFilaCozinha, listarFilaCozinhaUnificada, estatisticasCaixa,
   registrarVisita, getCardapioStats, getRankingVendas,
   obterFiscalConfig, salvarFiscalConfig, salvarCertificadoA1, removerCertificadoA1,
-  emitirNFCe, listarNFCe, verificarPendentesFocus,
+  emitirNFCe, listarNFCe, verificarPendentesFocus, dispararNFCeAutomatica, buscarNFCePorPedido,
   montarRelatorioFiscalMensal, marcarRelatorioFiscalEnviado, verificarEnvioRelatorioFiscalPendente,
-  consultarStatusSefazAntigo, emitirNFCeAntigo, listarNFCeAntigo, obterXmlNFCeAntigo,
+  consultarStatusSefazAntigo, emitirNFCeAntigo, listarNFCeAntigo, obterXmlNFCeAntigo, reenviarPendentesAntigo,
   obterSessaoAberta, abrirCaixa, registrarMovimentoCaixa, fecharCaixa, listarMovimentosCaixa,
   listarCardapios, criarCardapio, atualizarCardapio, excluirCardapio, contarOrfaosCardapio,
   definirCategoriasCardapio, definirAdicionaisCardapio, garantirCardapioPrincipal,
@@ -320,6 +320,9 @@ app.put("/api/config", authMiddleware, adminOnly, (req, res) => {
 // pelo bot do WhatsApp no n8n — inclui link de exibição, alerta e status aberto)
 app.get("/api/config/estabelecimento", (req, res) => {
   const hCfg = getHorarioConfig();
+  // nfce_disponivel: só um booleano agregado — nunca CNPJ/certificado/token,
+  // que ficam isolados em /api/fiscal/config (autenticado, admin only).
+  const nfceDisponivel = !!obterFiscalConfig().nfce_habilitado;
   res.json({
     nome_estabelecimento: obterConfig("nome_estabelecimento") || "",
     whatsapp: obterConfig("whatsapp") || "",
@@ -328,6 +331,7 @@ app.get("/api/config/estabelecimento", (req, res) => {
     mensagem_alerta: obterConfig("mensagem_alerta") || "",
     aberto: isAbertoAgora(hCfg),
     horario: { dias: hCfg.dias, abertura: hCfg.abertura, fechamento: hCfg.fechamento },
+    nfce_disponivel: nfceDisponivel,
   });
 });
 
@@ -441,6 +445,15 @@ function tickPendentesFocus() {
 }
 setTimeout(tickPendentesFocus, 30_000);
 setInterval(tickPendentesFocus, 90 * 1000);
+
+// ─── CONTINGÊNCIA SEFAZ DIRETO (motor antigo, sem provedor) ────────────────
+// Reenvia notas assinadas que ficaram 'pendente' (SEFAZ fora do ar/timeout na
+// hora da venda) — mesma lógica de polling do Focus, só que sem intermediário.
+function tickPendentesAntigo() {
+  reenviarPendentesAntigo().catch(e => console.error("[fiscal-antigo] reenvio falhou:", e.message));
+}
+setTimeout(tickPendentesAntigo, 45_000);
+setInterval(tickPendentesAntigo, 90 * 1000);
 
 // ─── RELATÓRIO FISCAL MENSAL (envio automático via n8n) ────────────────────
 // Não depende de disparar no minuto exato — só de "o dia configurado já
@@ -1037,7 +1050,7 @@ app.get("/api/pedidos/publico/cliente/:telefone", (req, res) => {
 
 // Pedido público (sem autenticação — cliente envia dados inline)
 app.post("/api/pedidos/publico", (req, res) => {
-  const { itens, obs, cliente_nome, cliente_telefone, cliente_email, metodo_pagamento, troco_para, tipo_entrega, endereco } = req.body;
+  const { itens, obs, cliente_nome, cliente_telefone, cliente_email, metodo_pagamento, troco_para, tipo_entrega, endereco, emitir_nfce, cliente_cpf } = req.body;
   if (!cliente_nome || !cliente_telefone) {
     return res.status(400).json({ error: "Nome e telefone são obrigatórios" });
   }
@@ -1061,6 +1074,10 @@ app.post("/api/pedidos/publico", (req, res) => {
     troco_para: troco_para || null,
     tipo_entrega: ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega',
     endereco: ['retirada', 'casa'].includes(tipo_entrega) ? {} : (endereco || {}),
+    // Nota fiscal em pedido online é opt-in — o cliente decide no cardápio,
+    // por padrão vem desligado (diferente do balcão, que é opt-out).
+    emitir_nfce: emitir_nfce === true,
+    cliente_cpf: emitir_nfce === true ? (cliente_cpf || "") : "",
   });
 
   // Notificar cliente via WhatsApp (não bloqueia a resposta)
@@ -1070,7 +1087,7 @@ app.post("/api/pedidos/publico", (req, res) => {
 });
 
 app.post("/api/pedidos", authMiddleware, (req, res) => {
-  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco, tipo_entrega, desconto } = req.body;
+  const { itens, obs, cliente_nome, tipo, metodo_pagamento, troco_para, endereco, tipo_entrega, desconto, emitir_nfce, cliente_cpf } = req.body;
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
     return res.status(400).json({ error: "Pedido deve ter ao menos um item" });
   }
@@ -1095,6 +1112,11 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     criarEndereco({ cliente_id: req.user.id, cep: endereco.cep, rua: endereco.rua, numero: endereco.numero, bairro: endereco.bairro, referencia: endereco.referencia });
   }
 
+  // Balcão (admin): nota é opt-out, vem ligada por padrão — só desliga se o
+  // caixa desmarcar explicitamente. Online (cliente logado): opt-in, igual
+  // ao pedido público — só liga se o cliente pedir no cardápio.
+  const emitirNfceFinal = isAdmin ? (emitir_nfce !== false) : (emitir_nfce === true);
+
   const pedido = criarPedido({
     cliente_id: isAdmin ? null : req.user.id,
     cliente_nome: isAdmin ? (cliente_nome || "Pedido presencial") : req.user.nome,
@@ -1106,8 +1128,17 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     tipo_entrega: tipo_entrega || "entrega",
     endereco: ["retirada", "casa"].includes(tipo_entrega) ? {} : enderecoFinal,
     desconto: isAdmin ? Number(desconto || 0) : 0,
+    emitir_nfce: emitirNfceFinal,
+    cliente_cpf: emitirNfceFinal ? (cliente_cpf || "") : "",
   });
   res.status(201).json(pedido);
+
+  // Emissão fiscal da venda de balcão — dispara depois de responder ao caixa,
+  // nunca atrasa nem trava a venda (dispararNFCeAutomatica nunca lança erro).
+  // Pedidos online/logados só emitem na entrega (rota de status), não aqui.
+  if (isAdmin && (tipo || "presencial") === "presencial" && emitirNfceFinal) {
+    dispararNFCeAutomatica(pedido.id);
+  }
 });
 
 app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
@@ -1163,6 +1194,13 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       description: `Pedido #${pedido.id.slice(0, 6)}`,
       source: pedido.tipo === 'online' ? 'online' : 'presencial',
     });
+
+    // Emissão fiscal do pedido online/delivery — só se o cliente pediu nota
+    // no cardápio (emitir_nfce). Dispara na entrega, não na criação: assim
+    // não gera nota de pedido que acabou cancelado antes de sair.
+    if (pedido.emitir_nfce) {
+      dispararNFCeAutomatica(pedido.id);
+    }
   }
 
   res.json({ ...pedido, itens: buscarItensPedido(pedido.id) });
@@ -1563,10 +1601,12 @@ app.get("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo,
+          codigo_barras, ncm, cest, descricao, preco_venda } = req.body;
   if (!nome) return res.status(400).json({ error: "Nome é obrigatório" });
   try {
-    res.status(201).json(criarEstoqueItem({ codigo: codigo || "", nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo }));
+    res.status(201).json(criarEstoqueItem({ codigo: codigo || "", nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo,
+      codigo_barras, ncm, cest, descricao, preco_venda }));
   } catch (err) {
     if (err.message.includes("UNIQUE")) return res.status(409).json({ error: "Código já existe" });
     throw err;
@@ -1574,9 +1614,11 @@ app.post("/api/estoque/itens", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.put("/api/estoque/itens/:id", authMiddleware, adminOnly, (req, res) => {
-  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo } = req.body;
+  const { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo,
+          codigo_barras, ncm, cest, descricao, preco_venda } = req.body;
   if (!codigo || !nome) return res.status(400).json({ error: "Código e nome são obrigatórios" });
-  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo });
+  const item = atualizarEstoqueItem(req.params.id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo,
+    codigo_barras, ncm, cest, descricao, preco_venda });
   if (!item) return res.status(404).json({ error: "Não encontrado" });
   res.json(item);
 });
@@ -1784,6 +1826,12 @@ app.post("/api/fiscal/nfce/teste", authMiddleware, adminOnly, async (req, res) =
 
 app.get("/api/fiscal/nfce", authMiddleware, adminOnly, (req, res) => {
   res.json(listarNFCe(Number(req.query.limit) || 20));
+});
+
+// Nota (de qualquer motor) ligada a um pedido — usado pra reimprimir no
+// histórico de vendas (DANFE-NFCe se autorizada, senão null → cupom não fiscal).
+app.get("/api/fiscal/nfce/pedido/:pedido_id", authMiddleware, adminOnly, (req, res) => {
+  res.json(buscarNFCePorPedido(req.params.pedido_id));
 });
 
 // ─── NFC-e ANTIGO (motor próprio — regras vigentes, emissão direta na SEFAZ) ─

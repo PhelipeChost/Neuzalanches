@@ -1,12 +1,10 @@
 import Database from "better-sqlite3";
 import bcrypt from "bcryptjs";
+import forge from "node-forge";
 import { randomBytes, createCipheriv, createDecipheriv, createHash, createSign, X509Certificate } from "crypto";
 import { request as httpsRequest } from "https";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { execFileSync } from "child_process";
-import { writeFileSync, unlinkSync, mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Caminho do banco: configurável por env (o app desktop aponta para uma pasta
@@ -471,6 +469,22 @@ db.exec(`
       db.exec("UPDATE estoque_itens SET tipo = CASE WHEN eh_insumo = 1 THEN 'insumo' ELSE 'revenda' END WHERE tipo IS NULL OR tipo = 'revenda'");
     }
   }
+  // Mesmos campos fiscais/cadastrais do produto, espelhados no item de estoque
+  // (preenchidos automaticamente por sincronizarEspelhoEstoqueDoProduto para
+  // itens de revenda; editáveis manualmente para insumo/interno).
+  if (!ei.includes("codigo_barras")) db.exec("ALTER TABLE estoque_itens ADD COLUMN codigo_barras TEXT DEFAULT ''");
+  if (!ei.includes("ncm"))           db.exec("ALTER TABLE estoque_itens ADD COLUMN ncm TEXT DEFAULT ''");
+  if (!ei.includes("cest"))          db.exec("ALTER TABLE estoque_itens ADD COLUMN cest TEXT DEFAULT ''");
+  if (!ei.includes("descricao"))     db.exec("ALTER TABLE estoque_itens ADD COLUMN descricao TEXT DEFAULT ''");
+  if (!ei.includes("preco_venda"))   db.exec("ALTER TABLE estoque_itens ADD COLUMN preco_venda REAL DEFAULT 0");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_estoque_itens_codigo_barras ON estoque_itens(codigo_barras)");
+
+  // Emissão de NFC-e passa a ser opcional por venda: o caixa decide no balcão
+  // (padrão ligado) e o cliente decide no cardápio (padrão desligado — opt-in).
+  // cliente_cpf permite pedir a nota com CPF (Nota Fiscal Paulista).
+  const cp2 = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
+  if (!cp2.includes("emitir_nfce")) db.exec("ALTER TABLE pedidos ADD COLUMN emitir_nfce INTEGER DEFAULT 1");
+  if (!cp2.includes("cliente_cpf")) db.exec("ALTER TABLE pedidos ADD COLUMN cliente_cpf TEXT DEFAULT ''");
 }
 
 // Inserir chave PIX padrão se não existir
@@ -931,64 +945,54 @@ function fiscDecriptar(blob) {
   } catch { return ""; }
 }
 
-// Reconhece um certificado A1 (.pfx/.p12) usando o OpenSSL do servidor.
-// Retorna { ok, cnpj, titular, validade_fim, erro }. Não deixa a senha na
-// linha de comando (passa via variável de ambiente CERTPW).
+// Erros de senha errada do node-forge (MAC do PFX ou decrypt de um bag específico).
+const RE_SENHA_ERRADA = /invalid password|mac could not be verified|wrong password|failed to decrypt/i;
+
+// Decodifica o PKCS#12 (.pfx/.p12) em memória — sem tocar disco nem depender
+// de binário externo (node-forge é JS puro, funciona igual em qualquer SO).
+function decodificarPkcs12(pfxBase64, senha) {
+  const der = forge.util.decode64(pfxBase64);
+  const asn1 = forge.asn1.fromDer(der);
+  return forge.pkcs12.pkcs12FromAsn1(asn1, senha || "");
+}
+
+// Separa o certificado do titular (subscriber) da cadeia (CAs intermediárias/raiz)
+// olhando basicConstraints.cA — replica o clcerts/cacerts que o OpenSSL fazia.
+function extrairCertLeaf(p12) {
+  const mapa = p12.getBags({ bagType: forge.pki.oids.certBag });
+  const certs = (mapa[forge.pki.oids.certBag] || []).map(b => b.cert).filter(Boolean);
+  if (certs.length === 0) throw new Error("Nenhum certificado encontrado no arquivo .pfx.");
+  let leaf = certs.find(c => {
+    const bc = c.getExtension("basicConstraints");
+    return !bc || bc.cA !== true;
+  });
+  if (!leaf) leaf = certs[0];
+  return { leaf, chain: certs.filter(c => c !== leaf) };
+}
+
+function infoDoCertificado(cert) {
+  const validade_fim = cert.validity.notAfter.toISOString();
+  // ICP-Brasil: CN geralmente "EMPRESA LTDA:12345678000199"
+  const subjectStr = cert.subject.attributes.map(a => String(a.value)).join(" ");
+  const mCnpj = subjectStr.match(/(\d{14})/);
+  const cnpj = mCnpj ? mCnpj[1] : "";
+  const cnAttr = cert.subject.getField("CN");
+  const titular = cnAttr ? String(cnAttr.value).replace(/:\d{14}$/, "").trim() : "";
+  return { cnpj, titular, validade_fim };
+}
+
+// Reconhece um certificado A1 (.pfx/.p12) usando node-forge (parsing em memória,
+// sem depender de OpenSSL instalado na máquina do cliente). Retorna
+// { ok, cnpj, titular, validade_fim, erro }.
 export function lerCertificadoA1(pfxBase64, senha) {
-  let dir;
   try {
-    dir = mkdtempSync(join(tmpdir(), "nexus-cert-"));
-    const pfxPath = join(dir, "c.pfx");
-    writeFileSync(pfxPath, Buffer.from(pfxBase64, "base64"));
-
-    const extrairPem = (comLegacy) => {
-      const args = ["pkcs12", "-in", pfxPath, "-nokeys", "-clcerts", "-passin", "env:CERTPW"];
-      if (comLegacy) args.push("-legacy");
-      return execFileSync("openssl", args, {
-        env: { ...process.env, CERTPW: senha || "" },
-        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-      });
-    };
-
-    let pem;
-    try { pem = extrairPem(false); }
-    catch (e1) {
-      // OpenSSL 3.x pode exigir -legacy para .pfx com algoritmos antigos (comum no ICP-Brasil)
-      try { pem = extrairPem(true); }
-      catch (e2) {
-        const msg = String((e2 && e2.stderr) || (e1 && e1.stderr) || "");
-        if (/mac verify|invalid password|wrong|verification failure/i.test(msg)) {
-          return { ok: false, erro: "Senha do certificado incorreta." };
-        }
-        if (/ENOENT|not found/i.test(String(e1))) {
-          return { ok: false, erro: "OpenSSL não disponível no servidor — não foi possível validar o certificado." };
-        }
-        return { ok: false, erro: "Não foi possível ler o certificado (arquivo inválido ou senha errada)." };
-      }
-    }
-
-    const info = execFileSync("openssl", ["x509", "-noout", "-enddate", "-subject"], {
-      input: pem, encoding: "utf8", stdio: ["pipe", "pipe", "ignore"],
-    });
-
-    // notAfter=Aug 12 23:59:59 2026 GMT
-    const mEnd = info.match(/notAfter=(.+)/);
-    let validade_fim = "";
-    if (mEnd) {
-      const d = new Date(mEnd[1].trim());
-      if (!isNaN(d)) validade_fim = d.toISOString();
-    }
-    // ICP-Brasil: CN geralmente "EMPRESA LTDA:12345678000199"
-    const mCnpj = info.match(/(\d{14})/);
-    const cnpj = mCnpj ? mCnpj[1] : "";
-    const mCn = info.match(/CN\s*=\s*([^,/\n]+)/i);
-    const titular = mCn ? mCn[1].trim().replace(/:\d{14}$/, "") : "";
-
-    return { ok: true, cnpj, titular, validade_fim };
+    const p12 = decodificarPkcs12(pfxBase64, senha);
+    const { leaf } = extrairCertLeaf(p12);
+    return { ok: true, ...infoDoCertificado(leaf) };
   } catch (e) {
-    return { ok: false, erro: "Falha ao processar o certificado: " + (e.message || "erro desconhecido") };
-  } finally {
-    if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+    const msg = String((e && e.message) || "");
+    if (RE_SENHA_ERRADA.test(msg)) return { ok: false, erro: "Senha do certificado incorreta." };
+    return { ok: false, erro: "Não foi possível ler o certificado (arquivo inválido ou senha errada)." };
   }
 }
 
@@ -1209,6 +1213,15 @@ export function montarPayloadNFCe(pedido, fisc) {
 // Quando um provedor for configurado, chama a API REST do provedor (Focus NFe).
 export async function emitirNFCe(pedidoId, { simulado = false } = {}) {
   const fisc = db.prepare("SELECT * FROM fiscal_config WHERE id = 1").get() || {};
+
+  // Motor SEFAZ direto (grátis, sem intermediário) tem prioridade quando
+  // habilitado — o provedor terceirizado (Focus) é uma opção alternativa,
+  // não obrigatória. Vale tanto pra venda real quanto pro botão de teste,
+  // já que emitirNFCeAntigo cobre o pedido de teste sozinho (pedidoId=null).
+  if (fisc.antigo_habilitado) {
+    return emitirNFCeAntigo(pedidoId);
+  }
+
   const ehSimulado = simulado || (fisc.provedor || "nenhum") === "nenhum";
 
   // Carrega o pedido (ou usa um sintético no teste sem pedido)
@@ -1269,6 +1282,22 @@ export async function emitirNFCe(pedidoId, { simulado = false } = {}) {
   // Avança o número da NFC-e
   db.prepare("UPDATE fiscal_config SET proximo_numero = ? WHERE id = 1").run(numero + 1);
   return registro;
+}
+
+// Dispara a emissão da NFC-e de uma venda de balcão/presencial sem bloquear
+// a resposta pro caixa — nunca deixa uma falha fiscal impedir a venda.
+// Só emite quando "Habilitar emissão de NFC-e" está ligado na config.
+export function dispararNFCeAutomatica(pedidoId) {
+  const fisc = db.prepare("SELECT nfce_habilitado FROM fiscal_config WHERE id = 1").get();
+  if (!fisc?.nfce_habilitado) return;
+  emitirNFCe(pedidoId).catch(e => console.error(`[fiscal] emissão automática do pedido ${pedidoId} falhou:`, e.message));
+}
+
+// Busca a nota (de qualquer motor) ligada a um pedido — usado pra reimpressão
+// no histórico de vendas. Um pedido só deveria ter 1 nota "viva", mas em caso
+// de reemissão pega a mais recente.
+export function buscarNFCePorPedido(pedidoId) {
+  return db.prepare("SELECT * FROM nfce_emitidas WHERE pedido_id = ? ORDER BY created_at DESC LIMIT 1").get(pedidoId) || null;
 }
 
 export function listarNFCe(limit = 20) {
@@ -1473,40 +1502,34 @@ function agoraBrasilia() {
   };
 }
 
-// Extrai chave privada + certificado (PEM) do A1 guardado, via OpenSSL do servidor.
-// Retorna { keyPem, certPem, chainPem, certB64 } — certB64 = DER base64 p/ o KeyInfo.
+// Extrai chave privada + certificado (PEM) do A1 guardado, via node-forge (em
+// memória, sem OpenSSL). Retorna { keyPem, certPem, chainPem, certB64 } —
+// certB64 = DER base64 p/ o KeyInfo da assinatura XMLDSig.
 function extrairMaterialA1() {
   const r = db.prepare("SELECT cert_data, cert_senha FROM fiscal_config WHERE id = 1").get() || {};
   const pfxB64 = fiscDecriptar(r.cert_data);
   const senha = fiscDecriptar(r.cert_senha);
   if (!pfxB64) throw new Error("Certificado A1 não enviado. Envie o .pfx na aba Fiscal / NFC-e.");
 
-  let dir;
+  let p12;
   try {
-    dir = mkdtempSync(join(tmpdir(), "nexus-a1-"));
-    const pfxPath = join(dir, "c.pfx");
-    writeFileSync(pfxPath, Buffer.from(pfxB64, "base64"));
-    const env = { ...process.env, CERTPW: senha || "" };
-    const run = (args) => execFileSync("openssl", args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    const tentar = (args) => {
-      try { return run(args); }
-      catch { return run([...args, "-legacy"]); } // OpenSSL 3.x + pfx ICP-Brasil antigo
-    };
-
-    const keyPem = tentar(["pkcs12", "-in", pfxPath, "-nocerts", "-nodes", "-passin", "env:CERTPW"]);
-    const certOut = tentar(["pkcs12", "-in", pfxPath, "-clcerts", "-nokeys", "-passin", "env:CERTPW"]);
-    let chainPem = "";
-    try { chainPem = tentar(["pkcs12", "-in", pfxPath, "-cacerts", "-nokeys", "-passin", "env:CERTPW"]); } catch { /* sem cadeia embutida */ }
-
-    const mCert = certOut.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
-    const mKey = keyPem.match(/-----BEGIN (?:RSA |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |ENCRYPTED )?PRIVATE KEY-----/);
-    if (!mCert || !mKey) throw new Error("Não foi possível extrair chave/certificado do A1.");
-    const certPem = mCert[0];
-    const certB64 = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s+/g, "");
-    return { keyPem: mKey[0], certPem, chainPem, certB64 };
-  } finally {
-    if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+    p12 = decodificarPkcs12(pfxB64, senha);
+  } catch (e) {
+    const msg = String((e && e.message) || "");
+    throw new Error(RE_SENHA_ERRADA.test(msg) ? "Senha do certificado incorreta." : "Não foi possível ler o certificado A1: " + msg);
   }
+
+  const shrouded = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [];
+  const plain = p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] || [];
+  const keyBag = shrouded[0] || plain[0];
+  if (!keyBag || !keyBag.key) throw new Error("Não foi possível extrair a chave privada do certificado A1.");
+
+  const { leaf, chain } = extrairCertLeaf(p12);
+  const keyPem = forge.pki.privateKeyToPem(keyBag.key);
+  const certPem = forge.pki.certificateToPem(leaf);
+  const chainPem = chain.map(c => forge.pki.certificateToPem(c)).join("\n");
+  const certB64 = certPem.replace(/-----(BEGIN|END) CERTIFICATE-----/g, "").replace(/\s+/g, "");
+  return { keyPem, certPem, chainPem, certB64 };
 }
 
 // Assinatura XMLDSig da infNFe (C14N inclusiva + RSA-SHA1, padrão NF-e).
@@ -1790,7 +1813,7 @@ export async function emitirNFCeAntigo(pedidoId) {
   const enviNFe = `<enviNFe xmlns="${NFE_NS}" versao="4.00"><idLote>${Date.now()}</idLote><indSinc>1</indSinc>${nfeXml}</enviNFe>`;
 
   const id = gerarId();
-  let cStat = "", xMotivo = "", nProt = "", retorno = "", status = "erro";
+  let cStat = "", xMotivo = "", nProt = "", retorno = "", status = "pendente";
   try {
     const wsdl = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4";
     retorno = await postSefaz(urls.autorizacao, `${wsdl}/nfeAutorizacaoLote`, soap12(wsdl, enviNFe), material);
@@ -1800,8 +1823,13 @@ export async function emitirNFCeAntigo(pedidoId) {
     nProt = xmlTag(prot, "nProt");
     status = cStat === "100" ? "autorizada" : "rejeitada";
   } catch (err) {
-    status = "erro";
-    xMotivo = err.message || "Falha de comunicação com a SEFAZ";
+    // Falha de COMUNICAÇÃO (timeout, SEFAZ fora do ar, sem internet) — não é uma
+    // rejeição de dados. Contingência: a nota fica assinada e "pendente"; a venda
+    // segue normal e um job em background (reenviarPendentesAntigo) tenta de novo
+    // periodicamente até a SEFAZ autorizar. Nunca lança erro pra quem chamou —
+    // quem fecha a venda não pode travar esperando a SEFAZ responder.
+    status = "pendente";
+    xMotivo = "Contingência: " + (err.message || "falha de comunicação com a SEFAZ") + " — será reenviada automaticamente.";
   }
 
   // XML guardado: nfeProc quando autorizada; senão a NFe assinada (p/ diagnóstico)
@@ -1836,6 +1864,43 @@ export function obterXmlNFCeAntigo(id) {
   const r = db.prepare("SELECT numero, serie, chave, xml_assinado FROM nfce_emitidas WHERE id = ? AND motor = 'antigo'").get(id);
   if (!r || !r.xml_assinado) return null;
   return r;
+}
+
+// Reenvia notas em contingência (status='pendente') pra SEFAZ-SP — chamado
+// periodicamente via setInterval em index.js. Reusa o XML já assinado (não
+// re-assina, não gera número novo): é a MESMA nota tentando de novo.
+export async function reenviarPendentesAntigo() {
+  const pendentes = db.prepare("SELECT * FROM nfce_emitidas WHERE motor = 'antigo' AND status = 'pendente'").all();
+  if (!pendentes.length) return;
+
+  const fisc = db.prepare("SELECT * FROM fiscal_config WHERE id = 1").get() || {};
+  let material;
+  try { material = extrairMaterialA1(); } catch { return; } // sem certificado — tenta de novo no próximo tick
+  const urls = sefazUrlsNFCe(fisc.uf, fisc.ambiente);
+  if (!urls) return;
+  const wsdl = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4";
+
+  for (const nota of pendentes) {
+    const nfeXml = (nota.xml_assinado || "").match(/<NFe[\s\S]*?<\/NFe>/)?.[0];
+    if (!nfeXml) continue; // sem XML assinado guardado — nada a reenviar
+    const enviNFe = `<enviNFe xmlns="${NFE_NS}" versao="4.00"><idLote>${Date.now()}</idLote><indSinc>1</indSinc>${nfeXml}</enviNFe>`;
+    try {
+      const retorno = await postSefaz(urls.autorizacao, `${wsdl}/nfeAutorizacaoLote`, soap12(wsdl, enviNFe), material);
+      const prot = (retorno.match(/<protNFe[\s\S]*?<\/protNFe>/) || [""])[0];
+      const cStat = xmlTag(prot, "cStat") || xmlTag(retorno, "cStat");
+      const xMotivo = xmlTag(prot, "xMotivo") || xmlTag(retorno, "xMotivo") || "(sem retorno da SEFAZ)";
+      const nProt = xmlTag(prot, "nProt");
+      const status = cStat === "100" ? "autorizada" : "rejeitada";
+      const xmlFinal = status === "autorizada"
+        ? `<?xml version="1.0" encoding="UTF-8"?><nfeProc xmlns="${NFE_NS}" versao="4.00">${nfeXml}${prot}</nfeProc>`
+        : nota.xml_assinado;
+      db.prepare("UPDATE nfce_emitidas SET status=?, protocolo=?, motivo=?, retorno_json=?, xml_assinado=? WHERE id=?")
+        .run(status, nProt, (cStat ? cStat + " - " : "") + xMotivo, String(retorno).slice(0, 60000), xmlFinal, nota.id);
+      console.log(`[fiscal-antigo] contingência resolvida: nota ${nota.numero}/${nota.serie} → ${status}`);
+    } catch {
+      // Ainda sem resposta — continua pendente, tenta de novo no próximo tick.
+    }
+  }
 }
 
 // ─── RELATÓRIO FISCAL MENSAL (envio automático pra contabilidade via n8n) ────
@@ -2161,20 +2226,26 @@ export function sincronizarEspelhoEstoqueDoProduto(produto) {
   const existente = db.prepare("SELECT * FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(chave);
   const um = (produto.um || "un").trim();
   const custo = Number(produto.custo) || 0;
+  const codigoBarras = (produto.codigo_barras || "").trim();
+  const ncm = (produto.ncm || "").trim();
+  const cest = (produto.cest || "").trim();
+  const descricao = (produto.descricao || "").trim();
+  const precoVenda = Number(produto.preco) || 0;
   if (existente) {
     db.prepare(`UPDATE estoque_itens
       SET nome = ?, unidade = ?, custo_manual = ?,
           categoria_id = COALESCE(?, categoria_id),
           tipo = CASE WHEN tipo IN ('insumo','interno') THEN tipo ELSE 'revenda' END,
-          ativo = 1
+          ativo = 1,
+          codigo_barras = ?, ncm = ?, cest = ?, descricao = ?, preco_venda = ?
       WHERE id = ?`)
-      .run(produto.nome, um, custo, catId, existente.id);
+      .run(produto.nome, um, custo, catId, codigoBarras, ncm, cest, descricao, precoVenda, existente.id);
     return existente.id;
   }
   const id = gerarId();
-  db.prepare(`INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, saldo_atual, custo_manual, ativo, eh_insumo, tipo)
-              VALUES (?, ?, ?, ?, ?, 0, ?, 1, 0, 'revenda')`)
-    .run(id, chave, produto.nome, um, catId, custo);
+  db.prepare(`INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, saldo_atual, custo_manual, ativo, eh_insumo, tipo, codigo_barras, ncm, cest, descricao, preco_venda)
+              VALUES (?, ?, ?, ?, ?, 0, ?, 1, 0, 'revenda', ?, ?, ?, ?, ?)`)
+    .run(id, chave, produto.nome, um, catId, custo, codigoBarras, ncm, cest, descricao, precoVenda);
   return id;
 }
 
@@ -2537,7 +2608,7 @@ export function contarPedidosPendentes() {
   return row.count;
 }
 
-export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco, desconto }) {
+export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, cliente_email, itens, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco, desconto, emitir_nfce, cliente_cpf }) {
   const id = gerarId();
 
   // Calcular total considerando adicionais
@@ -2551,7 +2622,7 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
   const end = endereco || {};
 
   const inserirPedido = db.prepare(
-    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, desconto, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))"
+    "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, desconto, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia, emitir_nfce, cliente_cpf, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))"
   );
   const inserirItem = db.prepare(
     "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
@@ -2559,7 +2630,7 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
 
   const transaction = db.transaction(() => {
     const tipoEnt = ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega';
-    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, desc, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "");
+    inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, desc, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "", emitir_nfce ? 1 : 0, (cliente_cpf || "").replace(/\D/g, ""));
     for (const item of itens) {
       // Buscar custo do produto no banco. Se o frontend enviou custo_unitario
       // (pizzaria v2 com multiplicador por tamanho), usa esse valor no lugar
@@ -3289,7 +3360,8 @@ function gerarCodigoEstoque() {
   return c;
 }
 
-export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo }) {
+export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo,
+                                    codigo_barras, ncm, cest, descricao, preco_venda }) {
   const id = gerarId();
   // Auto-gera código quando o cliente não informar (nova UX: o cliente não
   // precisa mais decorar/inventar SKU). Retenta em caso de colisão.
@@ -3312,21 +3384,28 @@ export function criarEstoqueItem({ codigo, nome, unidade, categoria_id, forneced
     : (eh_insumo ? "insumo" : "revenda");
   const insumoInt = tipoFinal === "insumo" ? 1 : (eh_insumo ? 1 : 0);
   db.prepare(`
-    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO estoque_itens (id, codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, custo_manual, eh_insumo, tipo, codigo_barras, ncm, cest, descricao, preco_venda)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, codigoFinal, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
     estoque_minimo || 0, estoque_maximo || 0, Number(custo_manual) || 0,
-    insumoInt, tipoFinal);
+    insumoInt, tipoFinal,
+    (codigo_barras || "").trim(), (ncm || "").trim(), (cest || "").trim(), (descricao || "").trim(), Number(preco_venda) || 0);
   return buscarEstoqueItem(id);
 }
 
-export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo }) {
+export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, fornecedor_id, estoque_minimo, estoque_maximo, ativo, custo_manual, eh_insumo, tipo,
+                                            codigo_barras, ncm, cest, descricao, preco_venda }) {
   // custo_manual, eh_insumo e tipo são opcionais: só atualizam se vierem no payload.
   // Se veio `tipo`, sincroniza `eh_insumo` (revenda/interno → 0, insumo → 1) pra
   // manter consistência com ficha técnica antiga.
   const setCusto = custo_manual !== undefined ? ", custo_manual=?" : "";
   const setInsumo = (eh_insumo !== undefined || tipo !== undefined) ? ", eh_insumo=?" : "";
   const setTipo = tipo !== undefined ? ", tipo=?" : "";
+  const setEan = codigo_barras !== undefined ? ", codigo_barras=?" : "";
+  const setNcm = ncm !== undefined ? ", ncm=?" : "";
+  const setCest = cest !== undefined ? ", cest=?" : "";
+  const setDescricao = descricao !== undefined ? ", descricao=?" : "";
+  const setPreco = preco_venda !== undefined ? ", preco_venda=?" : "";
   const params = [codigo, nome, unidade || "un", categoria_id || null, fornecedor_id || null,
     estoque_minimo || 0, estoque_maximo || 0, ativo !== false ? 1 : 0];
   if (custo_manual !== undefined) params.push(Number(custo_manual) || 0);
@@ -3337,10 +3416,15 @@ export function atualizarEstoqueItem(id, { codigo, nome, unidade, categoria_id, 
     params.push(insumoInt);
   }
   if (tipo !== undefined) params.push(tipo);
+  if (codigo_barras !== undefined) params.push((codigo_barras || "").trim());
+  if (ncm !== undefined) params.push((ncm || "").trim());
+  if (cest !== undefined) params.push((cest || "").trim());
+  if (descricao !== undefined) params.push((descricao || "").trim());
+  if (preco_venda !== undefined) params.push(Number(preco_venda) || 0);
   params.push(id);
   const r = db.prepare(`
     UPDATE estoque_itens SET codigo=?, nome=?, unidade=?, categoria_id=?, fornecedor_id=?,
-    estoque_minimo=?, estoque_maximo=?, ativo=?${setCusto}${setInsumo}${setTipo} WHERE id=? AND deleted_at IS NULL
+    estoque_minimo=?, estoque_maximo=?, ativo=?${setCusto}${setInsumo}${setTipo}${setEan}${setNcm}${setCest}${setDescricao}${setPreco} WHERE id=? AND deleted_at IS NULL
   `).run(...params);
   if (r.changes === 0) return null;
   recalcularCMVPorInsumo(id); // mantém o CMV dos produtos em dia com o custo do item

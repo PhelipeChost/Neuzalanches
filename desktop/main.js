@@ -16,6 +16,7 @@ import { ativarOnline, heartbeatOnline, lerChave, salvarChave, aplicarConfigSync
 import { criarMotorSync, criarAuthVps } from "./sync/motor.js";
 import { configurarAutoUpdate } from "./atualizacao.js";
 import { iniciarAgenteImpressao } from "./agente-impressao.js";
+import { lerConfigRede, salvarConfigRede, meusIpsLan, testarServidor, diagnosticoRede, criarRegraFirewall } from "./rede/config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, "..");          // pasta principal (server/, etc.)
@@ -125,7 +126,7 @@ function esperarPorta(port, timeoutMs) {
 
 // ─── Janelas ─────────────────────────────────────────────────────────────────
 function janelaBase(extra = {}) {
-  return new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1280, height: 800, minWidth: 900, minHeight: 600,
     backgroundColor: "#0d0f14",
     title: APP_NAME,
@@ -133,6 +134,10 @@ function janelaBase(extra = {}) {
     webPreferences: { preload: join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
     ...extra,
   });
+  // A <title> da página (index.html) senão sobrescreve o título da janela
+  // no taskbar/Alt+Tab assim que carrega — trava sempre em APP_NAME.
+  win.on("page-title-updated", (e) => e.preventDefault());
+  return win;
 }
 
 // Splash: janela pequena, sem moldura, com a logo — aparece IMEDIATAMENTE
@@ -154,7 +159,7 @@ function fecharSplash() {
   splash = null;
 }
 
-function abrirApp(resultado) {
+function abrirApp(resultado, host = "127.0.0.1") {
   janela = janelaBase({ show: false });
   janela.once("ready-to-show", () => {
     janela.show();
@@ -168,7 +173,7 @@ function abrirApp(resultado) {
       });
     }
   });
-  janela.loadURL(`http://127.0.0.1:${PORT}/`);
+  janela.loadURL(`http://${host}:${PORT}/`);
   janela.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
 }
 
@@ -177,6 +182,15 @@ function abrirBloqueio(resultado) {
   janela._motivo = resultado.motivo;
   janela.once("ready-to-show", () => { janela.show(); fecharSplash(); });
   janela.loadFile(join(__dirname, "ui", "bloqueio.html"));
+}
+
+// Modo cliente (multi-máquina): a máquina servidor configurada não respondeu.
+// Tela simples com "tentar de novo" e opção de trocar a configuração de rede,
+// em vez de travar num erro cru do Chromium.
+function abrirServidorOffline() {
+  janela = janelaBase({ width: 560, height: 560, resizable: false, show: false });
+  janela.once("ready-to-show", () => { janela.show(); fecharSplash(); });
+  janela.loadFile(join(__dirname, "ui", "servidor-offline.html"));
 }
 
 // ─── IPC ─────────────────────────────────────────────────────────────────────
@@ -200,7 +214,10 @@ ipcMain.handle("licenca:abrirArquivo", async () => {
 ipcMain.handle("licenca:validar", (_e, token) => {
   const res = verificarLicenca(token, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprintMaquina() });
   if (res.estado !== "bloqueado") {
-    salvarLicenca(app.getPath("userData"), token);
+    const dir = app.getPath("userData");
+    salvarLicenca(dir, token);
+    const chave = res.claims?.chave || res.claims?.license_key;
+    if (chave) salvarChave(dir, chave);
     setTimeout(() => { app.relaunch(); app.exit(0); }, 400);
     return { ok: true, estado: res.estado };
   }
@@ -270,7 +287,10 @@ ipcMain.handle("licenca:statusPagamento", async () => {
   if (!chave) return { pago: false };
   try {
     const r = await statusPagamento(chave);
-    const pago = r.ultimaCobranca?.status === "paid" || r.clientStatus === "ativo";
+    // Só considera pago se a ÚLTIMA cobrança gerada estiver com status "paid" —
+    // clientStatus é o status geral da conta (já "ativo" na renovação proativa,
+    // antes de vencer) e NÃO reflete se esta cobrança específica foi paga.
+    const pago = r.ultimaCobranca?.status === "paid";
     if (pago) {
       await baterHeartbeat(app.getPath("userData"));
     }
@@ -310,6 +330,30 @@ ipcMain.handle("licenca:status", () => {
     return { estado: "erro", motivo: e.message };
   }
 });
+
+// ─── Rede local (multi-máquina) ──────────────────────────────────────────────
+ipcMain.handle("rede:obter", () => {
+  const cfg = lerConfigRede(app.getPath("userData"));
+  return { ...cfg, meusIps: meusIpsLan(), porta: PORT };
+});
+
+ipcMain.handle("rede:testar", async (_e, host) => {
+  host = String(host || "").trim();
+  if (!host) return { ok: false, motivo: "Informe o endereço da máquina servidor." };
+  return await testarServidor(host, PORT);
+});
+
+// Salva o modo de rede e reinicia — mesmo padrão da ativação de licença
+// (salvar + relaunch), já que o boot inteiro depende dessa escolha.
+ipcMain.handle("rede:salvar", (_e, cfg) => {
+  salvarConfigRede(app.getPath("userData"), cfg);
+  setTimeout(() => { app.relaunch(); app.exit(0); }, 300);
+  return { ok: true };
+});
+
+ipcMain.handle("rede:diagnostico", () => diagnosticoRede(PORT));
+
+ipcMain.handle("rede:criarRegraFirewall", () => criarRegraFirewall(PORT));
 
 // Workaround do bug de foco do Chromium/Electron no Windows: depois de um
 // alert()/confirm() nativo, os inputs param de aceitar foco até a janela
@@ -376,7 +420,44 @@ async function main() {
     return;
   }
 
+  const redeCfg = lerConfigRede(dirDados);
+
+  // ── MODO CLIENTE (multi-máquina): não sobe servidor nem banco próprios —
+  // só abre a janela apontando pra máquina servidor na rede local. Impressora,
+  // licença e auto-update continuam por conta desta máquina (são locais).
+  if (redeCfg.modo === "cliente" && redeCfg.servidorHost) {
+    console.log("[boot] modo cliente — conectando em", redeCfg.servidorHost);
+    const teste = await testarServidor(redeCfg.servidorHost, PORT);
+    if (!teste.ok) {
+      console.error("[boot] servidor não respondeu:", teste.motivo);
+      fecharSplash();
+      abrirServidorOffline();
+      return;
+    }
+    iniciarAgenteImpressao().catch(e => console.error("[agente-impressao] falha ao iniciar:", e && e.message));
+    abrirApp(resultado, redeCfg.servidorHost);
+    iniciarHeartbeat(dirDados);
+    configurarAutoUpdate(() => janela);
+    return;
+  }
+
+  // ── MODO SERVIDOR (padrão — comportamento original, single-machine) ──────
   try {
+    // Tenta criar regra de firewall para a porta do PDV (permite multi-máquina).
+    // Falha silenciosa se não for admin — o usuário pode criar depois via Suporte.
+    try {
+      const diag = diagnosticoRede(PORT);
+      if (!diag.ok) {
+        const semRegra = diag.problemas.find(p => p.tipo === "sem_regra_firewall");
+        if (semRegra) {
+          const r = criarRegraFirewall(PORT);
+          console.log("[rede] regra de firewall:", r.ok ? "criada" : r.motivo);
+        }
+        const redePublica = diag.problemas.find(p => p.tipo === "rede_publica");
+        if (redePublica) console.log("[rede] AVISO:", redePublica.descricao);
+      }
+    } catch (e) { console.log("[rede] diagnóstico falhou (não-crítico):", e.message); }
+
     console.log("[boot] licença OK, subindo servidor local…");
     await iniciarServidor();
     console.log("[boot] servidor no ar, abrindo janela.");

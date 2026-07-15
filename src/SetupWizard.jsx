@@ -5,15 +5,16 @@ import Logo from "./Logo";
 const ETAPAS = ["boas_vindas", "modo", "modulos", "nome", "pronto"];
 
 const MODULOS_OPCIONAIS = [
-  { id: "cozinha",  icon: "🔥", label: "Cozinha",         desc: "Painel de pedidos para a cozinha em tempo real" },
-  { id: "estoque",  icon: "📦", label: "Estoque e Insumos", desc: "Controle de entradas, saídas e fichas técnicas" },
-  { id: "fiscal",   icon: "🧾", label: "Fiscal / NFC-e",   desc: "Emissão de notas fiscais de consumidor" },
+  { id: "financeiro", icon: "💰", label: "Financeiro",       desc: "Lançamentos, DRE, fluxo de caixa e custos fixos" },
+  { id: "cozinha",    icon: "🔥", label: "Cozinha",          desc: "Painel de pedidos para a cozinha em tempo real" },
+  { id: "estoque",    icon: "📦", label: "Estoque e Insumos", desc: "Controle de entradas, saídas e fichas técnicas" },
+  { id: "fiscal",     icon: "🧾", label: "Fiscal / NFC-e",   desc: "Emissão de notas fiscais de consumidor" },
 ];
 
 export default function SetupWizard({ onComplete }) {
   const [etapa, setEtapa] = useState(0);
   const [modo, setModo] = useState("");
-  const [modulos, setModulos] = useState(["cozinha", "estoque"]);
+  const [modulos, setModulos] = useState(["financeiro", "cozinha", "estoque"]);
   const [nome, setNome] = useState("");
   const [salvando, setSalvando] = useState(false);
 
@@ -144,7 +145,7 @@ export default function SetupWizard({ onComplete }) {
           <div style={{ textAlign: "left", background: "#fafaf9", borderRadius: 14, padding: "18px 20px", marginBottom: 24, border: "1.5px solid #e7e5e4" }}>
             <div style={{ fontSize: 13, marginBottom: 10 }}><strong>Estabelecimento:</strong> {nome}</div>
             <div style={{ fontSize: 13, marginBottom: 10 }}><strong>Modo:</strong> {modo === "mesas" ? "Mesas (salão)" : "Balcão"}</div>
-            <div style={{ fontSize: 13 }}><strong>Módulos:</strong> Frente de Caixa, Produtos, Financeiro{modulos.length > 0 ? ", " + modulos.map(m => MODULOS_OPCIONAIS.find(o => o.id === m)?.label || m).join(", ") : ""}</div>
+            <div style={{ fontSize: 13 }}><strong>Módulos:</strong> Frente de Caixa, Produtos{modulos.length > 0 ? ", " + modulos.map(m => MODULOS_OPCIONAIS.find(o => o.id === m)?.label || m).join(", ") : ""}</div>
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
             <button style={btn(false)} onClick={voltar}>Voltar</button>

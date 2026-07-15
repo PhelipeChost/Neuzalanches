@@ -1,0 +1,79 @@
+{
+  "name": "Nexus PDV — Relatório Fiscal Mensal",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "relatorio-fiscal-nexus",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "relatorio-fiscal-nexus"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recebe: { email_destino, periodo (YYYY-MM), quantidade, total, notas: [{numero, serie, motor, chave, valor_total, qr_code_url, created_at}] }\nconst payload = $input.first().json.body || $input.first().json;\n\nconst { email_destino, periodo, quantidade, total, notas = [] } = payload;\n\nif (!email_destino) throw new Error('email_destino ausente no payload');\nif (!periodo) throw new Error('periodo (YYYY-MM) ausente no payload');\n\nconst [ano, mes] = periodo.split('-');\nconst nomesMes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];\nconst mesNome = nomesMes[parseInt(mes, 10) - 1] || mes;\n\nconst fmtR = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\nconst fmtData = (iso) => {\n  if (!iso) return '—';\n  const d = new Date(iso);\n  return d.toLocaleDateString('pt-BR');\n};\n\nconst linhas = notas.map((n, i) => `\n  <tr style=\"background:${i % 2 ? '#fafaf9' : '#fff'}\">\n    <td style=\"padding:8px 10px;border:1px solid #e7e5e4;font-family:monospace;font-size:11px\">${(n.chave || '').slice(0, 44)}</td>\n    <td style=\"padding:8px 10px;border:1px solid #e7e5e4;text-align:center\">${n.numero || ''}/${n.serie || '1'}</td>\n    <td style=\"padding:8px 10px;border:1px solid #e7e5e4;text-align:center;font-size:11px;color:#78716c\">${n.motor === 'antigo' ? 'SEFAZ' : 'Focus'}</td>\n    <td style=\"padding:8px 10px;border:1px solid #e7e5e4;text-align:center\">${fmtData(n.created_at)}</td>\n    <td style=\"padding:8px 10px;border:1px solid #e7e5e4;text-align:right;font-weight:600\">${fmtR(n.valor_total)}</td>\n    <td style=\"padding:8px 10px;border:1px solid #e7e5e4;text-align:center\">${n.qr_code_url ? `<a href=\"${n.qr_code_url}\" style=\"color:#15803d;text-decoration:none\">Consultar</a>` : '—'}</td>\n  </tr>\n`).join('');\n\nconst html = `<!DOCTYPE html>\n<html><body style=\"font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; color:#1c1917; background:#f5f5f4; padding:20px; margin:0\">\n  <div style=\"max-width:720px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06)\">\n    <div style=\"background:linear-gradient(135deg,#15803d,#166534);color:#fff;padding:24px 28px\">\n      <div style=\"font-size:12px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;opacity:0.9\">Relatório Fiscal Mensal · Nexus PDV</div>\n      <div style=\"font-size:24px;font-weight:800;margin-top:4px\">${mesNome} de ${ano}</div>\n    </div>\n\n    <div style=\"padding:24px 28px\">\n      <p style=\"margin:0 0 16px;color:#57534e;line-height:1.6\">\n        Prezada contabilidade,<br><br>\n        Segue abaixo a relação das notas fiscais eletrônicas (NFC-e) autorizadas no período de referência.\n      </p>\n\n      <div style=\"display:flex;gap:12px;margin:20px 0\">\n        <div style=\"flex:1;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 16px\">\n          <div style=\"font-size:11px;color:#166534;font-weight:700;letter-spacing:0.06em;text-transform:uppercase\">Notas emitidas</div>\n          <div style=\"font-size:24px;font-weight:800;color:#15803d;margin-top:4px\">${quantidade || notas.length}</div>\n        </div>\n        <div style=\"flex:1;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 16px\">\n          <div style=\"font-size:11px;color:#92400e;font-weight:700;letter-spacing:0.06em;text-transform:uppercase\">Total autorizado</div>\n          <div style=\"font-size:24px;font-weight:800;color:#d97706;margin-top:4px\">${fmtR(total)}</div>\n        </div>\n      </div>\n\n      ${notas.length > 0 ? `\n      <table style=\"width:100%;border-collapse:collapse;font-size:13px;margin-top:8px\">\n        <thead>\n          <tr style=\"background:#f5f5f4\">\n            <th style=\"padding:10px;border:1px solid #e7e5e4;text-align:left;font-size:11px;font-weight:700;color:#57534e\">CHAVE DE ACESSO</th>\n            <th style=\"padding:10px;border:1px solid #e7e5e4;text-align:center;font-size:11px;font-weight:700;color:#57534e\">Nº/SÉRIE</th>\n            <th style=\"padding:10px;border:1px solid #e7e5e4;text-align:center;font-size:11px;font-weight:700;color:#57534e\">MOTOR</th>\n            <th style=\"padding:10px;border:1px solid #e7e5e4;text-align:center;font-size:11px;font-weight:700;color:#57534e\">DATA</th>\n            <th style=\"padding:10px;border:1px solid #e7e5e4;text-align:right;font-size:11px;font-weight:700;color:#57534e\">VALOR</th>\n            <th style=\"padding:10px;border:1px solid #e7e5e4;text-align:center;font-size:11px;font-weight:700;color:#57534e\">CONSULTA</th>\n          </tr>\n        </thead>\n        <tbody>${linhas}</tbody>\n      </table>\n      ` : '<div style=\"padding:20px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#991b1b;text-align:center\">Nenhuma NFC-e autorizada no período.</div>'}\n\n      <div style=\"margin-top:24px;padding-top:20px;border-top:1px solid #e7e5e4;font-size:11.5px;color:#a8a29e;line-height:1.6\">\n        Este e-mail foi enviado automaticamente pelo <strong>Nexus PDV</strong> em nome do estabelecimento.<br>\n        Para consultar cada nota individualmente, use o link \"Consultar\" na tabela acima (portal público da SEFAZ).<br>\n        Em caso de divergência, entre em contato com o estabelecimento.\n      </div>\n    </div>\n  </div>\n</body></html>`;\n\nconst assunto = `[Nexus PDV] Relatório NFC-e — ${mesNome}/${ano} — ${quantidade || notas.length} nota${(quantidade || notas.length) !== 1 ? 's' : ''}`;\n\nreturn [{ json: { email_destino, assunto, html, quantidade: quantidade || notas.length, total, periodo } }];"
+      },
+      "id": "2",
+      "name": "Montar e-mail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email_destino }}",
+        "subject": "={{ $json.assunto }}",
+        "message": "={{ $json.html }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "3",
+      "name": "Enviar e-mail (Gmail)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [640, 300],
+      "webhookId": "gmail-send-webhook",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_CREDENTIAL_ID",
+          "name": "Gmail - Nexus"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, enviado_para: $('Montar e-mail').item.json.email_destino, periodo: $('Montar e-mail').item.json.periodo, quantidade: $('Montar e-mail').item.json.quantidade } }}"
+      },
+      "id": "4",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [860, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Montar e-mail", "type": "main", "index": 0 }]]
+    },
+    "Montar e-mail": {
+      "main": [[{ "node": "Enviar e-mail (Gmail)", "type": "main", "index": 0 }]]
+    },
+    "Enviar e-mail (Gmail)": {
+      "main": [[{ "node": "Responder OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "nexus-pdv"
+  }
+}

@@ -90,6 +90,8 @@ const IS_ONLINE = import.meta.env.VITE_ONLINE === "1";
 const SETORES_BUILD = IS_ONLINE
   ? ["mesas", "pedidos", "config"]
   : ["produtos", "cozinha", "caixa", "estoque", "financeiro", "config"];
+  // "fiscal" NÃO entra aqui de propósito — ele vive só na área do Suporte,
+  // que só o Operador Nexus abre (senha). Ver src/SuporteApp.jsx → SecaoFiscal.
 
 export default function App() {
   const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
@@ -132,6 +134,9 @@ export default function App() {
   const [estabAtivo, setEstabAtivo] = useState(() => sessionStorage.getItem("nx_estab") || "");
   const [mercadoUrl, setMercadoUrl] = useState("http://localhost:41731");
   const [syncStatus, setSyncStatus] = useState("sem-config");
+  // Modo do módulo "Cozinha" (configurado no Suporte): "cozinha" (fluxo com
+  // preparação) OU "impressao" (só imprime cupom). Vem do backend via config.
+  const [modoListaPedidos, setModoListaPedidos] = useState("cozinha");
 
   // T5 — onboarding (primeiro acesso)
   const [onbDismissed, setOnbDismissed] = useState(() => localStorage.getItem("nl_onb_done") === "1");
@@ -213,6 +218,15 @@ export default function App() {
 
   // No build online (mercadolojo), a sidebar reflete "isso é o painel online"
   useEffect(() => { if (IS_ONLINE) setSyncStatus("online-panel"); }, []);
+
+  // Carrega o modo da Lista de Pedidos (Suporte grava aqui) — muda o rótulo
+  // do item na sidebar e o fluxo da tela (esconde Preparar/Pronto no "impressao").
+  useEffect(() => {
+    if (!usuario || usuario.tipo !== "admin") return;
+    api.config.obter().then(c => {
+      if (c && c.modo_lista_pedidos === "impressao") setModoListaPedidos("impressao");
+    }).catch(() => {});
+  }, [usuario]);
 
   // Polling do status de sincronização com o cardápio online (rodapé da sidebar)
   useEffect(() => {
@@ -625,10 +639,17 @@ export default function App() {
     return <SetupWizard onComplete={(p) => setPerfil({ ...p, configurado: true })} />;
   }
 
-  // Módulo habilitado? Frente de Caixa, Produtos, Financeiro, Config = sempre.
-  // Cozinha, Estoque, Fiscal = opcionais (controlados pelo perfil).
+  // Módulo habilitado? Frente de Caixa, Produtos, Config, Pedidos = sempre.
+  // Financeiro, Cozinha, Estoque, Fiscal = opcionais (controlados pelo perfil).
+  // Atender Mesas (online): só quando o estabelecimento opera com mesas
+  // (perfil.modo === "mesas"). Estabelecimento balcão não vê a seção.
   const modulosAtivos = perfil?.modulos || [];
-  const moduloHabilitado = (m) => ["caixa", "produtos", "financeiro", "config", "pedidos", "mesas"].includes(m) || modulosAtivos.includes(m);
+  const modoMesas = perfil?.modo === "mesas";
+  const moduloHabilitado = (m) => {
+    if (m === "mesas") return modoMesas;
+    if (["caixa", "produtos", "config", "pedidos"].includes(m)) return true;
+    return modulosAtivos.includes(m);
+  };
 
   // Setores permitidos para este admin. null/[] = todos.
   const setoresPermitidos = Array.isArray(usuario?.setores) && usuario.setores.length > 0
@@ -690,6 +711,7 @@ export default function App() {
           pendentesCount={pendentesCount}
           podeAcessar={podeAcessar}
           syncStatus={syncStatus}
+          modoListaPedidos={modoListaPedidos}
         />
         <div style={{ minHeight: "100vh" }}>{conteudoSetor}</div>
       </div>

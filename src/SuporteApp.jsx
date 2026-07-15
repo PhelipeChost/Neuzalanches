@@ -6,17 +6,30 @@
 //   2) Lanchonete → módulos, modo mesas/balcão, nome, ações de sync/update
 //   3) Mercado    → status do stack próprio + acesso
 // Novos tipos de estabelecimento entram como novas seções aqui.
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { api } from "./api";
 import NexusLogo from "./NexusLogo";
 import { SEGMENTOS, RECURSOS_LABELS } from "./segmentos";
 
+// FiscalTab é grande (5 seções de formulário) e só usado pelo Operador Nexus
+// quando ele entra na seção Fiscal do Suporte. Lazy-load divide o bundle: o
+// arquivo só é baixado quando o Operador clica em "Fiscal" pela primeira vez.
+const FiscalTab = lazy(() => import("./FiscalTab"));
+
 const IS_DESKTOP = import.meta.env.VITE_DESKTOP === "1";
 
 const MODULOS_OPCIONAIS = [
-  { id: "cozinha", icon: "🔥", label: "Cozinha",           desc: "Painel de pedidos em tempo real na cozinha" },
-  { id: "estoque", icon: "📦", label: "Estoque e Insumos", desc: "Controle de estoque e fichas técnicas" },
-  { id: "fiscal",  icon: "🧾", label: "Fiscal / NFC-e",    desc: "Emissão de nota fiscal ao consumidor" },
+  { id: "financeiro", icon: "💰", label: "Financeiro",         desc: "Lançamentos, DRE, fluxo de caixa e custos fixos" },
+  // "cozinha" é o valor legado; o módulo é apresentado como "Lista de Pedidos"
+  // com 2 modos internos (Cozinha OU Apenas Impressão). Estabelecimentos que
+  // não preparam alimento (ex: peixaria) escolhem "Apenas Impressão" — mesmo
+  // fluxo de fila, mas sem estados "preparando/pronto".
+  { id: "cozinha",    icon: "📋", label: "Lista de Pedidos",   desc: "Fila de pedidos em tempo real — modo Cozinha (preparação) ou Impressão (só cupom)" },
+  { id: "estoque",    icon: "📦", label: "Estoque e Insumos",  desc: "Controle de estoque e fichas técnicas" },
+  // "fiscal" removido da lista de módulos que aparecem para o cliente/funcionário:
+  // NFC-e é configurada UMA vez pelo Operador Nexus (Suporte → Fiscal) e nunca
+  // volta a ficar exposta na config do estabelecimento — evita que o cliente
+  // desative/apague notas e sonegue imposto, o que responsabilizaria a Nexus.
 ];
 
 const TIPOS_ESTABELECIMENTO = [
@@ -44,6 +57,7 @@ export default function SuporteApp({ onFechar, mercadoUrl = "http://localhost:41
   const SECOES = [
     { key: "operador", icon: "🛟", label: "Operador", sub: "Plataforma Nexus" },
     { key: "relatorios", icon: "📊", label: "Relatórios", sub: "Impressão e pedidos" },
+    { key: "fiscal", icon: "🧾", label: "Fiscal", sub: "NFC-e (Operador)" },
     ...TIPOS_ESTABELECIMENTO.filter(t => tipos.includes(t.id)).map(t => ({
       key: t.id, icon: t.icon, label: t.label.split(" / ")[0], sub: "Estabelecimento",
     })),
@@ -96,6 +110,7 @@ export default function SuporteApp({ onFechar, mercadoUrl = "http://localhost:41
         <div style={{ maxWidth: 780, margin: "0 auto", display: "flex", flexDirection: "column", gap: 18 }}>
           {secao === "operador" && <SecaoOperador tipos={tipos} setTipos={setTipos} showToast={showToast} />}
           {secao === "relatorios" && <SecaoRelatorios showToast={showToast} />}
+          {secao === "fiscal" && <SecaoFiscal />}
           {secao === "lanchonete" && <SecaoLanchonete showToast={showToast} />}
           {secao === "mercado" && <SecaoMercado mercadoUrl={mercadoUrl} showToast={showToast} />}
         </div>
@@ -273,6 +288,113 @@ function SecaoOperador({ tipos, setTipos, showToast }) {
   );
 }
 
+// ─── Sub-opção: conectar Estoque ao Financeiro ───────────────────────────────
+// Aparece dentro do card de Módulos, indentada sob "Estoque e Insumos".
+// Quando ligada, entradas de estoque geram lançamentos realizados de saída no
+// Financeiro (categoria "Estoque / Insumos"). Cliente decide se quer.
+function EstoqueFinanceiroSub({ showToast }) {
+  const [ligado, setLigado] = useState(false);
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    api.config.obter()
+      .then(c => setLigado(!!c.estoque_conectado_financeiro))
+      .catch(() => {})
+      .finally(() => setCarregando(false));
+  }, []);
+
+  const alternar = async () => {
+    const novo = !ligado;
+    setSalvando(true);
+    try {
+      await api.config.salvar({ estoque_conectado_financeiro: novo });
+      setLigado(novo);
+      showToast(novo ? "🔗 Estoque conectado ao Financeiro" : "Desconectado.");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  if (carregando) return null;
+
+  return (
+    <div style={{ marginLeft: 44, marginTop: 6, marginBottom: 4 }}>
+      <label onClick={!salvando ? alternar : undefined}
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, cursor: salvando ? "wait" : "pointer",
+          border: `1.5px dashed ${ligado ? "#F38C24" : "#e7e5e4"}`, background: ligado ? "#fff7ed" : "#fafaf9" }}>
+        <div style={{ fontSize: 16, width: 24, textAlign: "center" }}>🔗</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: ligado ? "#c2410c" : "#57534e" }}>Conectar ao Financeiro</div>
+          <div style={{ fontSize: 11, color: "#78716c", lineHeight: 1.4 }}>
+            Entradas de estoque (compras) viram gastos automáticos do mês no Financeiro (categoria "Estoque / Insumos"). Opcional.
+          </div>
+        </div>
+        <div style={{ width: 36, height: 20, borderRadius: 10, background: ligado ? "#F38C24" : "#d6d3d1", position: "relative" }}>
+          <div style={{ position: "absolute", top: 2, left: ligado ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
+        </div>
+      </label>
+    </div>
+  );
+}
+
+// Sub-opção do módulo "Lista de Pedidos": modo Cozinha (preparação com etapas)
+// OU Impressão (só cupom, sem preparo — para estabelecimentos como peixaria que
+// já vendem produto pronto). Salvo em config.modo_lista_pedidos.
+function ListaPedidosModoSub({ showToast }) {
+  const [modo, setModo] = useState("cozinha");
+  const [carregando, setCarregando] = useState(true);
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    api.config.obter()
+      .then(c => setModo(c.modo_lista_pedidos === "impressao" ? "impressao" : "cozinha"))
+      .catch(() => {})
+      .finally(() => setCarregando(false));
+  }, []);
+
+  const escolher = async (novo) => {
+    if (novo === modo || salvando) return;
+    setSalvando(true);
+    try {
+      await api.config.salvar({ modo_lista_pedidos: novo });
+      setModo(novo);
+      showToast(novo === "cozinha" ? "🔥 Modo Cozinha (com preparação)" : "🖨️ Modo Impressão (sem etapas de preparo)");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  if (carregando) return null;
+
+  const opcoes = [
+    { id: "cozinha",   icon: "🔥", label: "Cozinha",   desc: "Fluxo com preparação: Pendente → Preparando → Pronto → Entregue. Para estabelecimentos que preparam alimento." },
+    { id: "impressao", icon: "🖨️", label: "Impressão", desc: "Apenas imprime o cupom (impressora habilitada). Sem etapas de preparo — indicado para peixaria, açougue, mercado e afins." },
+  ];
+
+  return (
+    <div style={{ marginLeft: 44, marginTop: 6, marginBottom: 4, display: "flex", gap: 8 }}>
+      {opcoes.map(op => {
+        const ativo = modo === op.id;
+        return (
+          <div key={op.id} onClick={() => escolher(op.id)}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 10, cursor: salvando ? "wait" : "pointer",
+              border: `1.5px dashed ${ativo ? "#F38C24" : "#e7e5e4"}`,
+              background: ativo ? "#fff7ed" : "#fafaf9",
+              opacity: salvando ? 0.6 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+              <div style={{ fontSize: 16, width: 24, textAlign: "center" }}>{op.icon}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: ativo ? "#c2410c" : "#57534e" }}>{op.label}</div>
+              <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: ativo ? "#F38C24" : "#e7e5e4", color: ativo ? "#fff" : "#78716c" }}>
+                {ativo ? "ATIVO" : "—"}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "#78716c", lineHeight: 1.4 }}>{op.desc}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ═══ SEÇÃO 2: FAST FOOD / DELIVERY ═══════════════════════════════════════════
 function SecaoLanchonete({ showToast }) {
   const [modulos, setModulos] = useState([]);
@@ -395,24 +517,34 @@ function SecaoLanchonete({ showToast }) {
       <div style={cardStyle}>
         <div style={tituloCard}>Módulos habilitados</div>
         <div style={subCard}>
-          Frente de Caixa, Produtos, Financeiro e Configurações estão sempre ativos. Os opcionais abaixo aparecem/somem no menu lateral.
+          Frente de Caixa, Produtos, Pedidos e Configurações estão sempre ativos. Os opcionais abaixo aparecem/somem no menu lateral.
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {MODULOS_OPCIONAIS.map(m => {
             const ativo = modulos.includes(m.id);
             return (
-              <label key={m.id} onClick={() => toggleModulo(m.id)}
-                style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 12, cursor: "pointer",
-                  border: `1.5px solid ${ativo ? "#15803d" : "#e7e5e4"}`, background: ativo ? "#f0fdf4" : "#fafaf9" }}>
-                <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{m.icon}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: ativo ? "#15803d" : "#1c1917" }}>{m.label}</div>
-                  <div style={{ fontSize: 12, color: "#78716c" }}>{m.desc}</div>
-                </div>
-                <div style={{ width: 42, height: 24, borderRadius: 12, background: ativo ? "#15803d" : "#d6d3d1", position: "relative", transition: "background 0.2s" }}>
-                  <div style={{ position: "absolute", top: 2, left: ativo ? 20 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
-                </div>
-              </label>
+              <div key={m.id}>
+                <label onClick={() => toggleModulo(m.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", borderRadius: 12, cursor: "pointer",
+                    border: `1.5px solid ${ativo ? "#15803d" : "#e7e5e4"}`, background: ativo ? "#f0fdf4" : "#fafaf9" }}>
+                  <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{m.icon}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: ativo ? "#15803d" : "#1c1917" }}>{m.label}</div>
+                    <div style={{ fontSize: 12, color: "#78716c" }}>{m.desc}</div>
+                  </div>
+                  <div style={{ width: 42, height: 24, borderRadius: 12, background: ativo ? "#15803d" : "#d6d3d1", position: "relative", transition: "background 0.2s" }}>
+                    <div style={{ position: "absolute", top: 2, left: ativo ? 20 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
+                  </div>
+                </label>
+                {/* Sub-opção: Estoque → Conectar ao Financeiro (opt-in) */}
+                {m.id === "estoque" && ativo && modulos.includes("financeiro") && (
+                  <EstoqueFinanceiroSub showToast={showToast} />
+                )}
+                {/* Sub-opção: Lista de Pedidos → modo Cozinha ou Impressão */}
+                {m.id === "cozinha" && ativo && (
+                  <ListaPedidosModoSub showToast={showToast} />
+                )}
+              </div>
             );
           })}
         </div>
@@ -543,7 +675,7 @@ function SecaoRelatorios({ showToast }) {
     <>
       <div>
         <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#1c1917" }}>📊 Relatórios</div>
-        <div style={{ fontSize: 13, color: "#78716c" }}>Trilha das impressões da cozinha e histórico completo de pedidos.</div>
+        <div style={{ fontSize: 13, color: "#78716c" }}>Trilha das impressões da cozinha, histórico de pedidos e das NFC-e emitidas.</div>
       </div>
 
       {/* Sub-abas */}
@@ -551,6 +683,7 @@ function SecaoRelatorios({ showToast }) {
         {[
           { key: "impressao", icon: "🖨️", label: "Lista de Impressão" },
           { key: "pedidos", icon: "📋", label: "Lista de Pedidos" },
+          { key: "nfce", icon: "🧾", label: "Notas Fiscais Emitidas" },
         ].map(a => (
           <button key={a.key} onClick={() => setAba(a.key)}
             style={{
@@ -567,6 +700,7 @@ function SecaoRelatorios({ showToast }) {
 
       {aba === "impressao" && <ListaImpressao showToast={showToast} />}
       {aba === "pedidos" && <ListaPedidos showToast={showToast} />}
+      {aba === "nfce" && <ListaNFCeEmitidas showToast={showToast} />}
     </>
   );
 }
@@ -830,5 +964,160 @@ function PDado({ label, v, mono, destaque }) {
         wordBreak: "break-word",
       }}>{v || "—"}</div>
     </div>
+  );
+}
+
+// ─── Lista unificada de NFC-e emitidas (motor Focus + motor antigo SEFAZ) ────
+// Aparece dentro de Relatórios como sub-aba "Notas Fiscais Emitidas". Toda
+// nota emitida (tanto pelo provedor terceirizado quanto pelo motor direto)
+// é registrada aqui, com chave de acesso, status, valor e link de consulta
+// pública. Usa a mesma tabela nfce_emitidas alimentada por emitirNFCe.
+function ListaNFCeEmitidas({ showToast }) {
+  const [notas, setNotas] = useState(null);
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroMotor, setFiltroMotor] = useState("todos");
+  const [busca, setBusca] = useState("");
+
+  const carregar = () => {
+    Promise.all([
+      api.fiscal.listarNFCe().catch(() => []),
+      api.fiscal.antigoListar().catch(() => []),
+    ]).then(([novo, antigo]) => {
+      const listaN = (novo || []).map(n => ({ ...n, motor: n.motor || "novo" }));
+      const listaA = (antigo || []).map(n => ({ ...n, motor: "antigo" }));
+      setNotas([...listaN, ...listaA].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")));
+    }).catch(e => showToast("Erro ao carregar: " + e.message, "#dc2626"));
+  };
+  useEffect(() => { carregar(); }, []);
+
+  if (notas === null) return <div style={{ fontSize: 13, color: "#a8a29e" }}>Carregando…</div>;
+
+  const filtradas = notas.filter(n => {
+    if (filtroStatus !== "todos" && n.status !== filtroStatus) return false;
+    if (filtroMotor !== "todos" && n.motor !== filtroMotor) return false;
+    if (busca) {
+      const q = busca.toLowerCase();
+      return (n.chave || "").toLowerCase().includes(q)
+        || String(n.numero || "").includes(q)
+        || (n.pedido_id || "").toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const CORES_STATUS = {
+    simulada:     { bg: "#e0f2fe", fg: "#0369a1", label: "SIMULADA" },
+    processando:  { bg: "#fef3c7", fg: "#92400e", label: "PROCESSANDO" },
+    pendente:     { bg: "#fef3c7", fg: "#92400e", label: "CONTINGÊNCIA" },
+    autorizada:   { bg: "#dcfce7", fg: "#16a34a", label: "AUTORIZADA" },
+    rejeitada:    { bg: "#fee2e2", fg: "#dc2626", label: "REJEITADA" },
+    cancelada:    { bg: "#fecaca", fg: "#991b1b", label: "CANCELADA" },
+    erro:         { bg: "#fef2f2", fg: "#dc2626", label: "ERRO" },
+  };
+
+  const total = filtradas.reduce((s, n) => s + (Number(n.valor_total) || 0), 0);
+  const autorizadas = filtradas.filter(n => n.status === "autorizada").length;
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <input placeholder="Buscar por chave, nº ou pedido…" value={busca} onChange={e => setBusca(e.target.value)}
+          className="sup-inp" style={{ maxWidth: 320 }} />
+        <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
+          style={{ padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12.5, background: "#fff", cursor: "pointer" }}>
+          <option value="todos">Todos status</option>
+          <option value="autorizada">Autorizadas</option>
+          <option value="processando">Processando</option>
+          <option value="pendente">Contingência</option>
+          <option value="rejeitada">Rejeitadas</option>
+          <option value="cancelada">Canceladas</option>
+          <option value="simulada">Simuladas (teste)</option>
+          <option value="erro">Erros</option>
+        </select>
+        <select value={filtroMotor} onChange={e => setFiltroMotor(e.target.value)}
+          style={{ padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12.5, background: "#fff", cursor: "pointer" }}>
+          <option value="todos">Todos motores</option>
+          <option value="novo">Focus NFe</option>
+          <option value="antigo">SEFAZ direto</option>
+        </select>
+        <div style={{ background: "#fff", padding: "8px 14px", borderRadius: 10, border: "1px solid #e7e5e4", fontSize: 12 }}>
+          <b>{filtradas.length}</b> de {notas.length}
+          {autorizadas > 0 && <span style={{ marginLeft: 10, color: "#16a34a", fontWeight: 700 }}>· {fmtBRL(total)} autorizado</span>}
+        </div>
+        <button onClick={carregar}
+          style={{ ...btnBase, background: "#f5f5f4", color: "#57534e", border: "1px solid #e7e5e4", padding: "8px 14px" }}>
+          🔄 Atualizar
+        </button>
+      </div>
+
+      <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+        {filtradas.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: "#a8a29e", fontSize: 13 }}>
+            {notas.length === 0 ? "Nenhuma NFC-e emitida ainda." : "Nenhuma nota com esse filtro."}
+          </div>
+        )}
+        {filtradas.map(n => {
+          const cor = CORES_STATUS[n.status] || { bg: "#f5f5f4", fg: "#57534e", label: (n.status || "").toUpperCase() };
+          return (
+            <div key={n.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "12px 18px", borderBottom: "1px solid #f5f5f4" }}>
+              <div style={{ minWidth: 62, fontSize: 12, fontWeight: 700, color: "#57534e", textAlign: "center" }}>
+                #{n.numero || "?"}/{n.serie || "1"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontFamily: "monospace", color: "#1c1917", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  title={n.chave}>
+                  {n.chave || "—"}
+                </div>
+                <div style={{ fontSize: 11.5, color: "#78716c", marginTop: 2 }}>
+                  {fmtDataHora(n.created_at)}
+                  {" · "}{n.motor === "antigo" ? "SEFAZ direto" : "Focus NFe"}
+                  {n.pedido_id && <> · Pedido #{String(n.pedido_id).slice(0, 6).toUpperCase()}</>}
+                  {n.motivo && n.status !== "autorizada" && <span style={{ color: "#dc2626" }}> · {n.motivo}</span>}
+                </div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", minWidth: 80, textAlign: "right" }}>{fmtBRL(n.valor_total)}</div>
+              <span style={{ padding: "3px 12px", borderRadius: 20, fontSize: 10.5, fontWeight: 700, background: cor.bg, color: cor.fg, whiteSpace: "nowrap" }}>
+                {cor.label}
+              </span>
+              {n.qr_code_url && (
+                <a href={n.qr_code_url} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 11, color: "#15803d", fontWeight: 700, textDecoration: "none", padding: "5px 10px", border: "1px solid #bbf7d0", borderRadius: 6, background: "#f0fdf4" }}>
+                  Consultar
+                </a>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
+        Fonte: <code>nfce_emitidas</code> (motores <code>novo</code> = Focus NFe, <code>antigo</code> = SEFAZ direto). Registros imutáveis — não podem ser editados/removidos pelo cliente.
+      </div>
+    </>
+  );
+}
+
+// ═══ SEÇÃO FISCAL — reservada ao Operador Nexus ══════════════════════════════
+// A configuração de NFC-e (CNPJ, certificado A1, token do provedor, e-mail da
+// contabilidade) fica AQUI, atrás da senha de Suporte — nunca na área do
+// cliente. Depois de configurado uma vez, o cliente só vê a nota ser emitida
+// no fluxo normal (cobrança/fechamento); não consegue apagar registros nem
+// mexer nos parâmetros fiscais. Isso protege a Nexus de qualquer alegação
+// de sonegação: quem opera com os dados fiscais é o Operador, não o lojista.
+function SecaoFiscal() {
+  return (
+    <>
+      <div>
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 22, fontWeight: 800, color: "#1c1917" }}>Fiscal / NFC-e</div>
+        <div style={{ fontSize: 13, color: "#78716c" }}>Área do Operador Nexus. Configurada uma vez por cliente; o estabelecimento não tem acesso.</div>
+      </div>
+      <div style={{ padding: "12px 16px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, fontSize: 12.5, color: "#92400e", lineHeight: 1.6 }}>
+        <b>⚠️ Atenção Operador:</b> a partir daqui você vai anexar o certificado A1 e o CNPJ do cliente. Uma vez ativa a emissão, as notas passam a ter valor fiscal real na SEFAZ.
+        A responsabilidade sobre o que é declarado corre pela conta do estabelecimento — a Nexus fornece a ferramenta, não emite pelo cliente. Só habilite a emissão em <b>Produção</b> depois de testar em <b>Homologação</b>.
+      </div>
+      <Suspense fallback={<div style={{ padding: 30, textAlign: "center", color: "#a8a29e", fontSize: 13 }}>Abrindo módulo Fiscal…</div>}>
+        <FiscalTab />
+      </Suspense>
+    </>
   );
 }

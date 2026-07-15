@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Nexus PDV — Conectando</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+  body { background: #0d0f14; color: #e7e9ee; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 28px; }
+  .card { width: 100%; max-width: 460px; }
+  .logo { font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
+  .logo span { color: #7c5cfc; }
+  .sub { color: #9aa3b0; font-size: 13.5px; margin-bottom: 22px; }
+  .alerta { background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.4); color: #fcd34d; border-radius: 12px; padding: 13px 15px; font-size: 13.5px; line-height: 1.5; margin-bottom: 10px; }
+  .host { font-family: 'Consolas', monospace; font-size: 13px; color: #b9c0cc; background: #12141b; border: 1px solid #222732; border-radius: 8px; padding: 8px 12px; margin-bottom: 20px; word-break: break-all; }
+  label { display: block; font-size: 11px; font-weight: 700; letter-spacing: .06em; color: #9aa3b0; text-transform: uppercase; margin-bottom: 7px; }
+  input.ip { width: 100%; background: #161922; border: 1.5px solid #2a2f3a; border-radius: 12px; color: #e7e9ee; padding: 13px 15px; font-family: 'Consolas', monospace; font-size: 15px; outline: none; }
+  input.ip:focus { border-color: #7c5cfc; }
+  .row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  button { border: none; border-radius: 10px; padding: 12px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .primary { background: #7c5cfc; color: #fff; flex: 1; }
+  .primary:hover { background: #6a49f2; }
+  .ghost { background: #161922; color: #cfd4dd; border: 1.5px solid #2a2f3a; flex: 1; }
+  .ghost:hover { border-color: #3a4150; }
+  .sep { display: flex; align-items: center; gap: 12px; color: #5b626e; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; margin: 26px 0 16px; }
+  .sep::before, .sep::after { content: ""; flex: 1; height: 1px; background: #222732; }
+  .msg { margin-top: 14px; font-size: 13px; min-height: 18px; }
+  .msg.err { color: #ff8f8f; }
+  .msg.ok { color: #4ade80; }
+  .foot { margin-top: 24px; font-size: 11.5px; color: #5b626e; text-align: center; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid #7c5cfc; border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Nexus <span>PDV</span></div>
+  <div class="sub">Modo cliente — conectando à máquina principal</div>
+
+  <div class="alerta">Não foi possível conectar à máquina servidor. Verifique se ela está ligada, com o Nexus PDV aberto, e na mesma rede.</div>
+  <div class="host" id="host">—</div>
+
+  <div class="row">
+    <button class="primary" id="btnTentar">🔄 Tentar novamente</button>
+  </div>
+  <div class="msg" id="msg"></div>
+
+  <div class="sep">ou altere a configuração de rede</div>
+
+  <label>Endereço da máquina servidor</label>
+  <input class="ip" id="ip" placeholder="192.168.0.10" autocomplete="off" spellcheck="false" />
+  <div class="row">
+    <button class="ghost" id="btnSalvarIp">Salvar novo endereço</button>
+  </div>
+  <div class="row">
+    <button class="ghost" id="btnVirarServidor">Tornar esta máquina o servidor</button>
+  </div>
+  <div class="msg" id="msg2"></div>
+
+  <div class="foot" id="versao"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  (async () => {
+    const cfg = await window.rede.obter();
+    $("host").textContent = cfg.servidorHost ? `${cfg.servidorHost}:${cfg.porta}` : "—";
+    $("ip").value = cfg.servidorHost || "";
+    const info = await window.licenca.info().catch(() => null);
+    if (info) $("versao").textContent = "Nexus PDV v" + (info.versao || "1.0.0");
+  })();
+
+  $("btnTentar").onclick = async () => {
+    $("btnTentar").disabled = true;
+    setMsg('<span class="spin"></span> Verificando…', "");
+    await window.licenca.reiniciar();
+  };
+
+  $("btnSalvarIp").onclick = async () => {
+    const ip = $("ip").value.trim();
+    if (!ip) return setMsg2("Informe o endereço da máquina servidor.", "err");
+    $("btnSalvarIp").disabled = true;
+    setMsg2('<span class="spin"></span> Testando conexão…', "");
+    const teste = await window.rede.testar(ip);
+    if (!teste.ok) {
+      setMsg2(teste.motivo || "Não foi possível conectar.", "err");
+      $("btnSalvarIp").disabled = false;
+      return;
+    }
+    setMsg2("Conectado! Salvando e reiniciando…", "ok");
+    await window.rede.salvar({ modo: "cliente", servidorHost: ip });
+  };
+
+  $("btnVirarServidor").onclick = async () => {
+    if (!confirm("Esta máquina vai virar o servidor principal — vai subir o banco de dados dela própria. Use apenas se essa realmente for a máquina que deve guardar os dados do estabelecimento. Continuar?")) return;
+    await window.rede.salvar({ modo: "servidor", servidorHost: "" });
+  };
+
+  function setMsg(t, cls)  { const m = $("msg");  m.innerHTML = t; m.className = "msg " + (cls || ""); }
+  function setMsg2(t, cls) { const m = $("msg2"); m.innerHTML = t; m.className = "msg " + (cls || ""); }
+</script>
+</body>
+</html>

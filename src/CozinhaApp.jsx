@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
+import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
+import { cardapioDoProduto } from "./segmentos";
 import {
   isWebUsbSuportado,
   conectarImpressora as usbConectar,
@@ -152,12 +154,13 @@ function ModalAdicionaisInline({ produto, adicionais, onConfirm, onClose }) {
 }
 
 // ─── MODAL PEDIDO MANUAL (light, for overlay) ──────────────────────────────
-function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave, onClose }) {
+function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, cardapios = [], onSave, onClose }) {
   const [clienteNome, setClienteNome] = useState("");
   const [obs, setObs] = useState("");
   const [itens, setItens] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [modalAdItem, setModalAdItem] = useState(null);
+  const [montagemProduto, setMontagemProduto] = useState(null); // {produto, cardapio, irmaos, adicionais}
   const [registrados, setRegistrados] = useState(0); // T11: contador de lançamentos na sessão
 
   const catPermiteAdicionais = {};
@@ -167,11 +170,39 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
   const nextUid = () => `_manual_${Date.now()}_${++uidCounter.current}`;
 
   const handleClickProduto = (produto) => {
+    // Cozinha manual: usa a mesma montagem por segmento do PDV/atendente.
+    // Se o cardápio do produto tem tamanhos/meio-a-meio/pizzaria/etc → abre
+    // MontagemProduto. Senão cai no fluxo simples (só adicionais lanchonete).
+    const cardapio = cardapioDoProduto(produto, cardapios, categorias);
+    if (cardapio && precisaMontagem(produto, cardapio)) {
+      const cat = categorias.find(c => c.nome === produto.categoria);
+      // Adicionais aplicáveis (categoria específica OU sem categoria)
+      const adsAplicaveis = adicionaisDisponiveis.filter(a => !a.categoria || a.categoria === produto.categoria);
+      const irmaos = produtos.filter(p => p.disponivel && p.categoria === produto.categoria);
+      setMontagemProduto({ produto, cardapio, adicionais: adsAplicaveis, irmaos, catPermiteAdicionais: !!cat?.permite_adicionais });
+      return;
+    }
     if (catPermiteAdicionais[produto.categoria] && adicionaisDisponiveis.length > 0) {
       setModalAdItem(produto);
     } else {
       addItem(produto, []);
     }
+  };
+
+  // Callback da MontagemProduto: recebe o item pronto e adiciona ao pedido
+  const addItemMontado = (item) => {
+    const adKey = (item.adicionais || []).map(a => `${a.id}:${a.quantidade || 1}`).sort().join(",");
+    setItens(prev => [...prev, {
+      _uid: nextUid(),
+      _adKey: adKey,
+      produto_id: item.produto_id,
+      produto_nome: item.produto_nome,
+      preco_unitario: item.preco_unitario,
+      quantidade: item.quantidade || 1,
+      adicionais: item.adicionais || [],
+      obs: item.obs || "",
+    }]);
+    setMontagemProduto(null);
   };
 
   const addItem = (produto, adicionaisSel) => {
@@ -329,6 +360,19 @@ function ModalPedidoManual({ produtos, categorias, adicionaisDisponiveis, onSave
             />
           </div>
         )}
+
+        {/* Montagem por segmento (pizzaria, açaí, sorvete…) */}
+        {montagemProduto && (
+          <MontagemProduto
+            produto={montagemProduto.produto}
+            cardapio={montagemProduto.cardapio}
+            adicionais={montagemProduto.catPermiteAdicionais ? montagemProduto.adicionais : []}
+            irmaos={montagemProduto.irmaos}
+            comObs
+            onConfirm={addItemMontado}
+            onClose={() => setMontagemProduto(null)}
+          />
+        )}
       </div>
     </div>
   );
@@ -360,9 +404,20 @@ export default function CozinhaApp({ onNavegar }) {
   });
   const [expandido, setExpandido] = useState(null);
   const [modo, setModo] = useState("fila"); // "fila" = active queue, "historico" = all orders
+  // Modo do módulo (definido no Suporte): "cozinha" (preparação com etapas) OU
+  // "impressao" (apenas cupom, sem Preparar/Pronto — para peixaria etc).
+  // Só afeta rótulos e botões; fluxo de fila+impressão continua igual.
+  const [modoLista, setModoLista] = useState("cozinha");
+  useEffect(() => {
+    api.config.obter().then(c => {
+      if (c.modo_lista_pedidos === "impressao") setModoLista("impressao");
+    }).catch(() => {});
+  }, []);
+  const soImpressao = modoLista === "impressao";
   const [produtos, setProdutos] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [adicionaisDisponiveis, setAdicionaisDisponiveis] = useState([]);
+  const [cardapios, setCardapios] = useState([]);
   const [modalManual, setModalManual] = useState(false);
 
   // ─── SOM & NOTIFICACOES ──────────────────────────────────────────────────
@@ -665,16 +720,18 @@ export default function CozinhaApp({ onNavegar }) {
   // ─── CARREGAR DADOS ──────────────────────────────────────────────────────
   const carregar = useCallback(async () => {
     try {
-      const [peds, fila, prods, cats, ads] = await Promise.all([
+      const [peds, fila, prods, cats, ads, cards] = await Promise.all([
         api.pedidos.listar(),
         api.cozinha.filaUnificada(),
         api.produtos.listar(),
         api.categorias.listar(),
         api.adicionais.listar(),
+        api.cardapios.listar(),
       ]);
       setProdutos(prods);
       setCategorias(cats);
       setAdicionaisDisponiveis(ads);
+      setCardapios(cards);
       const pendentes = peds.filter(p => p.status === "pendente").length;
       const mesaItens = fila.filter(g => g.tipo === "mesa").reduce((s, g) => s + g.itens.length, 0);
       const totalNovo = pendentes + mesaItens;
@@ -906,7 +963,7 @@ export default function CozinhaApp({ onNavegar }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #DC2626 0%, #991B1B 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>{"\u{1F525}"}</div>
           <div>
-            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: -0.3 }}>Cozinha</div>
+            <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: -0.3 }}>{soImpressao ? "Lista de Pedidos" : "Cozinha"}</div>
             <div style={{ fontSize: 11, color: "#777", fontWeight: 500 }}>Gestão completa de pedidos</div>
           </div>
         </div>
@@ -1179,15 +1236,23 @@ export default function CozinhaApp({ onNavegar }) {
                               </div>
                               {item.obs && <div style={{ marginTop: 6, fontSize: 12, color: "#F59E0B", background: "#2A1A0A", padding: "5px 10px", borderRadius: 6, fontWeight: 600 }}>{"\u{1F4DD}"} {item.obs}</div>}
                             </div>
-                            <button className="cz-btn-item" style={{ background: ip ? "#15803d" : "#B45309" }} disabled={!!marcando[item.id]} onClick={() => handleItemStatus(item.id, item.produto_nome, ip ? "pronto" : "preparando")}>
-                              {marcando[item.id] ? "..." : ip ? "✓ Pronto" : "\u{1F525} Preparar"}
-                            </button>
+                            {soImpressao ? null : (
+                              <button className="cz-btn-item" style={{ background: ip ? "#15803d" : "#B45309" }} disabled={!!marcando[item.id]} onClick={() => handleItemStatus(item.id, item.produto_nome, ip ? "pronto" : "preparando")}>
+                                {marcando[item.id] ? "..." : ip ? "✓ Pronto" : "\u{1F525} Preparar"}
+                              </button>
+                            )}
                           </div>
                         );
                       })}
                       {grupo.obs && <div style={{ padding: "10px 18px", borderTop: "1px solid #222", fontSize: 13, color: "#F59E0B", fontWeight: 600 }}>{"\u{1F4DD}"} {grupo.obs}</div>}
                       <div className="cz-card-foot">
-                        {estaPreparando ? (
+                        {soImpressao ? (
+                          // Modo Impressão: pula "preparando/pronto" e vai direto pra entregue.
+                          // O cupom já foi impresso automaticamente quando o pedido chegou.
+                          <button className="cz-btn" style={{ background: "#15803d" }} disabled={!!marcando[grupo.grupo_id]} onClick={() => handleGrupoStatus(grupo, "entregue")}>
+                            {marcando[grupo.grupo_id] ? "Marcando..." : `✓ Entregue — ${grupo.label}`}
+                          </button>
+                        ) : estaPreparando ? (
                           <button className="cz-btn" style={{ background: "#15803d" }} disabled={!!marcando[grupo.grupo_id]} onClick={() => handleGrupoStatus(grupo, "pronto")}>
                             {marcando[grupo.grupo_id] ? "Marcando..." : `✓ Tudo pronto — ${grupo.label}`}
                           </button>
@@ -1389,6 +1454,7 @@ export default function CozinhaApp({ onNavegar }) {
           produtos={produtos}
           categorias={categorias}
           adicionaisDisponiveis={adicionaisDisponiveis}
+          cardapios={cardapios}
           onSave={criarPedidoManual}
           onClose={() => setModalManual(false)}
         />

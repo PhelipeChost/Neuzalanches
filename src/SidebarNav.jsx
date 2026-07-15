@@ -17,6 +17,7 @@ const SECOES = [
   { grupo: "cadastros", key: "produtos",    icon: "🍔", label: "Produtos e Promoções" },
   { grupo: "cadastros", key: "estoque",     icon: "📦", label: "Estoque e Insumos" },
   { grupo: "gestão",    key: "financeiro",  icon: "💰", label: "Financeiro" },
+  // "fiscal" mora só na área do Suporte (Operador Nexus), não aparece na sidebar.
   { grupo: "gestão",    key: "config",      icon: "⚙️", label: "Configurações" },
 ];
 
@@ -36,13 +37,20 @@ export default function SidebarNav({
   pendentesCount = 0,
   podeAcessar,
   syncStatus, // "ok" | "offline" | "sem-config"
+  modoListaPedidos, // "cozinha" (padrão) | "impressao" — renomeia o item da sidebar
 }) {
   const nome = perfil?.nome_estabelecimento || "Nexus PDV";
   const ehNexus = (usuario?.email || "").toLowerCase() === NEXUS_ADMIN_EMAIL;
   // Só a primeira inicial pra funcionários (mais limpo que "MC", "FN" etc.)
   const iniciais = ((usuario?.nome || "N").trim()[0] || "N").toUpperCase();
 
-  const secoesVisiveis = SECOES.filter(s => podeAcessar(s.key));
+  // Aplica o rótulo/ícone certo pro item "cozinha" com base no modo escolhido
+  // no Suporte. Chave interna continua "cozinha" (compatibilidade), UI muda.
+  const secoesVisiveis = SECOES.filter(s => podeAcessar(s.key)).map(s =>
+    s.key === "cozinha" && modoListaPedidos === "impressao"
+      ? { ...s, icon: "📋", label: "Lista de Pedidos" }
+      : s
+  );
   const gruposComItens = GRUPOS.filter(g => secoesVisiveis.some(s => s.grupo === g));
 
   const statusLabel =

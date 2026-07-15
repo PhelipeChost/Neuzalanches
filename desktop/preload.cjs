@@ -17,6 +17,16 @@ contextBridge.exposeInMainWorld("splash", {
   versao: () => ipcRenderer.invoke("splash:versao"),
 });
 
+// Rede local (multi-máquina): modo servidor/cliente entre os PDVs do mesmo
+// estabelecimento (caixa + cozinha + terminais extras na mesma rede).
+contextBridge.exposeInMainWorld("rede", {
+  obter: () => ipcRenderer.invoke("rede:obter"),
+  testar: (host) => ipcRenderer.invoke("rede:testar", host),
+  salvar: (cfg) => ipcRenderer.invoke("rede:salvar", cfg),
+  diagnostico: () => ipcRenderer.invoke("rede:diagnostico"),
+  criarRegraFirewall: () => ipcRenderer.invoke("rede:criarRegraFirewall"),
+});
+
 // Info do PDV (versão do app) — usada pela seção Suporte no diagnóstico.
 contextBridge.exposeInMainWorld("pdvInfo", {
   versao: null, // preenchido no boot pelo próprio main; a UI faz fallback via IPC

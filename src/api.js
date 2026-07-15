@@ -11,14 +11,26 @@ function authHeaders() {
 }
 
 async function request(path, options = {}) {
-  const res = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-      ...options.headers,
-    },
-  });
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+        ...options.headers,
+      },
+      // Sem isso, uma requisição que trava no servidor (ex.: processo externo
+      // travado) fica pendurada pra sempre — sem erro, sem sucesso, sem feedback
+      // nenhum pro usuário. 45s cobre até operações mais lentas (ex.: certificado).
+      signal: options.signal || AbortSignal.timeout(45000),
+    });
+  } catch (e) {
+    if (e.name === "TimeoutError" || e.name === "AbortError") {
+      throw new Error("O servidor demorou demais para responder. Tente novamente.");
+    }
+    throw new Error("Não foi possível conectar ao servidor. Verifique sua conexão.");
+  }
   if (res.status === 401 && !path.startsWith("/auth/")) {
     localStorage.removeItem("token");
     localStorage.removeItem("usuario");
@@ -71,6 +83,7 @@ export const api = {
     emitirNFCe: (pedido_id, simulado = false) => request("/fiscal/nfce/emitir", { method: "POST", body: JSON.stringify({ pedido_id, simulado }) }),
     testarNFCe: () => request("/fiscal/nfce/teste", { method: "POST" }),
     listarNFCe: () => request("/fiscal/nfce"),
+    notaPorPedido: (pedidoId) => request(`/fiscal/nfce/pedido/${pedidoId}`),
     // NFC-e ANTIGO — motor próprio (regras vigentes), emissão REAL direta na SEFAZ
     antigoStatus: () => request("/fiscal/antigo/status", { method: "POST" }),
     antigoEmitir: (pedido_id = null) => request("/fiscal/antigo/emitir", { method: "POST", body: JSON.stringify({ pedido_id }) }),

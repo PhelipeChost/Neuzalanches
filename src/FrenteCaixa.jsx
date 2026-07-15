@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
 import QRCode from "qrcode";
-import { agenteStatus, imprimirBytesViaAgente, gerarQRMesaBytes } from "./cozinhaImpressoraUSB";
+import { agenteStatus, imprimirBytesViaAgente, gerarQRMesaBytes, gerarCupomNFCeBytes, gerarCupomNaoFiscalBytes } from "./cozinhaImpressoraUSB";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
 import { cardapioDoProduto, precoExibicao, produtoPorPeso, fmtQuantidade, fmtPrecoUnitario } from "./segmentos";
 
@@ -88,6 +88,10 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [balcaoBusca, setBalcaoBusca] = useState("");
   // Desconto do carrinho de balcão (F3) — pode ser valor R$ ou percentual
   const [balcaoDesconto, setBalcaoDesconto] = useState({ tipo: "valor", valor: 0 });
+  // Emissão de NFC-e é opcional por venda — padrão ligado (opt-out), o caixa
+  // desmarca se não quiser emitir nessa venda específica.
+  const [balcaoEmitirNfce, setBalcaoEmitirNfce] = useState(true);
+  const [nfceDisponivel, setNfceDisponivel] = useState(false);
   // Modal buscar produto (F2): entrada por nome/código + resultado da lista
   const [modalBuscarProduto, setModalBuscarProduto] = useState(false);
   const [buscaProdutoTermo, setBuscaProdutoTermo] = useState("");
@@ -141,16 +145,13 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [agenteQROnline, setAgenteQROnline] = useState(false);
   // Nome do estabelecimento (vai no topo do cupom do QR). Cache local p/ uso imediato.
   const marcaRef = useRef((() => { try { return localStorage.getItem("nl_nome_estab") || ""; } catch { return ""; } })());
-  // Carrossel de produtos (Mapa do Salão): evita que a lista de produtos empurre
-  // o Mapa de Mesas pra fora da tela quando há muitos itens cadastrados.
-  const prodCarrosselRef = useRef(null);
-  const rolarCarrossel = (dir) => {
-    const el = prodCarrosselRef.current;
-    if (el) el.scrollBy({ left: dir * 340, behavior: "smooth" });
-  };
   useEffect(() => {
     api.config.estabelecimento()
-      .then(r => { const n = (r && r.nome_estabelecimento) || ""; if (n) { marcaRef.current = n; try { localStorage.setItem("nl_nome_estab", n); } catch {} } })
+      .then(r => {
+        const n = (r && r.nome_estabelecimento) || "";
+        if (n) { marcaRef.current = n; try { localStorage.setItem("nl_nome_estab", n); } catch {} }
+        setNfceDisponivel(!!r?.nfce_disponivel);
+      })
       .catch(() => {});
   }, []);
 
@@ -465,13 +466,54 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         tipo_entrega: "retirada",
         metodo_pagamento: "",
         desconto: balcaoDescontoValor,
+        emitir_nfce: balcaoEmitirNfce,
       });
       setBalcaoItens([]);
       setBalcaoCliente("");
       setBalcaoDesconto({ tipo: "valor", valor: 0 });
+      setBalcaoEmitirNfce(true);
       await carregarTudo();
       showToast(`Pedido #${pedido.id.slice(0, 6)} criado!`);
     } catch (err) { showToast(err.message, "var(--danger)"); }
+  };
+
+  // Reimpressão do histórico F9 — duas opções explícitas (o caixa escolhe qual
+  // imprimir, não fica preso à decisão automática): DANFE-NFCe (exige nota
+  // autorizada) ou cupom não fiscal (sempre disponível, sem consultar nota).
+  const handleImprimirCupomFiscal = async (pedidoResumo) => {
+    try {
+      const [pedidoCompleto, nota] = await Promise.all([
+        api.pedidos.buscar(pedidoResumo.id),
+        api.fiscal.notaPorPedido(pedidoResumo.id).catch(() => null),
+      ]);
+      if (!nota || nota.status !== "autorizada") {
+        const LABELS_STATUS = { simulada: "nota simulada (sem valor fiscal)", processando: "nota ainda em processamento", rejeitada: "nota rejeitada", cancelada: "nota cancelada", erro: "erro na emissão" };
+        const motivo = !nota ? "nenhuma nota fiscal emitida para este pedido"
+          : (LABELS_STATUS[nota.status] || `status "${nota.status}"`) + (nota.motivo ? ": " + nota.motivo : "");
+        showToast(`Sem nota fiscal autorizada — ${motivo}`, "var(--danger)");
+        return;
+      }
+      let qrMatrix = null;
+      if (nota.qr_code_url) {
+        try { qrMatrix = QRCode.create(nota.qr_code_url, { errorCorrectionLevel: "M" }).modules; } catch {}
+      }
+      const bytes = gerarCupomNFCeBytes(pedidoCompleto, pedidoCompleto.itens, nota, marcaRef.current, qrMatrix);
+      await imprimirBytesViaAgente(bytes);
+      showToast("🧾 Nota fiscal (DANFE-NFCe) enviada pra impressora");
+    } catch (err) {
+      showToast("Erro ao imprimir: " + err.message, "var(--danger)");
+    }
+  };
+
+  const handleImprimirCupomNaoFiscal = async (pedidoResumo) => {
+    try {
+      const pedidoCompleto = await api.pedidos.buscar(pedidoResumo.id);
+      const bytes = gerarCupomNaoFiscalBytes(pedidoCompleto, pedidoCompleto.itens, marcaRef.current);
+      await imprimirBytesViaAgente(bytes);
+      showToast("🖨️ Cupom não fiscal enviado pra impressora");
+    } catch (err) {
+      showToast("Erro ao imprimir: " + err.message, "var(--danger)");
+    }
   };
 
   const handleCobrarPedido = (pedido) => {
@@ -806,7 +848,8 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         .fc-nav-tab { padding: 7px 16px; border-radius: 8px; border: none; background: transparent; cursor: pointer; font-family: inherit; font-size: 13px; color: var(--text-muted); font-weight: 500; transition: all 0.15s; }
         .fc-nav-tab:hover { background: var(--surface); color: var(--text); }
         .fc-nav-tab.active { background: var(--surface); color: var(--gold-deep); font-weight: 700; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
-        .fc-layout { max-width: 1480px; margin: 0 auto; padding: 24px 28px; display: grid; grid-template-columns: 1fr 380px; gap: 24px; }
+        .fc-layout { max-width: 1480px; margin: 0 auto; padding: 24px 28px; display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 24px; }
+        .fc-layout > main { min-width: 0; }
         .fc-stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 22px; }
         .fc-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; position: relative; overflow: hidden; }
         .fc-stat-icon { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
@@ -943,52 +986,11 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
             </div>
           </div>
 
-          {/* ─── VENDA RÁPIDA INLINE ─── (Produtos + F-keys) ───────────────── */}
-          {/* Fallback pro balcão: quando o cardápio digital ou o pedido do
-              garçom dá problema, o caixa lança pelo balcão sem sair do salão. */}
-          <div className="fc-map-card" style={{ marginBottom: 20 }}>
-            <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: -0.2 }}>Produtos</div>
-              <input className="fc-input" value={balcaoBusca}
-                onChange={e => setBalcaoBusca(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter" && balcaoBusca.trim()) {
-                    const q = balcaoBusca.toLowerCase();
-                    const codMatch = produtos.find(p => (p.codigo || "").trim() === balcaoBusca.trim());
-                    if (codMatch) { handleAddBalcaoItem(codMatch); showToast(`✓ ${codMatch.nome}`); setBalcaoBusca(""); }
-                    else {
-                      const primeiro = produtos.find(p => p.nome.toLowerCase().includes(q));
-                      if (primeiro) { handleAddBalcaoItem(primeiro); setBalcaoBusca(""); }
-                    }
-                  }
-                }}
-                placeholder="Buscar produto / código (Enter) — F2 abre busca"
-                style={{ width: 380, maxWidth: "100%", fontSize: 12 }}
-              />
-            </div>
-            <div style={{ padding: "12px 6px", display: "flex", alignItems: "center", gap: 6 }}>
-              <button onClick={() => rolarCarrossel(-1)} title="Anterior"
-                style={{ flexShrink: 0, width: 30, height: 60, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--surface)", color: "var(--text-muted)", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>‹</button>
-              <div ref={prodCarrosselRef} style={{ display: "flex", gap: 10, overflowX: "auto", scrollSnapType: "x proximity", padding: "0 4px", scrollbarWidth: "thin" }}>
-                {produtos.filter(p => {
-                  if (!balcaoBusca) return true;
-                  const q = balcaoBusca.toLowerCase();
-                  return p.nome.toLowerCase().includes(q) || (p.codigo || "").toLowerCase().includes(q) || (p.categoria || "").toLowerCase().includes(q);
-                }).map(prod => (
-                  <div key={prod.id} className="fc-prod-item" onClick={() => handleAddBalcaoItem(prod)}
-                    style={{ flex: "0 0 150px", scrollSnapAlign: "start" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, lineHeight: 1.3 }}>{prod.nome}</div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(prod.preco)}</div>
-                    {prod.categoria && <div style={{ fontSize: 10, color: "var(--text-soft)", marginTop: 2 }}>{prod.categoria}</div>}
-                  </div>
-                ))}
-              </div>
-              <button onClick={() => rolarCarrossel(1)} title="Próximo"
-                style={{ flexShrink: 0, width: 30, height: 60, borderRadius: 8, border: "1.5px solid var(--border)", background: "var(--surface)", color: "var(--text-muted)", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>›</button>
-            </div>
-          </div>
-
           {/* BARRA DE ATALHOS F1-F10 (inline no salão) */}
+          {/* A listagem de produtos foi removida do modo mesas: com catálogos
+              grandes ela quebrava o grid (.fc-layout) e empurrava a coluna
+              direita (com o botão Finalizar) para fora da área visível.
+              Lançamento de item aqui é só via busca (F2). */}
           <div style={{ marginBottom: 20, background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 10, padding: "10px 12px", display: "flex", flexWrap: "wrap", gap: 6 }}>
             {[
               { k: "F1", l: "Nova", act: novaVenda, color: "var(--info)" },
@@ -1144,6 +1146,12 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                   </div>
                 ))}
               </div>
+              {nfceDisponivel && (
+                <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer", borderTop: "1px solid var(--border)" }}>
+                  <input type="checkbox" checked={balcaoEmitirNfce} onChange={e => setBalcaoEmitirNfce(e.target.checked)} />
+                  Emitir nota fiscal desta venda
+                </label>
+              )}
               <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--surface-2)" }}>
                 <div>
                   <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 700, letterSpacing: 0.5, textTransform: "uppercase" }}>Total</div>
@@ -1505,6 +1513,12 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                           – {fmtBRL(balcaoDescontoValor)} {balcaoDesconto.tipo === "percentual" ? `(${balcaoDesconto.valor}%)` : ""}
                         </div>
                       </div>
+                    )}
+                    {nfceDisponivel && (
+                      <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 18px", fontSize: 11.5, color: "var(--text-muted)", cursor: "pointer", borderTop: "1px dashed var(--border)" }}>
+                        <input type="checkbox" checked={balcaoEmitirNfce} onChange={e => setBalcaoEmitirNfce(e.target.checked)} />
+                        Emitir nota fiscal desta venda
+                      </label>
                     )}
                     <div style={{ padding: "12px 18px", borderTop: "1px solid var(--border)", background: "var(--surface-2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                       <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 600 }}>Total</div>
@@ -2011,18 +2025,25 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               {balcaoPedidos.length === 0 ? (
                 <div style={{ padding: 20, textAlign: "center", color: "var(--text-soft)" }}>Nenhum pedido hoje.</div>
               ) : balcaoPedidos.map(p => (
-                <div key={p.id} onClick={() => { setBalcaoSel(p); setModalUltimasVendas(false); }}
-                  style={{ padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer", display: "grid", gridTemplateColumns: "auto 1fr auto auto", alignItems: "center", gap: 12 }}>
-                  <span style={{ fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>#{p.id.slice(0, 6)}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600 }}>{p.cliente_nome || "Balcão"}</span>
+                <div key={p.id}
+                  style={{ padding: "10px 14px", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, display: "grid", gridTemplateColumns: "auto 1fr auto auto auto", alignItems: "center", gap: 12 }}>
+                  <span onClick={() => { setBalcaoSel(p); setModalUltimasVendas(false); }} style={{ cursor: "pointer", fontFamily: "monospace", fontSize: 12, color: "var(--text-muted)" }}>#{p.id.slice(0, 6)}</span>
+                  <span onClick={() => { setBalcaoSel(p); setModalUltimasVendas(false); }} style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>{p.cliente_nome || "Balcão"}</span>
                   <span style={{ fontSize: 10, textTransform: "uppercase", fontWeight: 700, padding: "2px 8px", borderRadius: 4,
                     background: ({ pendente: "var(--info-bg)", confirmado: "var(--info-bg)", preparando: "var(--warning-bg)", pronto: "var(--success-bg)", entregue: "var(--success-bg)", cancelado: "var(--danger-bg)" })[p.status] || "var(--surface-2)",
                     color: ({ pendente: "var(--info)", confirmado: "var(--info)", preparando: "var(--warning)", pronto: "var(--success)", entregue: "var(--success)", cancelado: "var(--danger)" })[p.status] || "var(--text-muted)" }}>{p.status}</span>
                   <span style={{ fontSize: 14, fontWeight: 800, color: "var(--gold-deep)" }}>{fmtBRL(p.total)}</span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button title="Imprimir nota fiscal (DANFE-NFCe) — exige nota autorizada" onClick={() => handleImprimirCupomFiscal(p)}
+                      style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-muted)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>🧾</button>
+                    <button title="Imprimir cupom não fiscal" onClick={() => handleImprimirCupomNaoFiscal(p)}
+                      style={{ width: 26, height: 26, borderRadius: 6, border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text-muted)", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>🖨️</button>
+                  </div>
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>🧾 nota fiscal · 🖨️ cupom não fiscal</div>
               <button className="fc-btn fc-btn-secondary" onClick={() => setModalUltimasVendas(false)}>Fechar (ESC)</button>
             </div>
           </div>

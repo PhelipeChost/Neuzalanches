@@ -12,8 +12,8 @@
 //   { produto_id, produto_nome, preco_unitario, quantidade, adicionais[], obs }
 // O nome composto ("½ Calabresa ½ Marguerita — Grande") viaja pelo fluxo
 // existente de pedidos/comandas/cozinha sem nenhuma mudança lá.
-import { useState } from "react";
-import { infoSegmento, parseConfig, tamanhosDoProduto, precoMeioAMeio, precoDoTamanho } from "./segmentos";
+import { useState, useMemo } from "react";
+import { infoSegmento, parseConfig, tamanhosDoProduto, precoMeioAMeio, precoDoTamanho, tamanhosPizzaDoCardapio, ingredientesDoProduto, nomePizza, fatorCmvTamanho } from "./segmentos";
 
 const fmt = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -23,6 +23,8 @@ export function precisaMontagem(produto, cardapio) {
   if (seg.recursos.tamanhos && tamanhosDoProduto(produto).length > 0) return true;
   if (seg.recursos.meioAMeio) return true;
   if (seg.recursos.complementos) return true;
+  // Pizzaria v2: tem tamanhos no cardápio → sempre montagem
+  if (cardapio?.tipo === "pizzeria" && tamanhosPizzaDoCardapio(cardapio).length > 0) return true;
   return false;
 }
 
@@ -37,32 +39,75 @@ export default function MontagemProduto({
 }) {
   const seg = infoSegmento(cardapio?.tipo);
   const cfg = parseConfig(cardapio?.config);
-  const tamanhos = tamanhosDoProduto(produto);
+
+  // Pizzaria v2: tamanhos moram no cardápio (com fatias + max_sabores). Se
+  // existirem, o modo pizza toma conta de todo o fluxo (tamanho → N sabores →
+  // remoção de ingredientes → borda → adicionais).
+  const tamanhosPizza = cardapio?.tipo === "pizzeria" ? tamanhosPizzaDoCardapio(cardapio) : [];
+  const modoPizza = tamanhosPizza.length > 0;
+
+  const tamanhos = modoPizza
+    ? tamanhosPizza.map(t => ({ nome: t.nome, preco: precoDoTamanho(produto, t.nome) }))
+    : tamanhosDoProduto(produto);
 
   const [tamanho, setTamanho] = useState(tamanhos.length === 1 ? tamanhos[0].nome : "");
   const [meioAMeio, setMeioAMeio] = useState(false);
-  const [sabor2, setSabor2] = useState(null); // produto irmão
+  const [sabor2, setSabor2] = useState(null); // produto irmão (fluxo legado 2 sabores)
   const [borda, setBorda] = useState(null);   // { nome, preco }
   const [sel, setSel] = useState([]);         // [{ id, nome, preco, quantidade, _ordem }]
   const [obs, setObs] = useState("");
   const [qtd, setQtd] = useState(1);
   let ordemRef = sel.reduce((m, s) => Math.max(m, s._ordem || 0), 0);
 
-  const temTamanhos = seg.recursos.tamanhos && tamanhos.length > 0;
+  const temTamanhos = (seg.recursos.tamanhos || modoPizza) && tamanhos.length > 0;
   const permiteMeio = seg.recursos.meioAMeio && (cfg.meio_a_meio ?? true) !== false && irmaos.length > 0;
   const bordas = seg.recursos.bordas ? (cfg.bordas || []).filter(b => b.nome) : [];
   const inclusos = seg.recursos.complementos ? Math.max(0, parseInt(cfg.inclusos, 10) || 0) : 0;
 
-  // Sabores compatíveis para meio a meio: irmãos que tenham o MESMO tamanho
-  const irmaosCompativeis = irmaos.filter(p => {
+  // ── PIZZA v2: N sabores dinâmicos ────────────────────────────────────────
+  // saboresSel[0] = produto (fixo, o clicado). saboresSel[1..N-1] = irmãos.
+  // ingredientesRemovidos = { [produtoId]: [nomeIngrediente, ...] } por sabor.
+  const tamanhoAtivo = modoPizza ? tamanhosPizza.find(t => t.nome === tamanho) : null;
+  const maxSabores = tamanhoAtivo?.max_sabores ?? 1;
+  const [saboresSel, setSaboresSel] = useState([produto]);
+  const [ingredientesRemovidos, setIngredientesRemovidos] = useState({}); // { [produtoId]: Set<nome> }
+
+  // Se o cliente reduzir o tamanho, corta sabores extras
+  const saboresRecortados = saboresSel.slice(0, Math.max(1, maxSabores));
+  if (saboresRecortados.length !== saboresSel.length && modoPizza) {
+    // Efeito lateral simples — corta no próximo render se preciso
+    setTimeout(() => setSaboresSel(prev => prev.slice(0, Math.max(1, maxSabores))), 0);
+  }
+
+  const toggleIngrediente = (produtoId, ingrediente) => {
+    setIngredientesRemovidos(prev => {
+      const set = new Set(prev[produtoId] || []);
+      if (set.has(ingrediente)) set.delete(ingrediente);
+      else set.add(ingrediente);
+      return { ...prev, [produtoId]: Array.from(set) };
+    });
+  };
+
+  // Sabores compatíveis para meio a meio / adicionar mais sabores:
+  // irmãos que tenham o MESMO tamanho selecionado.
+  const irmaosCompativeis = useMemo(() => irmaos.filter(p => {
     if (p.id === produto.id) return false;
     if (!temTamanhos) return true;
     if (!tamanho) return true;
+    if (modoPizza) return true; // preço vem de precoDoTamanho (cai no produto.preco se não tiver)
     return tamanhosDoProduto(p).some(t => t.nome === tamanho);
-  });
+  }), [irmaos, produto.id, temTamanhos, tamanho, modoPizza]);
 
   // ── Preço ──────────────────────────────────────────────────────────────────
   const precoBase = (() => {
+    if (modoPizza && tamanho) {
+      // Preço = max/média dos preços dos sabores escolhidos NESSE tamanho
+      const precos = saboresRecortados.map(s => precoDoTamanho(s, tamanho));
+      if (precos.length === 0) return 0;
+      if (precos.length === 1) return precos[0];
+      // Reduce com a regra do cardápio (maior ou média)
+      return precos.reduce((acc, p) => precoMeioAMeio(acc, p, cfg.regra_preco), precos[0]);
+    }
     const pA = temTamanhos ? precoDoTamanho(produto, tamanho || tamanhos[0]?.nome) : Number(produto.preco || 0);
     if (meioAMeio && sabor2) {
       const pB = temTamanhos ? precoDoTamanho(sabor2, tamanho || tamanhos[0]?.nome) : Number(sabor2.preco || 0);
@@ -111,27 +156,65 @@ export default function MontagemProduto({
   const { lista: adicionaisFinal, totalAdd } = resolverAdicionais();
   const precoBorda = borda ? Number(borda.preco || 0) : 0;
 
-  const prontoParaConfirmar = (!temTamanhos || !!tamanho) && (!meioAMeio || !!sabor2);
+  const prontoParaConfirmar = (!temTamanhos || !!tamanho)
+    && (!meioAMeio || !!sabor2)
+    && (!modoPizza || saboresRecortados.length >= 1);
 
   const confirmar = () => {
     if (!prontoParaConfirmar) return;
     // Nome composto que viaja pra cozinha/conta
-    let nome = produto.nome;
-    if (meioAMeio && sabor2) nome = `½ ${produto.nome} ½ ${sabor2.nome}`;
-    if (temTamanhos && tamanho) nome = `${nome} — ${tamanho}`;
+    let nome;
+    if (modoPizza) {
+      nome = nomePizza(saboresRecortados, tamanho);
+    } else {
+      nome = produto.nome;
+      if (meioAMeio && sabor2) nome = `½ ${produto.nome} ½ ${sabor2.nome}`;
+      if (temTamanhos && tamanho) nome = `${nome} — ${tamanho}`;
+    }
 
     // Borda viaja como ADICIONAL (linha própria na cozinha/conta); o preço
     // unitário fica só com o valor do sabor/tamanho pra não cobrar duas vezes.
     const ads = [...adicionaisFinal];
     if (borda) ads.push({ id: `borda:${borda.nome}`, nome: `Borda ${borda.nome}`, preco: Number(borda.preco || 0), quantidade: 1 });
 
+    // Pizzaria v2: ingredientes removidos entram como linhas "SEM X" no cozinha
+    // (adicional preço 0). Uma linha por sabor pra a cozinha saber onde tirar.
+    let obsFinal = obs.trim();
+    if (modoPizza) {
+      const notasRemocao = [];
+      for (const s of saboresRecortados) {
+        const removidos = ingredientesRemovidos[s.id];
+        if (removidos && removidos.length > 0) {
+          const prefixo = saboresRecortados.length > 1 ? `[${s.nome}] ` : "";
+          notasRemocao.push(`${prefixo}sem ${removidos.join(", ")}`);
+        }
+      }
+      if (notasRemocao.length > 0) {
+        obsFinal = [obsFinal, notasRemocao.join(" · ")].filter(Boolean).join(" · ");
+      }
+    }
+
+    // CMV por tamanho (pizzaria v2): CMV do sabor mais caro (mesma lógica do
+    // preço) multiplicado pelo fator do tamanho. Se não for pizza, cai no
+    // custo base do produto (backend usa isso como fallback).
+    let custoUnitario = null;
+    if (modoPizza && tamanho) {
+      // Usa custo do sabor com maior preço (aproximação — o item que o cliente
+      // paga é o mais caro; a cozinha usa esse insumo como referência)
+      const saborRef = saboresRecortados.reduce((best, s) =>
+        precoDoTamanho(s, tamanho) > precoDoTamanho(best, tamanho) ? s : best, saboresRecortados[0]);
+      const custoBase = Number(saborRef?.custo || 0);
+      custoUnitario = Math.round(custoBase * fatorCmvTamanho(cardapio, tamanho) * 100) / 100;
+    }
+
     onConfirm({
       produto_id: produto.id,
       produto_nome: nome,
       preco_unitario: precoBase,
+      custo_unitario: custoUnitario,
       quantidade: qtd,
       adicionais: ads,
-      obs: obs.trim(),
+      obs: obsFinal,
     });
   };
 
@@ -166,18 +249,108 @@ export default function MontagemProduto({
             <div>
               <div style={S.secTitle}>1. Escolha o tamanho</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {tamanhos.map(t => (
-                  <button key={t.nome} style={S.pill(tamanho === t.nome)} onClick={() => { setTamanho(t.nome); if (sabor2 && !tamanhosDoProduto(sabor2).some(x => x.nome === t.nome)) setSabor2(null); }}>
-                    {t.nome}
-                    <span style={{ display: "block", fontSize: 11, fontWeight: 800, marginTop: 2 }}>{fmt(t.preco)}</span>
-                  </button>
-                ))}
+                {tamanhos.map(t => {
+                  const meta = modoPizza ? tamanhosPizza.find(x => x.nome === t.nome) : null;
+                  return (
+                    <button key={t.nome} style={{ ...S.pill(tamanho === t.nome), display: "flex", flexDirection: "column", alignItems: "center", minWidth: 90 }}
+                      onClick={() => { setTamanho(t.nome); if (sabor2 && !tamanhosDoProduto(sabor2).some(x => x.nome === t.nome)) setSabor2(null); }}>
+                      <span>{t.nome}</span>
+                      {meta && (
+                        <span style={{ fontSize: 9.5, fontWeight: 700, color: "#a8a29e", marginTop: 1 }}>
+                          {meta.fatias} fatias · até {meta.max_sabores}
+                        </span>
+                      )}
+                      <span style={{ display: "block", fontSize: 11, fontWeight: 800, marginTop: 2 }}>{fmt(t.preco)}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* 2. Meio a meio (pizzaria) */}
-          {permiteMeio && (
+          {/* 2a. PIZZARIA v2: N sabores + remoção de ingredientes por sabor */}
+          {modoPizza && permiteMeio && tamanho && maxSabores >= 1 && (
+            <div>
+              <div style={S.secTitle}>{temTamanhos ? "2." : "1."} Sabores ({saboresRecortados.length}/{maxSabores})</div>
+              <div style={{ fontSize: 11.5, color: "#78716c", marginBottom: 8 }}>
+                Escolha até {maxSabores} sabor{maxSabores > 1 ? "es" : ""}. Preço = {cfg.regra_preco === "media" ? "média dos sabores" : "sabor mais caro"}.
+              </div>
+              {/* Slots — o primeiro é o próprio produto (fixo) */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+                {saboresRecortados.map((s, i) => (
+                  <div key={i} style={{ ...S.row(true) }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: "#a8a29e", minWidth: 22 }}>{i + 1}.</span>
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{s.nome}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 800, color: "#15803d" }}>{fmt(precoDoTamanho(s, tamanho))}</span>
+                    {i > 0 && (
+                      <button onClick={() => setSaboresSel(prev => prev.filter((_, j) => j !== i))}
+                        style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#dc2626", borderRadius: 6, padding: "3px 8px", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>×</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {/* Botão pra escolher mais sabor */}
+              {saboresRecortados.length < maxSabores && (
+                <details style={{ marginBottom: 6 }}>
+                  <summary style={{ cursor: "pointer", padding: "8px 12px", background: "#f5f5f4", borderRadius: 8, fontSize: 12.5, fontWeight: 700, color: "#57534e" }}>
+                    + Adicionar sabor ({maxSabores - saboresRecortados.length} disponível{maxSabores - saboresRecortados.length !== 1 ? "s" : ""})
+                  </summary>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6, maxHeight: 220, overflowY: "auto" }}>
+                    {irmaosCompativeis.filter(p => !saboresRecortados.find(s => s.id === p.id)).map(p => (
+                      <div key={p.id} style={{ ...S.row(false), cursor: "pointer" }} onClick={() => setSaboresSel(prev => [...prev, p])}>
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{p.nome}</span>
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#15803d" }}>{fmt(precoDoTamanho(p, tamanho))}</span>
+                      </div>
+                    ))}
+                    {irmaosCompativeis.filter(p => !saboresRecortados.find(s => s.id === p.id)).length === 0 && (
+                      <div style={{ fontSize: 12, color: "#a8a29e", padding: 8 }}>Sem outros sabores disponíveis para este tamanho.</div>
+                    )}
+                  </div>
+                </details>
+              )}
+              {/* Remoção de ingredientes por sabor */}
+              {saboresRecortados.some(s => ingredientesDoProduto(s).length > 0) && (
+                <details style={{ marginTop: 4 }}>
+                  <summary style={{ cursor: "pointer", padding: "8px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, fontSize: 12.5, fontWeight: 700, color: "#92400e" }}>
+                    🧀 Remover ingredientes (opcional)
+                  </summary>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
+                    {saboresRecortados.map(s => {
+                      const ings = ingredientesDoProduto(s);
+                      if (ings.length === 0) return null;
+                      const removidos = ingredientesRemovidos[s.id] || [];
+                      return (
+                        <div key={s.id} style={{ padding: "10px 12px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" }}>
+                          <div style={{ fontSize: 12, fontWeight: 800, color: "#57534e", marginBottom: 6 }}>{s.nome}</div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                            {ings.map(ing => {
+                              const removido = removidos.includes(ing);
+                              return (
+                                <button key={ing} onClick={() => toggleIngrediente(s.id, ing)}
+                                  style={{
+                                    padding: "5px 11px", borderRadius: 999, cursor: "pointer",
+                                    border: `1.5px solid ${removido ? "#fecaca" : "#e7e5e4"}`,
+                                    background: removido ? "#fef2f2" : "#fff",
+                                    color: removido ? "#dc2626" : "#57534e",
+                                    textDecoration: removido ? "line-through" : "none",
+                                    fontSize: 12, fontWeight: 700, fontFamily: "inherit",
+                                  }}>
+                                  {removido ? "✕ " : ""}{ing}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+
+          {/* 2b. Meio a meio LEGADO (pizzaria antiga sem tamanhos_pizza) */}
+          {!modoPizza && permiteMeio && (
             <div>
               <div style={S.secTitle}>{temTamanhos ? "2." : "1."} Sabores</div>
               <div style={{ display: "flex", gap: 8, marginBottom: meioAMeio ? 10 : 0 }}>
@@ -293,7 +466,9 @@ export default function MontagemProduto({
           </div>
           {!prontoParaConfirmar && (
             <div style={{ fontSize: 11.5, color: "#d97706", marginTop: -8 }}>
-              {temTamanhos && !tamanho ? "Escolha um tamanho. " : ""}{meioAMeio && !sabor2 ? "Escolha a 2ª metade." : ""}
+              {temTamanhos && !tamanho ? "Escolha um tamanho. " : ""}
+              {!modoPizza && meioAMeio && !sabor2 ? "Escolha a 2ª metade. " : ""}
+              {modoPizza && saboresRecortados.length === 0 ? "Escolha pelo menos 1 sabor. " : ""}
             </div>
           )}
         </div>
