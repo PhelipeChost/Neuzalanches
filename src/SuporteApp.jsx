@@ -7,7 +7,7 @@
 //   3) Mercado    → status do stack próprio + acesso
 // Novos tipos de estabelecimento entram como novas seções aqui.
 import { useState, useEffect, lazy, Suspense } from "react";
-import { api } from "./api";
+import { api, API_URL } from "./api";
 import NexusLogo from "./NexusLogo";
 import { SEGMENTOS, RECURSOS_LABELS } from "./segmentos";
 
@@ -138,7 +138,7 @@ function SecaoOperador({ tipos, setTipos, showToast }) {
   useEffect(() => {
     api.sync.config().then(setSincStat).catch(() => {});
     api.suporte.backups().then(setBackups).catch(() => setBackups(null));
-    fetch("/api/health").then(r => r.json()).then(setStatusServidor).catch(() => setStatusServidor({ ok: false }));
+    fetch(`${API_URL}/health`).then(r => r.json()).then(setStatusServidor).catch(() => setStatusServidor({ ok: false }));
     try {
       if (window.licenca?.status) window.licenca.status().then(setLicenca).catch(() => {});
       if (window.pdvInfo?.getVersao) window.pdvInfo.getVersao().then(v => v && setPdvVer("v" + v)).catch(() => {});

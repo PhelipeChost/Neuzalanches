@@ -1,5 +1,8 @@
 const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
 const API = `${_base}/api`;
+// Exportado p/ fetches diretos (fora do wrapper `request`) continuarem
+// respeitando o subpath do build (ex.: /boutiquedepeixes/api/...).
+export const API_URL = API;
 
 function getToken() {
   return localStorage.getItem("token");

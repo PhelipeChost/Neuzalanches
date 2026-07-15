@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api } from "./api";
+import { api, API_URL } from "./api";
 import { ImagemProduto } from "./Produtos";
 import Logo from "./Logo";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
 import { cardapioDoProduto, precoExibicao } from "./segmentos";
+import { BRAND, cssVarsDaMarca, visualCategoria } from "./brand";
 
 // ─── CONFIGURAÇÕES DA MARCA ───────────────────────────────────────────────────
 const WHATSAPP_NUMERO = "5518991589923"; // número do bot conectado
+const ehVitrine = BRAND.layout === "vitrine"; // layout varejo/peixaria (carrossel)
 
 // ─── SLIDESHOW CLIENTE (modal de detalhe) ─────────────────────────────────────
 function SlideshowModal({ produto }) {
@@ -34,12 +36,12 @@ function SlideshowModal({ produto }) {
 
   if (imagens.length === 0) return (
     <div style={{ width: "100%", height: 240, background: "var(--surface-warm)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <span style={{ fontSize: 56, opacity: 0.35 }}>🍔</span>
+      <span style={{ fontSize: 56, opacity: 0.35 }}>{BRAND.emblema || "🍽️"}</span>
     </div>
   );
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 260, background: "#5C2A0A", overflow: "hidden", userSelect: "none" }}
+    <div style={{ position: "relative", width: "100%", height: 260, background: "var(--dark)", overflow: "hidden", userSelect: "none" }}
       onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <img src={imagens[idx]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       {imagens.length > 1 && (
@@ -76,7 +78,7 @@ function nextUid() { return `_${Date.now()}_${++uidCounter}`; }
 // ─── HORÁRIO DE FUNCIONAMENTO — lido da API ───────────────────────────────────
 async function fetchHorarioAberto() {
   try {
-    const r = await fetch("/api/config/horario");
+    const r = await fetch(`${API_URL}/config/horario`);
     if (!r.ok) return true;
     const data = await r.json();
     return !!data.aberto;
@@ -196,7 +198,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho, nfceDisponivel }) {
 
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 22 }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.3px" }}>Finalizar Pedido</div>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 22, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.3px" }}>Finalizar Pedido</div>
           <button onClick={onClose} style={{ background: "var(--surface-warm)", border: "none", borderRadius: "50%", width: 34, height: 34, fontSize: 16, cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
 
@@ -294,7 +296,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho, nfceDisponivel }) {
 
             {tipoEntrega === "retirada" && (
               <div style={{ background: "var(--brand-light)", border: "1.5px solid var(--brand)", borderRadius: 12, padding: "18px 20px" }}>
-                <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>🏪 Retirada no estabelecimento</div>
+                <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, marginBottom: 8, fontFamily: "var(--font-display)" }}>🏪 Retirada no estabelecimento</div>
                 <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
                   Quando o pedido estiver pronto, você receberá um aviso pelo WhatsApp para vir buscar.
                 </div>
@@ -303,7 +305,7 @@ function ModalCheckout({ onConfirm, onClose, totalCarrinho, nfceDisponivel }) {
 
             {tipoEntrega === "casa" && (
               <div style={{ background: "var(--brand-light)", border: "1.5px solid var(--brand)", borderRadius: 12, padding: "18px 20px" }}>
-                <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>🍽️ Consumir no local</div>
+                <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, marginBottom: 8, fontFamily: "var(--font-display)" }}>🍽️ Consumir no local</div>
                 <div style={{ fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
                   Seu pedido será preparado e servido diretamente na sua mesa.
                 </div>
@@ -466,14 +468,14 @@ function ModalAdicionais({ produto, adicionais, maxAdicionais = 0, onConfirm, on
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "var(--surface)", borderRadius: 18, padding: "26px 28px", width: 440, maxWidth: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,0.3)", border: "1.5px solid var(--border)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.3px" }}>Adicionais</div>
+          <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 800, color: "var(--text)", letterSpacing: "-0.3px" }}>Adicionais</div>
           <button onClick={onClose} style={{ background: "var(--surface-warm)", border: "none", borderRadius: "50%", width: 34, height: 34, fontSize: 16, cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
 
         <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 18, padding: "14px 16px", background: "var(--surface-warm)", borderRadius: 12 }}>
           <ImagemProduto src={produto.imagem} tamanho={52} borderRadius={10} />
           <div>
-            <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text)" }}>{produto.nome}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--text)" }}>{produto.nome}</div>
             <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, fontFamily: "'Plus Jakarta Sans', sans-serif", marginTop: 2 }}>{fmt(produto.preco)}</div>
           </div>
         </div>
@@ -575,12 +577,12 @@ function BannerFechado() {
           <div style={{ ...labelStyle, marginBottom: 12 }}>Horário</div>
           <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
             <div style={{ background: "var(--surface)", borderRadius: 12, padding: "12px 22px", textAlign: "center", border: "1.5px solid var(--border-dark)" }}>
-              <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text)", letterSpacing: "-0.5px" }}>19:00</div>
+              <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--text)", letterSpacing: "-0.5px" }}>19:00</div>
               <div style={{ fontSize: 10, color: "var(--text-soft)", marginTop: 2, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Abre</div>
             </div>
             <div style={{ color: "var(--text-soft)", fontSize: 20 }}>→</div>
             <div style={{ background: "var(--surface)", borderRadius: 12, padding: "12px 22px", textAlign: "center", border: "1.5px solid var(--border-dark)" }}>
-              <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text)", letterSpacing: "-0.5px" }}>01:00</div>
+              <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--text)", letterSpacing: "-0.5px" }}>01:00</div>
               <div style={{ fontSize: 10, color: "var(--text-soft)", marginTop: 2, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Fecha</div>
             </div>
             <div style={{ marginLeft: 8, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, fontWeight: 600 }}>
@@ -597,11 +599,11 @@ function BannerFechado() {
 function DestaquesSecao({ promos, onAdd, onVerDetalhes }) {
   return (
     <div style={{ marginBottom: 56, position: "relative" }}>
-      {/* Header com banner em gradiente quente */}
+      {/* Header com banner em gradiente da marca */}
       <div style={{
-        background: "linear-gradient(135deg, #FBBF24 0%, #F59E0B 50%, #DC2626 100%)",
+        background: BRAND.hero.gradiente,
         borderRadius: 16, padding: "18px 22px",
-        boxShadow: "0 8px 24px rgba(220,38,38,0.25)",
+        boxShadow: BRAND.hero.sombra,
         marginBottom: 18,
         position: "relative", overflow: "hidden",
       }}>
@@ -612,22 +614,22 @@ function DestaquesSecao({ promos, onAdd, onVerDetalhes }) {
           pointerEvents: "none",
         }} />
         <div style={{ display: "flex", alignItems: "center", gap: 14, position: "relative", zIndex: 1 }}>
-          <div style={{ fontSize: 38, animation: "wiggle 1.6s ease-in-out infinite" }}>🔥</div>
+          <div style={{ fontSize: 38, animation: "wiggle 1.6s ease-in-out infinite" }}>{BRAND.hero.emoji}</div>
           <div>
             <div style={{
-              fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
-              fontSize: 24, fontWeight: 900,
+              fontFamily: "var(--font-display)",
+              fontSize: 25, fontWeight: 700,
               color: "#fff", letterSpacing: "-0.3px", lineHeight: 1.05,
               textShadow: "0 2px 6px rgba(0,0,0,0.2)",
             }}>
-              Destaques do dia
+              {BRAND.hero.titulo}
             </div>
             <div style={{
               fontSize: 12, color: "rgba(255,255,255,0.95)",
               marginTop: 4, fontWeight: 600,
-              fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
+              fontFamily: "'Nunito', sans-serif",
             }}>
-              Promoções e combos só hoje · Não perca!
+              {BRAND.hero.sub}
             </div>
           </div>
           <div style={{ marginLeft: "auto", background: "rgba(255,255,255,0.22)", color: "#fff",
@@ -685,23 +687,23 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
 
   return (
     <div style={{
-      background: "#fff",
-      border: "2px solid #F59E0B",
+      background: "var(--surface)",
+      border: `2px solid ${BRAND.promo.borda}`,
       borderRadius: 16,
       overflow: "hidden",
       cursor: "pointer",
       position: "relative",
       transition: "transform 0.2s, box-shadow 0.2s",
-      boxShadow: "0 4px 16px rgba(245,158,11,0.18), 0 1px 3px rgba(0,0,0,0.04)",
+      boxShadow: "0 4px 16px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04)",
       display: "flex", flexDirection: "column",
     }}
       onClick={() => onVerDetalhes(p)}
-      onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 12px 28px rgba(220,38,38,0.25), 0 4px 8px rgba(0,0,0,0.08)"; }}
-      onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(245,158,11,0.18), 0 1px 3px rgba(0,0,0,0.04)"; }}
+      onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-3px)"; e.currentTarget.style.boxShadow = "0 12px 28px rgba(0,0,0,0.16), 0 4px 8px rgba(0,0,0,0.08)"; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04)"; }}
     >
-      {/* Faixa "PROMOÇÃO" no topo */}
+      {/* Faixa "DESTAQUE" no topo */}
       <div style={{
-        background: "linear-gradient(90deg, #DC2626 0%, #F59E0B 100%)",
+        background: BRAND.promo.faixa,
         color: "#fff",
         padding: "5px 12px",
         fontSize: 10,
@@ -711,7 +713,7 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
         textTransform: "uppercase",
         position: "relative", overflow: "hidden",
       }}>
-        <span style={{ position: "relative", zIndex: 1 }}>⭐ Promoção · Destaque do dia ⭐</span>
+        <span style={{ position: "relative", zIndex: 1 }}>★ Destaque do dia ★</span>
         <div style={{
           position: "absolute", inset: 0,
           background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)",
@@ -721,19 +723,19 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
       </div>
 
       {/* Imagem com badges */}
-      <div style={{ position: "relative", aspectRatio: "16/10", background: "#fff5e0", overflow: "hidden" }}>
+      <div style={{ position: "relative", aspectRatio: "16/10", background: "var(--surface-warm)", overflow: "hidden" }}>
         {p.imagem ? (
           <img src={p.imagem} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
-          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64 }}>🍔</div>
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, opacity: 0.55 }}>{BRAND.emblema || "🍽️"}</div>
         )}
         {desconto > 0 && (
           <div style={{
             position: "absolute", top: 12, right: 12,
-            background: "#DC2626", color: "#fff",
+            background: "var(--hot)", color: "#fff",
             padding: "8px 14px", borderRadius: 999,
             fontSize: 16, fontWeight: 800,
-            boxShadow: "0 4px 12px rgba(220,38,38,0.5)",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.28)",
             border: "2px solid #fff",
             transform: "rotate(8deg)",
           }}>
@@ -743,7 +745,7 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
         {badgeValidade && (
           <div style={{
             position: "absolute", bottom: 12, left: 12,
-            background: "rgba(0,0,0,0.85)", color: "#FBBF24",
+            background: "rgba(0,0,0,0.85)", color: "var(--gold)",
             padding: "5px 11px", borderRadius: 6,
             fontSize: 11, fontWeight: 800, letterSpacing: 0.5,
             backdropFilter: "blur(8px)",
@@ -756,11 +758,11 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
       {/* Conteúdo */}
       <div style={{ padding: "14px 16px", flex: 1, display: "flex", flexDirection: "column" }}>
         <div style={{
-          fontFamily: "'Syne', sans-serif", fontSize: 17, fontWeight: 800,
-          color: "#1c1917", lineHeight: 1.2, marginBottom: 6,
+          fontFamily: "var(--font-display)", fontSize: 17, fontWeight: 800,
+          color: "var(--text)", lineHeight: 1.2, marginBottom: 6,
         }}>{p.nome}</div>
         {(p.promo_descricao || p.descricao) && (
-          <div style={{ fontSize: 12, color: "#6b5544", lineHeight: 1.4, marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.4, marginBottom: 12 }}>
             {p.promo_descricao || p.descricao}
           </div>
         )}
@@ -781,7 +783,7 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
             return (
               <div style={{
                 display: "flex", alignItems: "flex-start",
-                color: "#DC2626", fontWeight: 800, lineHeight: 1,
+                color: "var(--hot)", fontWeight: 800, lineHeight: 1,
                 fontFamily: "'Plus Jakarta Sans', 'Inter', sans-serif",
               }}>
                 <span style={{ fontSize: 14, fontWeight: 800, marginTop: 4, marginRight: 2, letterSpacing: 0 }}>
@@ -806,11 +808,11 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
         <button
           onClick={(e) => { e.stopPropagation(); onAdd(p); }}
           style={{
-            background: "linear-gradient(135deg, #F59E0B 0%, #DC2626 100%)",
+            background: "var(--brand)",
             color: "#fff", border: "none", borderRadius: 10,
             padding: "11px 16px", fontSize: 14, fontWeight: 800,
             cursor: "pointer", fontFamily: "'Nunito', sans-serif",
-            boxShadow: "0 4px 14px rgba(220,38,38,0.35)",
+            boxShadow: "0 4px 14px var(--brand-glow)",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
             letterSpacing: 0.3,
           }}
@@ -826,19 +828,8 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDetalhes, onAdd }) {
   const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.some(a => !a.categoria || a.categoria === p.categoria);
 
-  // Cor de fundo + emoji por categoria (palette quente)
-  const cfgPorCat = {
-    "Hambúrgueres": { bg: "#5C2A0A", emoji: "🍔" },
-    "Hamburgueres": { bg: "#5C2A0A", emoji: "🍔" },
-    "Beirutes":     { bg: "#6B1A1A", emoji: "🥙" },
-    "Lanches":      { bg: "#2A4A18", emoji: "🥪" },
-    "Salgados":     { bg: "#7A5A18", emoji: "🥟" },
-    "Porções":      { bg: "#4A3214", emoji: "🍟" },
-    "Porcoes":      { bg: "#4A3214", emoji: "🍟" },
-    "Bebidas":      { bg: "#12305A", emoji: "🥤" },
-    "Sobremesas":   { bg: "#5C1A4A", emoji: "🍰" },
-  };
-  const cfg = cfgPorCat[p.categoria] || { bg: "#5C2A0A", emoji: "🍽️" };
+  // Cor de fundo + emoji por categoria — vem da marca ativa (peixaria, etc.)
+  const cfg = visualCategoria(p.categoria);
   const bgImg = cfg.bg;
 
   return (
@@ -882,7 +873,7 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
 
       {/* Body */}
       <div style={{ padding: "14px 16px 16px", flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 6, lineHeight: 1.25, letterSpacing: "-0.2px" }}>
+        <div style={{ fontFamily: "var(--font-display)", fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 6, lineHeight: 1.25, letterSpacing: "-0.2px" }}>
           {p.nome}
         </div>
         {p.descricao && (
@@ -923,6 +914,71 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
   );
 }
 
+// ─── CARD VITRINE (layout "vitrine": varejo/peixaria) ────────────────────────
+// Compacto e clean: foto grande, botão "+" sobreposto, PREÇO em destaque e o
+// nome como texto secundário. Usado quando BRAND.layout === "vitrine".
+function CardVitrine({ p, onVerDetalhes, onAdd }) {
+  const cfg = visualCategoria(p.categoria);
+  const pe = precoExibicao(p);
+  const emPromo = p.preco_de && p.preco_de > p.preco;
+  const desconto = emPromo ? Math.round(((p.preco_de - p.preco) / p.preco_de) * 100) : 0;
+  return (
+    <div onClick={() => onVerDetalhes(p)} className="nl-vitrine-card" style={{ cursor: "pointer" }}>
+      {/* Foto + botão adicionar */}
+      <div style={{
+        position: "relative", width: "100%", aspectRatio: "1/1",
+        borderRadius: 14, overflow: "hidden", background: "var(--surface-warm)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        border: "1px solid var(--border)",
+      }}>
+        {p.imagem
+          ? <img src={p.imagem} alt={p.nome} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          : <span style={{ fontSize: 46, opacity: 0.6 }}>{cfg.emoji}</span>}
+        {desconto > 0 && (
+          <div style={{ position: "absolute", top: 8, left: 8, background: "var(--hot)", color: "#fff", fontSize: 11, fontWeight: 800, padding: "3px 8px", borderRadius: 7 }}>
+            −{desconto}%
+          </div>
+        )}
+        <button
+          onClick={e => { e.stopPropagation(); onAdd(p); }}
+          aria-label="Adicionar"
+          style={{
+            position: "absolute", bottom: 8, right: 8,
+            width: 34, height: 34, borderRadius: 10, border: "none",
+            background: "var(--brand)", color: "#fff", fontSize: 22, lineHeight: 1,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.22)", paddingBottom: 3,
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = "var(--brand-dark)"}
+          onMouseLeave={e => e.currentTarget.style.background = "var(--brand)"}
+        >+</button>
+      </div>
+
+      {/* Preço em destaque + nome secundário */}
+      <div style={{ padding: "10px 2px 2px" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+          <span className="nl-price" style={{ fontSize: 16.5, fontWeight: 800, color: "var(--price)" }}>
+            {pe.aPartirDe && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)" }}>a partir de </span>}
+            {fmt(pe.preco)}
+          </span>
+          {emPromo && (
+            <span className="nl-price" style={{ fontSize: 12, fontWeight: 600, color: "var(--text-soft)", textDecoration: "line-through" }}>
+              {fmt(p.preco_de)}
+            </span>
+          )}
+        </div>
+        <div style={{
+          fontSize: 12.5, color: "var(--text-muted)", fontWeight: 600,
+          lineHeight: 1.3, marginTop: 3,
+          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+        }}>
+          {p.nome}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MODAL DETALHE DO PRODUTO ─────────────────────────────────────────────────
 function ModalProduto({ produto, adicionais, permiteAdicionais, aberto, onAddSimples, onAddComAdicionais, onClose }) {
   return (
@@ -950,7 +1006,7 @@ function ModalProduto({ produto, adicionais, permiteAdicionais, aberto, onAddSim
         {/* Conteúdo */}
         <div style={{ padding: "22px 24px 32px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, lineHeight: 1.2, color: "var(--text)", letterSpacing: "-0.5px" }}>
+            <div style={{ fontFamily: "var(--font-display)", fontSize: 24, fontWeight: 800, lineHeight: 1.2, color: "var(--text)", letterSpacing: "-0.5px" }}>
               {produto.nome}
             </div>
             <button onClick={onClose} style={{ background: "var(--surface-warm)", border: "none", borderRadius: "50%", width: 34, height: 34, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: "var(--text-muted)" }}>✕</button>
@@ -1276,7 +1332,7 @@ function MeusPedidosView({ ativo }) {
           background: "var(--surface)", border: "1.5px solid var(--border)",
           borderRadius: 18, padding: "60px 24px", textAlign: "center",
         }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🍔</div>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>{BRAND.emblema || "🧾"}</div>
           <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 6, letterSpacing: "-0.2px" }}>
             Nenhum pedido encontrado
           </div>
@@ -1396,10 +1452,10 @@ function MeusPedidosView({ ativo }) {
                     {/* Observação */}
                     {p.obs && (
                       <div style={{
-                        background: "rgba(245,158,11,0.1)", border: "1.5px solid rgba(245,158,11,0.4)",
+                        background: "var(--brand-light)", border: "1.5px solid var(--brand)",
                         borderRadius: 10, padding: "10px 14px", marginBottom: 12,
                       }}>
-                        <div style={{ fontSize: 10, fontWeight: 800, color: "#92400e", letterSpacing: "0.08em", marginBottom: 3, fontFamily: "'Nunito', sans-serif" }}>
+                        <div style={{ fontSize: 10, fontWeight: 800, color: "var(--brand)", letterSpacing: "0.08em", marginBottom: 3, fontFamily: "'Nunito', sans-serif" }}>
                           📝 OBSERVAÇÃO
                         </div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text)", fontFamily: "'Nunito', sans-serif" }}>
@@ -1750,7 +1806,7 @@ export default function ClienteApp() {
 
   // ─── ESTILOS GLOBAIS DO TEMA ────────────────────────────────────────────────
   const themeStyles = `
-    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Nunito:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');
+    @import url('${BRAND.fontImport}');
 
     /* Override do index.css que constrange #root */
     html, body { margin: 0 !important; padding: 0 !important; background: var(--nl-bg-current, #FFF9F4); }
@@ -1766,36 +1822,9 @@ export default function ClienteApp() {
     }
 
     .nl-app {
-      --bg:           #FFF9F4;
-      --surface:      #FFFFFF;
-      --surface-warm: #FFF2E6;
-      --brand:        #E8650A;
-      --brand-dark:   #C0510A;
-      --brand-light:  #FEEADA;
-      --dark:         #1C0F05;
-      --text:         #2B1608;
-      --text-muted:   #9A6E50;
-      --text-soft:    #C49878;
-      --border:       #EDD9C5;
-      --border-dark:  #D8BFA8;
-      --hot:          #DC2626;
-      --new-green:    #059669;
+      --font-display: ${BRAND.fontDisplay};${cssVarsDaMarca(BRAND.tema.light)}
     }
-    .nl-app[data-theme="dark"] {
-      --bg:           #120A04;
-      --surface:      #1E1008;
-      --surface-warm: #251408;
-      --brand:        #F07020;
-      --brand-dark:   #D05C10;
-      --brand-light:  #3A1A06;
-      --dark:         #0E0804;
-      --text:         #F5E8D8;
-      --text-muted:   #C09070;
-      --text-soft:    #7A5540;
-      --border:       #2E1A0A;
-      --border-dark:  #3E2414;
-      --hot:          #EF4444;
-      --new-green:    #10B981;
+    .nl-app[data-theme="dark"] {${cssVarsDaMarca(BRAND.tema.dark)}
     }
 
     .nl-app, .nl-app * { box-sizing: border-box; }
@@ -1816,7 +1845,7 @@ export default function ClienteApp() {
 
     .nl-search:focus {
       border-color: var(--brand) !important;
-      box-shadow: 0 0 0 3px rgba(232,101,10,0.1);
+      box-shadow: 0 0 0 3px var(--brand-glow);
     }
 
     .nl-cat-nav::-webkit-scrollbar { display: none; }
@@ -1850,6 +1879,35 @@ export default function ClienteApp() {
     }
 
     .nl-nav-tabs-mobile { display: none; }
+
+    /* ── Layout "vitrine" (varejo/peixaria): carrossel horizontal por categoria ── */
+    .nl-vitrine-row {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: 180px;
+      gap: 16px;
+      overflow-x: auto;
+      overflow-y: visible;
+      scroll-snap-type: x proximity;
+      padding: 4px 24px 14px;
+      margin: 0 -24px;
+      scrollbar-width: thin;
+    }
+    .nl-vitrine-row::-webkit-scrollbar { height: 7px; }
+    .nl-vitrine-row::-webkit-scrollbar-thumb { background: var(--border-dark); border-radius: 4px; }
+    .nl-vitrine-row::-webkit-scrollbar-track { background: transparent; }
+    .nl-vitrine-card { scroll-snap-align: start; transition: transform 0.15s; }
+    .nl-vitrine-card:hover { transform: translateY(-3px); }
+    /* Resultado de busca no modo vitrine: grade densa em vez de carrossel */
+    .nl-vitrine-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 16px;
+    }
+    @media (max-width: 460px) {
+      .nl-vitrine-row { grid-auto-columns: 46vw; }
+      .nl-vitrine-grid { grid-template-columns: repeat(2, 1fr); }
+    }
   `;
 
   if (loading) {
@@ -1876,7 +1934,7 @@ export default function ClienteApp() {
           <div style={{ maxWidth: 720, width: "100%", textAlign: "center" }}>
             <div style={{ marginBottom: 32 }}>
               <div style={{ marginBottom: 16 }}><Logo size={72} radius={16} /></div>
-              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.5px" }}>
+              <h1 style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 800, color: "var(--text)", marginBottom: 8, letterSpacing: "-0.5px" }}>
                 Escolha seu cardápio
               </h1>
               <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.5 }}>
@@ -1909,7 +1967,7 @@ export default function ClienteApp() {
                     {!m.imagem && <span>{m.icone || "📋"}</span>}
                   </div>
                   <div style={{ padding: "18px 20px", textAlign: "center" }}>
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 4, letterSpacing: "-0.3px" }}>
+                    <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 800, color: "var(--text)", marginBottom: 4, letterSpacing: "-0.3px" }}>
                       {m.nome}
                     </div>
                     {m.descricao && (
@@ -1947,7 +2005,7 @@ export default function ClienteApp() {
             <Logo size={38} radius={10} />
           </div>
           <span className="nl-logo-name" style={{
-            fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 17,
+            fontFamily: "var(--font-display)", fontWeight: 800, fontSize: 17,
             color: "#fff", letterSpacing: "-0.2px", lineHeight: 1,
           }}>
             {nomeEstab || "Cardápio"}
@@ -2101,34 +2159,65 @@ export default function ClienteApp() {
               </div>
             )}
 
-            {/* Filtros (pills de categorias) */}
+            {/* Navegação de categorias (dirigida pelas categorias do admin) */}
             {!busca.trim() && categoriasComProdutos.length > 1 && (
-              <div className="nl-cat-nav" style={{
-                display: "flex", gap: 8, marginBottom: 32,
-                overflowX: "auto", whiteSpace: "nowrap",
-                position: "sticky", top: 64, zIndex: 40,
-                background: "var(--bg)",
-                margin: "0 -24px 24px",
-                padding: "12px 24px 14px",
-              }}>
-                {categoriasComProdutos.map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => scrollParaCategoria(cat)}
-                    style={{
-                      padding: "8px 18px", borderRadius: 100,
-                      fontFamily: "'Nunito', sans-serif", fontSize: 13.5, fontWeight: 700,
-                      border: `1.5px solid ${catAtiva === cat ? "var(--brand)" : "var(--border-dark)"}`,
-                      background: catAtiva === cat ? "var(--brand)" : "var(--surface)",
-                      color: catAtiva === cat ? "#fff" : "var(--text-muted)",
-                      cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
-                      transition: "all 0.18s", lineHeight: 1,
-                    }}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
+              ehVitrine ? (
+                /* Vitrine: abas de texto com sublinhado no ativo (clean, estilo varejo) */
+                <div className="nl-cat-nav" style={{
+                  display: "flex", gap: 4, marginBottom: 22,
+                  overflowX: "auto", whiteSpace: "nowrap",
+                  position: "sticky", top: 64, zIndex: 40,
+                  background: "var(--bg)",
+                  margin: "0 -24px 22px",
+                  padding: "6px 24px 0",
+                  borderBottom: "1px solid var(--border)",
+                }}>
+                  {categoriasComProdutos.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => scrollParaCategoria(cat)}
+                      style={{
+                        padding: "12px 14px 13px", border: "none", background: "transparent",
+                        fontFamily: "var(--font-display)", fontSize: 15, fontWeight: 700,
+                        color: catAtiva === cat ? "var(--brand)" : "var(--text-muted)",
+                        borderBottom: `2.5px solid ${catAtiva === cat ? "var(--brand)" : "transparent"}`,
+                        marginBottom: -1, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                        transition: "color 0.18s", lineHeight: 1,
+                      }}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                /* Menu (padrão): pills arredondadas */
+                <div className="nl-cat-nav" style={{
+                  display: "flex", gap: 8, marginBottom: 32,
+                  overflowX: "auto", whiteSpace: "nowrap",
+                  position: "sticky", top: 64, zIndex: 40,
+                  background: "var(--bg)",
+                  margin: "0 -24px 24px",
+                  padding: "12px 24px 14px",
+                }}>
+                  {categoriasComProdutos.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => scrollParaCategoria(cat)}
+                      style={{
+                        padding: "8px 18px", borderRadius: 100,
+                        fontFamily: "'Nunito', sans-serif", fontSize: 13.5, fontWeight: 700,
+                        border: `1.5px solid ${catAtiva === cat ? "var(--brand)" : "var(--border-dark)"}`,
+                        background: catAtiva === cat ? "var(--brand)" : "var(--surface)",
+                        color: catAtiva === cat ? "#fff" : "var(--text-muted)",
+                        cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                        transition: "all 0.18s", lineHeight: 1,
+                      }}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )
             )}
 
             {produtosFiltrados.length === 0 ? (
@@ -2142,12 +2231,20 @@ export default function ClienteApp() {
 
             ) : busca.trim() ? (
               /* Resultado da busca — lista plana */
-              <div className="nl-product-grid">
-                {produtosFiltrados.map(p => (
-                  <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
-                    onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
-                ))}
-              </div>
+              ehVitrine ? (
+                <div className="nl-vitrine-grid">
+                  {produtosFiltrados.map(p => (
+                    <CardVitrine key={p.id} p={p} onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                  ))}
+                </div>
+              ) : (
+                <div className="nl-product-grid">
+                  {produtosFiltrados.map(p => (
+                    <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
+                      onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                  ))}
+                </div>
+              )
 
             ) : (
               /* Seções por categoria */
@@ -2161,50 +2258,86 @@ export default function ClienteApp() {
                   />
                 )}
 
-                {categoriasComProdutos.map(cat => (
+                {categoriasComProdutos.map(cat => {
+                  const prodsCat = produtosDoMenu.filter(p => p.categoria === cat);
+                  return (
                   <div
                     key={cat}
                     id={`cat-sec-${cat.replace(/\s+/g, "-")}`}
-                    style={{ marginBottom: 48, scrollMarginTop: 130 }}
+                    style={{ marginBottom: ehVitrine ? 36 : 48, scrollMarginTop: 130 }}
                   >
-                    {/* Header da seção */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-                      <div style={{ width: 6, height: 6, background: "var(--brand)", borderRadius: "50%", flexShrink: 0 }} />
-                      <span style={{
-                        fontFamily: "'Syne', sans-serif", fontSize: 12, fontWeight: 800,
-                        letterSpacing: "2px", textTransform: "uppercase", color: "var(--text-soft)",
-                        whiteSpace: "nowrap",
-                      }}>{cat}</span>
-                      <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-                      <span style={{
-                        fontSize: 12, color: "var(--text-soft)", fontWeight: 700, whiteSpace: "nowrap",
-                      }}>
-                        {produtosDoMenu.filter(p => p.categoria === cat).length} {produtosDoMenu.filter(p => p.categoria === cat).length === 1 ? "item" : "itens"}
-                      </span>
-                    </div>
+                    {ehVitrine ? (
+                      /* Header vitrine: título forte à esquerda, contagem discreta */
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+                        <span style={{
+                          fontFamily: "var(--font-display)", fontSize: 21, fontWeight: 700,
+                          color: "var(--text)", letterSpacing: "-0.3px",
+                        }}>{cat}</span>
+                        <span style={{ fontSize: 12.5, color: "var(--text-soft)", fontWeight: 700 }}>
+                          {prodsCat.length} {prodsCat.length === 1 ? "item" : "itens"}
+                        </span>
+                      </div>
+                    ) : (
+                      /* Header menu (padrão): filete com label em caixa alta */
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+                        <div style={{ width: 6, height: 6, background: "var(--brand)", borderRadius: "50%", flexShrink: 0 }} />
+                        <span style={{
+                          fontFamily: "var(--font-display)", fontSize: 12, fontWeight: 800,
+                          letterSpacing: "2px", textTransform: "uppercase", color: "var(--text-soft)",
+                          whiteSpace: "nowrap",
+                        }}>{cat}</span>
+                        <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                        <span style={{ fontSize: 12, color: "var(--text-soft)", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {prodsCat.length} {prodsCat.length === 1 ? "item" : "itens"}
+                        </span>
+                      </div>
+                    )}
 
-                    <div className="nl-product-grid">
-                      {produtosDoMenu.filter(p => p.categoria === cat).map(p => (
-                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
-                          onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
-                      ))}
-                    </div>
+                    {ehVitrine ? (
+                      <div className="nl-vitrine-row">
+                        {prodsCat.map(p => (
+                          <CardVitrine key={p.id} p={p} onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="nl-product-grid">
+                        {prodsCat.map(p => (
+                          <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
+                            onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
 
                 {semCategoria.length > 0 && (
-                  <div id="cat-sec-outros" style={{ marginBottom: 48 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-                      <div style={{ width: 6, height: 6, background: "var(--text-soft)", borderRadius: "50%", flexShrink: 0 }} />
-                      <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 12, fontWeight: 800, letterSpacing: "2px", textTransform: "uppercase", color: "var(--text-soft)" }}>Outros</span>
-                      <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-                    </div>
-                    <div className="nl-product-grid">
-                      {semCategoria.map(p => (
-                        <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
-                          onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
-                      ))}
-                    </div>
+                  <div id="cat-sec-outros" style={{ marginBottom: ehVitrine ? 36 : 48 }}>
+                    {ehVitrine ? (
+                      <div style={{ marginBottom: 14 }}>
+                        <span style={{ fontFamily: "var(--font-display)", fontSize: 21, fontWeight: 700, color: "var(--text)", letterSpacing: "-0.3px" }}>Outros</span>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+                        <div style={{ width: 6, height: 6, background: "var(--text-soft)", borderRadius: "50%", flexShrink: 0 }} />
+                        <span style={{ fontFamily: "var(--font-display)", fontSize: 12, fontWeight: 800, letterSpacing: "2px", textTransform: "uppercase", color: "var(--text-soft)" }}>Outros</span>
+                        <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+                      </div>
+                    )}
+                    {ehVitrine ? (
+                      <div className="nl-vitrine-row">
+                        {semCategoria.map(p => (
+                          <CardVitrine key={p.id} p={p} onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="nl-product-grid">
+                        {semCategoria.map(p => (
+                          <CardProduto key={p.id} p={p} catPermiteAdicionais={catPermiteAdicionais} adicionaisDisponiveis={adicionaisDoMenu}
+                            onVerDetalhes={abrirModalProduto} onAdd={handleAddProduto} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2220,7 +2353,7 @@ export default function ClienteApp() {
         {/* CARRINHO */}
         {tab === "carrinho" && (
           <div className="nl-anim">
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, marginBottom: 22, color: "var(--text)", letterSpacing: "-0.5px" }}>Seu Carrinho</div>
+            <div style={{ fontFamily: "var(--font-display)", fontSize: 28, fontWeight: 800, marginBottom: 22, color: "var(--text)", letterSpacing: "-0.5px" }}>Seu Carrinho</div>
 
             {carrinho.length === 0 ? (
               <div style={{
@@ -2241,7 +2374,7 @@ export default function ClienteApp() {
                   return (
                     <div key={item._uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: i < carrinho.length - 1 ? "1px solid var(--border)" : "none", flexWrap: "wrap", gap: 10 }}>
                       <div style={{ flex: "1 1 200px" }}>
-                        <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", fontFamily: "'Syne', sans-serif" }}>{item.produto_nome}</div>
+                        <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", fontFamily: "var(--font-display)" }}>{item.produto_nome}</div>
                         <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, fontWeight: 600 }}>{fmt(item.preco_unitario)} cada</div>
                         {item.adicionais && item.adicionais.length > 0 && (
                           <div style={{ marginTop: 6 }}>
@@ -2294,7 +2427,7 @@ export default function ClienteApp() {
           <div className="nl-anim" style={{ textAlign: "center" }}>
             <div style={{ background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 18, padding: 44, maxWidth: 520, margin: "0 auto" }}>
               <div style={{ width: 72, height: 72, borderRadius: "50%", background: "var(--brand-light)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px", fontSize: 32, color: "var(--new-green)", fontWeight: 800 }}>✓</div>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 26, fontWeight: 800, marginBottom: 10, color: "var(--brand)", letterSpacing: "-0.5px" }}>Pedido enviado!</div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 26, fontWeight: 800, marginBottom: 10, color: "var(--brand)", letterSpacing: "-0.5px" }}>Pedido enviado!</div>
               <div style={{ fontSize: 14, color: "var(--text-muted)", marginBottom: 20, fontWeight: 600 }}>
                 Seu pedido <strong style={{ color: "var(--text)" }}>#{pedidoEnviado.id.slice(0, 6)}</strong> foi recebido com sucesso.
               </div>
