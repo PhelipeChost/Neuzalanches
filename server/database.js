@@ -1796,7 +1796,17 @@ export function montarXmlNFCeAntigo(pedido, fisc, cnpj, { numero, serie, tpAmb }
     `<cEANTrib>${it.cEAN}</cEANTrib><uTrib>${it.um}</uTrib><qTrib>${dec(it.qtd, 4)}</qTrib><vUnTrib>${dec(it.vUnit)}</vUnTrib>` +
     `<indTot>1</indTot>` +
     `</prod>` +
-    `<imposto><ICMS><ICMSSN102><orig>0</orig><CSOSN>102</CSOSN></ICMSSN102></ICMS></imposto>` +
+    // PIS/COFINS são obrigatórios pelo XSD em TODO item (minOccurs=1), mesmo
+    // no Simples Nacional — sem eles a SEFAZ rejeita com 225 "Falha no Schema
+    // XML do lote de NFe" antes de checar qualquer regra de negócio. CST 49
+    // ("Outras Operações de Saída", valores zerados) é o default seguro mais
+    // usado por emissores de Simples Nacional — não exige justificar uma
+    // isenção específica.
+    `<imposto>` +
+    `<ICMS><ICMSSN102><orig>0</orig><CSOSN>102</CSOSN></ICMSSN102></ICMS>` +
+    `<PIS><PISOutr><CST>49</CST><vBC>0.00</vBC><pPIS>0.00</pPIS><vPIS>0.00</vPIS></PISOutr></PIS>` +
+    `<COFINS><COFINSOutr><CST>49</CST><vBC>0.00</vBC><pCOFINS>0.00</pCOFINS><vCOFINS>0.00</vCOFINS></COFINSOutr></COFINS>` +
+    `</imposto>` +
     `</det>`
   ).join("");
 
