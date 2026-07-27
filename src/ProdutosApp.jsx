@@ -10,6 +10,161 @@ const cfgBtn = { background: "#F38C24", color: "#fff", border: "none", borderRad
 const cfgDel = { background: "none", border: "1px solid #fecaca", borderRadius: 6, padding: "4px 12px", fontSize: 11, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", color: "#dc2626" };
 const cfgRow = { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, padding: "10px 14px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4" };
 
+// ─── MODAL DE EXCLUSÃO EM CASCATA ───────────────────────────────────────────
+const overlayStyle = { position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 9000, display: "flex", alignItems: "center", justifyContent: "center" };
+const modalBoxStyle = { background: "#fff", borderRadius: 16, padding: "28px 30px", maxWidth: 520, width: "92vw", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,.18)", fontFamily: "'DM Sans', sans-serif" };
+const chkRow = { display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#fafaf9", borderRadius: 8, border: "1px solid #f5f5f4", cursor: "pointer", fontSize: 13 };
+const protRow = { ...chkRow, cursor: "default", opacity: 0.55 };
+
+function ModalExclusaoCascata({ tipo, id, nome, onClose, onConfirm }) {
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [executando, setExecutando] = useState(false);
+  const [opcoes, setOpcoes] = useState({
+    excluirProdutos: true,
+    limparEstoque: false,
+    excluirFichas: false,
+    desvincularNotas: false,
+  });
+
+  useEffect(() => {
+    api.exclusaoCascata.preview(tipo, id)
+      .then(setPreview)
+      .catch(() => setPreview(null))
+      .finally(() => setLoading(false));
+  }, [tipo, id]);
+
+  const toggle = (campo) => setOpcoes(o => {
+    const novo = { ...o, [campo]: !o[campo] };
+    if (campo === "limparEstoque" && novo.limparEstoque) novo.desvincularNotas = true;
+    return novo;
+  });
+
+  const executar = async () => {
+    setExecutando(true);
+    try {
+      await api.exclusaoCascata.executar(tipo, id, opcoes);
+      onConfirm();
+    } catch (err) { alert("Erro: " + err.message); }
+    setExecutando(false);
+  };
+
+  const titulo = tipo === "cardapio" ? "cardápio" : "categoria";
+  const temProdutos = preview && preview.totalProdutos > 0;
+
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <div style={modalBoxStyle} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 4, fontFamily: "'Inter', sans-serif" }}>
+          Excluir {titulo}
+        </div>
+        <div style={{ fontSize: 14, color: "#57534e", marginBottom: 20 }}>
+          <b>{nome}</b>
+        </div>
+
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 30, color: "#a8a29e" }}>Analisando impacto...</div>
+        ) : !preview ? (
+          <div style={{ textAlign: "center", padding: 20, color: "#dc2626" }}>Erro ao analisar. Tente novamente.</div>
+        ) : !temProdutos ? (
+          <>
+            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "14px 16px", marginBottom: 20, fontSize: 13, color: "#166534" }}>
+              Nenhum produto vinculado. {tipo === "cardapio" && preview.categorias.length > 0
+                ? `${preview.categorias.length} categoria${preview.categorias.length !== 1 ? "s" : ""} exclusiva${preview.categorias.length !== 1 ? "s" : ""} ser${preview.categorias.length !== 1 ? "ão" : "á"} removida${preview.categorias.length !== 1 ? "s" : ""}.`
+                : "Exclusão segura."}
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={onClose} style={{ ...cfgBtn, background: "#fff", color: "#57534e", border: "1.5px solid #e7e5e4" }}>Cancelar</button>
+              <button onClick={executar} disabled={executando} style={{ ...cfgBtn, background: "#dc2626" }}>
+                {executando ? "Excluindo..." : "Confirmar exclusão"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Impacto */}
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "14px 16px", marginBottom: 18, fontSize: 13, color: "#92400e", lineHeight: 1.7 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>Impacto da exclusão:</div>
+              {tipo === "cardapio" && preview.categorias.length > 0 && (
+                <div>{preview.categorias.length} categoria{preview.categorias.length !== 1 ? "s" : ""} exclusiva{preview.categorias.length !== 1 ? "s" : ""}</div>
+              )}
+              <div>{preview.totalProdutos} produto{preview.totalProdutos !== 1 ? "s" : ""}</div>
+              {preview.totalEstoque > 0 && <div>{preview.totalEstoque} ite{preview.totalEstoque !== 1 ? "ns" : "m"} no estoque</div>}
+              {preview.totalEntradas > 0 && <div>{preview.totalEntradas} entrada{preview.totalEntradas !== 1 ? "s" : ""} de estoque</div>}
+              {preview.totalFichas > 0 && <div>{preview.totalFichas} ficha{preview.totalFichas !== 1 ? "s" : ""} técnica{preview.totalFichas !== 1 ? "s" : ""}</div>}
+              {preview.totalNotasEntrada > 0 && <div>{preview.totalNotasEntrada} vínculo{preview.totalNotasEntrada !== 1 ? "s" : ""} com notas de entrada</div>}
+            </div>
+
+            {/* Opções */}
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "#1c1917" }}>Selecione o que deve ser removido junto:</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+              <label style={chkRow}>
+                <input type="checkbox" checked={opcoes.excluirProdutos} onChange={() => toggle("excluirProdutos")} style={{ accentColor: "#dc2626" }} />
+                <div>
+                  <div style={{ fontWeight: 600 }}>Excluir produtos</div>
+                  <div style={{ fontSize: 11, color: "#78716c" }}>Enviados para a lixeira (restauráveis)</div>
+                </div>
+              </label>
+
+              {preview.totalEstoque > 0 && (
+                <label style={chkRow}>
+                  <input type="checkbox" checked={opcoes.limparEstoque} onChange={() => toggle("limparEstoque")} style={{ accentColor: "#dc2626" }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>Limpar estoque</div>
+                    <div style={{ fontSize: 11, color: "#78716c" }}>Remove itens e movimentações do estoque</div>
+                  </div>
+                </label>
+              )}
+
+              {preview.totalFichas > 0 && (
+                <label style={chkRow}>
+                  <input type="checkbox" checked={opcoes.excluirFichas} onChange={() => toggle("excluirFichas")} style={{ accentColor: "#dc2626" }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>Excluir fichas técnicas</div>
+                    <div style={{ fontSize: 11, color: "#78716c" }}>Remove vínculos de insumos dos produtos</div>
+                  </div>
+                </label>
+              )}
+
+              {preview.totalNotasEntrada > 0 && !opcoes.limparEstoque && (
+                <label style={chkRow}>
+                  <input type="checkbox" checked={opcoes.desvincularNotas} onChange={() => toggle("desvincularNotas")} style={{ accentColor: "#dc2626" }} />
+                  <div>
+                    <div style={{ fontWeight: 600 }}>Desvincular notas de entrada</div>
+                    <div style={{ fontSize: 11, color: "#78716c" }}>Remove vínculos, mantém as notas</div>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            {/* Protegidos */}
+            {preview.totalPedidoItens > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#78716c", marginBottom: 6, letterSpacing: "0.04em" }}>PROTEGIDOS (não serão afetados):</div>
+                <div style={protRow}>
+                  <span>🔒</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{preview.totalPedidoItens} ite{preview.totalPedidoItens !== 1 ? "ns" : "m"} em pedidos/comandas</div>
+                    <div style={{ fontSize: 11, color: "#78716c" }}>Histórico de vendas e NFC-e preservados</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Ações */}
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={onClose} style={{ ...cfgBtn, background: "#fff", color: "#57534e", border: "1.5px solid #e7e5e4" }}>Cancelar</button>
+              <button onClick={executar} disabled={executando} style={{ ...cfgBtn, background: "#dc2626" }}>
+                {executando ? "Excluindo..." : "Confirmar exclusão"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── CATEGORIAS ──────────────────────────────────────────────────────────────
 function CategoriasTab({ cardapioAtivo, cardapioNome }) {
   const modoTodos = cardapioAtivo === "__todos__";
@@ -18,6 +173,7 @@ function CategoriasTab({ cardapioAtivo, cardapioNome }) {
   const [novaCatAdicionais, setNovaCatAdicionais] = useState(false);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [cascataTarget, setCascataTarget] = useState(null);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -45,12 +201,9 @@ function CategoriasTab({ cardapioAtivo, cardapioNome }) {
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
 
-  const remover = async (id) => {
-    try {
-      await api.categorias.excluir(id);
-      setCategorias(cs => cs.filter(c => c.id !== id));
-      showToast("Categoria removida", "#7c3aed");
-    } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
+  const remover = (id) => {
+    const cat = categorias.find(c => c.id === id);
+    setCascataTarget({ id, nome: cat?.nome || "" });
   };
 
   const toggleAdicionais = async (cat) => {
@@ -189,6 +342,12 @@ function CategoriasTab({ cardapioAtivo, cardapioNome }) {
       </div>
 
       {toast && <div className="toast" style={{ background: toast.cor || "#14532d" }}>{toast.msg}</div>}
+      {cascataTarget && (
+        <ModalExclusaoCascata tipo="categoria" id={cascataTarget.id} nome={cascataTarget.nome}
+          onClose={() => setCascataTarget(null)}
+          onConfirm={() => { setCascataTarget(null); recarregar(); showToast("Categoria e dados removidos", "#7c3aed"); }}
+        />
+      )}
     </div>
   );
 }
@@ -198,7 +357,7 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
   const modoTodos = cardapioAtivo === "__todos__";
   const [adicionais, setAdicionais] = useState([]);
   const [categorias, setCategorias] = useState([]);
-  const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "", categoria: "" });
+  const [novoAd, setNovoAd] = useState({ nome: "", preco: "", custo: "", categorias_ids: [] });
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
 
@@ -223,10 +382,17 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
     const preco = parseFloat(novoAd.preco);
     const custo = parseFloat(novoAd.custo) || 0;
     if (!nome || isNaN(preco) || preco < 0) return showToast("Preencha nome e preco valido", "#dc2626");
+    // Multi-categorias: se o operador não marcou nenhuma, avisa explicitamente
+    // pra não acabar com adicional aparecendo em nada. Antes o padrão silencioso
+    // era "todas", que fazia bebida aparecer no adicional de comida.
+    if (!novoAd.categorias_ids || novoAd.categorias_ids.length === 0) {
+      const ok = confirm("Nenhuma categoria marcada — este adicional NÃO vai aparecer em nenhum produto. Continuar mesmo assim?");
+      if (!ok) return;
+    }
     try {
-      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true, categoria: novoAd.categoria, cardapio_id: cardapioAtivo });
+      const novo = await api.adicionais.criar({ nome, preco, custo, disponivel: true, categorias_ids: novoAd.categorias_ids, cardapio_id: cardapioAtivo });
       setAdicionais(ads => [...ads, novo]);
-      setNovoAd({ nome: "", preco: "", custo: "", categoria: "" });
+      setNovoAd({ nome: "", preco: "", custo: "", categorias_ids: [] });
       showToast(`Adicional criado no cardápio ${cardapioNome || ""}!`);
     } catch (err) { showToast("Erro: " + err.message, "#dc2626"); }
   };
@@ -278,19 +444,48 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
             <div style={{ fontSize: 12, color: "#78716c", marginBottom: 16 }}>
               Itens extras que o cliente pode adicionar aos produtos. Vincule a uma <b>categoria</b> para que o adicional apareça só nela (ex: adicionais de bebidas), ou deixe em <b>Todas</b> para valer em qualquer produto com adicionais habilitados.
             </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" }}>
               <input value={novoAd.nome} onChange={e => setNovoAd({ ...novoAd, nome: e.target.value })}
                 placeholder="Nome do adicional" style={{ ...cfgInp, flex: 1, minWidth: 0 }} />
               <input value={novoAd.preco} onChange={e => setNovoAd({ ...novoAd, preco: e.target.value })}
                 placeholder="Preco venda" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
               <input value={novoAd.custo} onChange={e => setNovoAd({ ...novoAd, custo: e.target.value })}
                 placeholder="Custo (CMV)" type="number" step="0.01" style={{ ...cfgInp, width: 110, minWidth: 110 }} />
-              <select value={novoAd.categoria} onChange={e => setNovoAd({ ...novoAd, categoria: e.target.value })}
-                style={{ ...cfgInp, cursor: "pointer", minWidth: 150 }}>
-                <option value="">Todas as categorias</option>
-                {categorias.map(c => <option key={c.id} value={c.nome}>{c.nome}</option>)}
-              </select>
               <button onClick={adicionar} style={cfgBtn}>+ Criar</button>
+            </div>
+            {/* Multi-categorias: sem padrão "todas", operador marca explicitamente
+                quais categorias de produto podem usar o adicional. Antes tinha
+                bebida entrando em adicional de lanche por engano. */}
+            <div style={{ background: "#fafaf9", border: "1.5px dashed #d6d3d1", borderRadius: 8, padding: "10px 12px", marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#78716c", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                Categorias que podem usar este adicional {novoAd.categorias_ids.length > 0 ? `(${novoAd.categorias_ids.length} marcada${novoAd.categorias_ids.length !== 1 ? "s" : ""})` : "— marque ao menos uma"}
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {categorias.length === 0 && (
+                  <span style={{ fontSize: 12, color: "#a8a29e" }}>Cadastre categorias primeiro.</span>
+                )}
+                {categorias.map(c => {
+                  const marcada = (novoAd.categorias_ids || []).includes(c.id);
+                  return (
+                    <label key={c.id} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px",
+                      borderRadius: 20, cursor: "pointer",
+                      border: `1.5px solid ${marcada ? "#15803d" : "#e7e5e4"}`,
+                      background: marcada ? "#f0fdf4" : "#fff",
+                      color: marcada ? "#15803d" : "#57534e",
+                      fontSize: 12, fontWeight: 600,
+                    }}>
+                      <input type="checkbox" checked={marcada} style={{ margin: 0 }}
+                        onChange={() => {
+                          const atuais = novoAd.categorias_ids || [];
+                          const novas = marcada ? atuais.filter(x => x !== c.id) : [...atuais, c.id];
+                          setNovoAd({ ...novoAd, categorias_ids: novas });
+                        }} />
+                      {c.nome}
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           </>
         )}
@@ -305,9 +500,25 @@ function AdicionaisTab({ cardapioAtivo, cardapioNome }) {
                   <span style={{ fontSize: 13, fontWeight: 600 }}>{a.nome}</span>
                   <span style={{ fontSize: 13, color: "#15803d", fontWeight: 600 }}>{fmtPreco(a.preco)}</span>
                   {a.custo > 0 && <span style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmtPreco(a.custo)}</span>}
-                  <span style={{ background: a.categoria ? "#eff6ff" : "#f5f5f4", color: a.categoria ? "#2563eb" : "#78716c", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
-                    {a.categoria ? `📂 ${a.categoria}` : "Todas"}
-                  </span>
+                  {(() => {
+                    // Novo formato multi (categorias_ids array) tem prioridade
+                    // sobre o legacy (categoria_id solo).
+                    const catsPorId = Object.fromEntries((categorias || []).map(c => [c.id, c.nome]));
+                    const nomesMulti = Array.isArray(a.categorias_ids) ? a.categorias_ids.map(id => catsPorId[id]).filter(Boolean) : null;
+                    if (nomesMulti !== null) {
+                      if (nomesMulti.length === 0) {
+                        return <span style={{ background: "#fef2f2", color: "#dc2626", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 4 }}>⚠ nenhuma categoria</span>;
+                      }
+                      return nomesMulti.map(n => (
+                        <span key={n} style={{ background: "#eff6ff", color: "#2563eb", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>📂 {n}</span>
+                      ));
+                    }
+                    return (
+                      <span style={{ background: a.categoria ? "#eff6ff" : "#f5f5f4", color: a.categoria ? "#2563eb" : "#78716c", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
+                        {a.categoria ? `📂 ${a.categoria}` : "Todas (legacy)"}
+                      </span>
+                    );
+                  })()}
                   <span style={{ background: a.disponivel ? "#dcfce7" : "#fee2e2", color: a.disponivel ? "#15803d" : "#dc2626", fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 4 }}>
                     {a.disponivel ? "Ativo" : "Inativo"}
                   </span>
@@ -510,6 +721,7 @@ function CardapiosTab({ onChange }) {
   const [editando, setEditando] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState("");
+  const [cascataTarget, setCascataTarget] = useState(null);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -540,41 +752,9 @@ function CardapiosTab({ onChange }) {
     } catch (e) { showToast(e.message, "#dc2626"); }
   };
 
-  const excluir = async (id) => {
-    // Preview: descobre quantas categorias/adicionais SUMIRIAM junto (exclusivas
-    // deste cardápio). O usuário decide se apaga junto ou mantém pra reaproveitar.
-    let preview;
-    try { preview = await api.cardapios.previewExclusao(id); }
-    catch { preview = { categoriasExclusivas: [], adicionaisExclusivos: [] }; }
-    const nCats = preview.categoriasExclusivas?.length || 0;
-    const nAds  = preview.adicionaisExclusivos?.length || 0;
-
-    let msg = "Excluir este cardápio?";
-    let cascade = false;
-    if (nCats > 0 || nAds > 0) {
-      const partes = [];
-      if (nCats > 0) partes.push(`${nCats} categoria${nCats !== 1 ? "s" : ""}`);
-      if (nAds > 0) partes.push(`${nAds} adicional${nAds !== 1 ? "es" : ""}`);
-      msg =
-        `Excluir este cardápio?\n\n` +
-        `Existem ${partes.join(" e ")} que só aparecem neste cardápio.\n\n` +
-        `OK  → excluir cardápio + ${partes.join(" + ")}\n` +
-        `Cancelar → NÃO faz nada.\n\n` +
-        `(Para apenas remover o cardápio mantendo as categorias/adicionais, arraste-as primeiro para outro cardápio.)`;
-      cascade = true;
-    }
-    if (!confirm(msg)) return;
-
-    try {
-      const r = await api.cardapios.excluir(id, { cascade });
-      await carregar();
-      onChange?.();
-      const extras = [];
-      if (r?.categoriasRemovidas) extras.push(`${r.categoriasRemovidas} categoria${r.categoriasRemovidas !== 1 ? "s" : ""}`);
-      if (r?.adicionaisRemovidos) extras.push(`${r.adicionaisRemovidos} adicional${r.adicionaisRemovidos !== 1 ? "es" : ""}`);
-      showToast(extras.length ? `Excluído + ${extras.join(" + ")}` : "Excluído");
-    }
-    catch (e) { showToast(e.message, "#dc2626"); }
+  const excluir = (id) => {
+    const card = cardapios.find(c => c.id === id);
+    setCascataTarget({ id, nome: card?.nome || "" });
   };
 
   const salvarEdicao = async () => {
@@ -887,6 +1067,12 @@ function CardapiosTab({ onChange }) {
       </div>
 
       {toast && <div className="toast" style={{ background: toast.cor }}>{toast.msg}</div>}
+      {cascataTarget && (
+        <ModalExclusaoCascata tipo="cardapio" id={cascataTarget.id} nome={cascataTarget.nome}
+          onClose={() => setCascataTarget(null)}
+          onConfirm={() => { setCascataTarget(null); carregar(); onChange?.(); showToast("Cardápio e dados removidos", "#7c3aed"); }}
+        />
+      )}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { api } from "./api";
+import { conectarEventosSync } from "./events-sync";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
-import { cardapioDoProduto } from "./segmentos";
+import { cardapioDoProduto, produtoPorPeso } from "./segmentos";
 import {
   isWebUsbSuportado,
   conectarImpressora as usbConectar,
@@ -43,20 +44,23 @@ const TIPO_CFG = {
   delivery: { icon: "\u{1F6F5}", color: "#60A5FA", bg: "#172554", label: "Delivery ativos" },
   retirada: { icon: "\u{1F3EA}", color: "#84CC16", bg: "#1A2E05", label: "Retiradas ativas" },
   casa:     { icon: "\u{1F37D}️", color: "#C084FC", bg: "#2E1065", label: "No local ativos" },
+  balcao:   { icon: "\u{1F4B5}", color: "#FBBF24", bg: "#3F2E00", label: "Balcão (venda no caixa)" },
 };
 
 const STATUS_PIPELINE = ["pendente", "confirmado", "preparando", "pronto", "entregue"];
 const STATUS_LABELS = {
   pendente: "Pendente", confirmado: "Confirmado", preparando: "Preparando",
-  pronto: "Pronto", entregue: "Entregue", cancelado: "Cancelado",
+  pronto: "Pronto", aguardando_confirmacao: "Aguardando cliente",
+  entregue: "Entregue", cancelado: "Cancelado",
 };
 const STATUS_CORES = {
-  pendente:   { bg: "#332B00", color: "#FBBF24", border: "#854D0E" },
-  confirmado: { bg: "#172554", color: "#60A5FA", border: "#1E40AF" },
-  preparando: { bg: "#2A1A0A", color: "#F59E0B", border: "#B45309" },
-  pronto:     { bg: "#052E16", color: "#4ADE80", border: "#15803D" },
-  entregue:   { bg: "#0A2E1A", color: "#22C55E", border: "#16A34A" },
-  cancelado:  { bg: "#350A0A", color: "#F87171", border: "#DC2626" },
+  pendente:               { bg: "#332B00", color: "#FBBF24", border: "#854D0E" },
+  confirmado:             { bg: "#172554", color: "#60A5FA", border: "#1E40AF" },
+  preparando:             { bg: "#2A1A0A", color: "#F59E0B", border: "#B45309" },
+  pronto:                 { bg: "#052E16", color: "#4ADE80", border: "#15803D" },
+  aguardando_confirmacao: { bg: "#3B0764", color: "#C084FC", border: "#7C3AED" },
+  entregue:               { bg: "#0A2E1A", color: "#22C55E", border: "#16A34A" },
+  cancelado:              { bg: "#350A0A", color: "#F87171", border: "#DC2626" },
 };
 
 // ─── IMPRESSÃO TÉRMICA 80mm (XP-80) ──────────────────────────────────────────
@@ -387,6 +391,100 @@ function RelogioCozinha() {
     return () => clearInterval(iv);
   }, []);
   return <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 14, color: "#555", fontWeight: 500 }}>{agora}</span>;
+}
+
+// ─── MODAL PESAR ITENS (venda por peso — lojista informa o peso real) ────────
+// Um input por item por_peso do pedido. Cada peso registrado chama a API na
+// hora (o backend decide: dentro tolerância → apenas avisa; fora → move pra
+// aguardando_confirmacao). No fim, se todos foram pesados e o pedido não caiu
+// em espera, dá pra avançar direto pra "Entregue".
+function ModalPesarItens({ pedido, marcando, onRegistrarPeso, onAvancar, onClose }) {
+  const itensPorPeso = (pedido.itens || []).filter(it => it.por_peso);
+  const [pesos, setPesos] = useState(() => {
+    // Pré-preenche: se já foi pesado antes, mostra o último peso registrado
+    // (pra facilitar corrigir); senão, o peso que o cliente pediu.
+    const o = {};
+    for (const it of itensPorPeso) {
+      const foiPesado = Number(it.quantidade) !== Number(it.peso_desejado_kg);
+      o[it.id] = String(Number(foiPesado ? it.quantidade : (it.peso_desejado_kg || it.quantidade || 0)));
+    }
+    return o;
+  });
+  const [enviando, setEnviando] = useState({});
+  const kgFmt = (v) => Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+  const registrar = async (item) => {
+    const kg = parseFloat(String(pesos[item.id] || "").replace(",", "."));
+    if (!kg || kg <= 0) return;
+    setEnviando(s => ({ ...s, [item.id]: true }));
+    try { await onRegistrarPeso(pedido.id, item.id, kg); }
+    finally { setEnviando(s => ({ ...s, [item.id]: false })); }
+  };
+
+  const todosPesados = itensPorPeso.every(it => Number(it.quantidade) !== Number(it.peso_desejado_kg));
+  const podeAvancar = todosPesados && pedido.status !== "aguardando_confirmacao";
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "#141414", border: "1px solid #333", borderRadius: 14, width: "100%", maxWidth: 560,
+        maxHeight: "90vh", overflowY: "auto", color: "#F5F5F4",
+      }}>
+        <div style={{ padding: "18px 20px 12px", borderBottom: "1px solid #222", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>⚖️ Pesar peças</div>
+            <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>Pedido #{pedido.id.slice(0, 6)} · {pedido.cliente_nome || "—"}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "1px solid #333", color: "#999", borderRadius: 8, width: 32, height: 32, fontSize: 14, cursor: "pointer" }}>✕</button>
+        </div>
+
+        <div style={{ padding: "10px 20px 6px", fontSize: 12, color: "#B4B4A9", lineHeight: 1.55 }}>
+          Coloque a peça na balança, digite o peso real (em kg) e clique <b>Registrar</b>. Se o peso ficar até <b>20% acima ou abaixo</b> do que o cliente pediu, o pedido segue sozinho com um aviso via WhatsApp. Se ficar fora disso, o pedido trava esperando a confirmação do cliente. Pesou errado ou o cliente trocou de peça? É só digitar o novo peso e registrar de novo.
+        </div>
+
+        <div style={{ padding: "10px 20px" }}>
+          {itensPorPeso.map(item => {
+            const jaFoi = Number(item.quantidade) !== Number(item.peso_desejado_kg);
+            return (
+              <div key={item.id} style={{ padding: "14px 0", borderBottom: "1px solid #1F1F1F" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>{item.produto_nome}</div>
+                <div style={{ fontSize: 12, color: "#999", marginBottom: 10 }}>
+                  Cliente pediu: <b style={{ color: "#F5F5F4" }}>{kgFmt(item.peso_desejado_kg)} kg</b>
+                  {jaFoi && <> · Pesado agora: <b style={{ color: "#4ADE80" }}>{kgFmt(item.quantidade)} kg</b></>}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="text" inputMode="decimal" autoFocus={!jaFoi}
+                    value={pesos[item.id] || ""}
+                    onChange={e => setPesos(s => ({ ...s, [item.id]: e.target.value.replace(/[^\d.,]/g, "") }))}
+                    onKeyDown={e => e.key === "Enter" && registrar(item)}
+                    style={{ flex: 1, padding: "12px 14px", background: "#0A0A0A", border: "1.5px solid #333", borderRadius: 8, fontSize: 18, fontWeight: 800, color: "#F5F5F4", textAlign: "right", outline: "none", fontFamily: "inherit" }}
+                  />
+                  <span style={{ fontSize: 13, color: "#999", fontWeight: 700 }}>kg</span>
+                  <button onClick={() => registrar(item)} disabled={!!enviando[item.id]}
+                    style={{ background: jaFoi ? "#3F3F46" : "#7C3AED", color: "#fff", border: jaFoi ? "1px solid #52525B" : "none", padding: "12px 18px", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                    {enviando[item.id] ? "..." : jaFoi ? "Corrigir" : "Registrar"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ padding: "12px 20px 18px", borderTop: "1px solid #222", display: "flex", gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, background: "none", border: "1px solid #333", color: "#999", padding: "12px", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            Fechar
+          </button>
+          {podeAvancar && (
+            <button onClick={() => { onAvancar(pedido.id); onClose(); }} disabled={!!marcando[pedido.id]}
+              style={{ flex: 2, background: "#15803D", color: "#fff", border: "none", padding: "12px", borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+              ✓ Entregar pedido
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
@@ -765,8 +863,17 @@ export default function CozinhaApp({ onNavegar }) {
 
   useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => {
-    const iv = setInterval(carregar, 8000);
-    return () => clearInterval(iv);
+    // SSE push (<1s) + polling 20s como fallback. Debounce evita chamar carregar
+    // várias vezes seguidas quando o server broadcasta rajada (ex.: caixa muda
+    // 5 itens da mesma comanda pra "pronto").
+    let debounce = null;
+    const carregarDebounced = () => { clearTimeout(debounce); debounce = setTimeout(carregar, 200); };
+    const desconectarSSE = conectarEventosSync({
+      comanda: carregarDebounced,
+      pedido: carregarDebounced,
+    });
+    const iv = setInterval(carregar, 20000);
+    return () => { clearInterval(iv); clearTimeout(debounce); desconectarSSE(); };
   }, [carregar]);
 
   // Repetir som enquanto tiver pendentes
@@ -815,6 +922,51 @@ export default function CozinhaApp({ onNavegar }) {
     } catch {} finally { setMarcando(m => ({ ...m, [id]: false })); }
   };
 
+  // ─── VENDA POR PESO — pesar peça / confirmar / recusar ──────────────────
+  const [modalPesar, setModalPesar] = useState(null); // { pedido }
+  const abrirModalPesar = (pedido) => setModalPesar({ pedido });
+  const fecharModalPesar = () => setModalPesar(null);
+
+  const registrarPesoItem = async (pedidoId, itemId, pesoKg) => {
+    setMarcando(m => ({ ...m, [pedidoId]: true }));
+    try {
+      const r = await api.pedidos.pesarItem(pedidoId, itemId, pesoKg);
+      setPedidos(ps => ps.map(p => p.id === pedidoId ? r : p));
+      if (r._ajuste?.dentro_tolerancia) {
+        const msg = r._ajuste?.eh_ajuste
+          ? `⚖️ Peso corrigido — dentro da tolerância. Novo total: ${fmt(r.total)}`
+          : `⚖️ Peso registrado — cliente avisado. Novo total: ${fmt(r.total)}`;
+        showToast(msg);
+      } else {
+        showToast(`⚖️ Peso ${((r._ajuste?.diferenca_pct || 0) * 100).toFixed(0)}% fora — aguardando confirmação do cliente`, "warn");
+      }
+      return r;
+    } catch (e) { showToast("Erro: " + e.message, "erro"); throw e; }
+    finally { setMarcando(m => ({ ...m, [pedidoId]: false })); }
+  };
+
+  const confirmarPesagemDoCliente = async (pedidoId) => {
+    setMarcando(m => ({ ...m, [pedidoId]: true }));
+    try {
+      const r = await api.pedidos.confirmarPesagem(pedidoId);
+      setPedidos(ps => ps.map(p => p.id === pedidoId ? r : p));
+      showToast("✅ Cliente confirmou — pedido liberado");
+    } catch (e) { showToast("Erro: " + e.message, "erro"); }
+    finally { setMarcando(m => ({ ...m, [pedidoId]: false })); }
+  };
+
+  const recusarPesagemDoCliente = async (pedidoId) => {
+    const motivo = prompt("Motivo da recusa (opcional):", "");
+    if (motivo === null) return;
+    setMarcando(m => ({ ...m, [pedidoId]: true }));
+    try {
+      const r = await api.pedidos.recusarPesagem(pedidoId, motivo);
+      setPedidos(ps => ps.map(p => p.id === pedidoId ? r : p));
+      showToast("❌ Pedido cancelado — cliente recusou");
+    } catch (e) { showToast("Erro: " + e.message, "erro"); }
+    finally { setMarcando(m => ({ ...m, [pedidoId]: false })); }
+  };
+
   const handleGrupoStatus = async (grupo, novoStatus) => {
     setMarcando(m => ({ ...m, [grupo.grupo_id]: true }));
     try {
@@ -834,12 +986,20 @@ export default function CozinhaApp({ onNavegar }) {
   };
 
   const proximoStatus = (s) => {
+    // Modo IMPRESSÃO (peixaria/açougue/mercado): só 2 status — Confirmado e
+    // Entregue. Sem preparo/pronto (não há cozinha). Fica intuitivo pro
+    // lojista: recebeu → entregou.
+    if (soImpressao) {
+      if (s === "pendente" || s === "confirmado") return "entregue";
+      return null;
+    }
     const idx = STATUS_PIPELINE.indexOf(s);
     return idx >= 0 && idx < STATUS_PIPELINE.length - 1 ? STATUS_PIPELINE[idx + 1] : null;
   };
 
   // ─── FILTERING ───────────────────────────────────────────────────────────
   const tipoFromPedido = (p) => {
+    if (p.tipo_entrega === "balcao") return "balcao";
     if (p.tipo_entrega === "retirada") return "retirada";
     if (p.tipo_entrega === "casa") return "casa";
     return "delivery";
@@ -923,6 +1083,7 @@ export default function CozinhaApp({ onNavegar }) {
     delivery: pedidos.filter(p => tipoFromPedido(p) === "delivery" && !["entregue", "cancelado"].includes(p.status)).length,
     retirada: pedidos.filter(p => tipoFromPedido(p) === "retirada" && !["entregue", "cancelado"].includes(p.status)).length,
     casa: pedidos.filter(p => tipoFromPedido(p) === "casa" && !["entregue", "cancelado"].includes(p.status)).length,
+    balcao: pedidos.filter(p => tipoFromPedido(p) === "balcao" && !["entregue", "cancelado"].includes(p.status)).length,
   };
   const totalAtivos = Object.values(countByTipo).reduce((s, n) => s + n, 0);
 
@@ -1127,6 +1288,7 @@ export default function CozinhaApp({ onNavegar }) {
         {[
           { key: "todos", label: "Todos", icon: "" },
           { key: "mesa", label: "Mesas", icon: "\u{1FA91}" },
+          { key: "balcao", label: "Balcão", icon: "\u{1F4B5}" },
           { key: "delivery", label: "Delivery", icon: "\u{1F6F5}" },
           { key: "retirada", label: "Retirada", icon: "\u{1F3EA}" },
           { key: "casa", label: "No local", icon: "\u{1F37D}️" },
@@ -1286,6 +1448,12 @@ export default function CozinhaApp({ onNavegar }) {
                   const prox = proximoStatus(p.status);
                   const isTerminal = p.status === "entregue" || p.status === "cancelado";
                   const cor = STATUS_CORES[p.status];
+                  // Venda por peso: se algum item precisa ser pesado, o fluxo
+                  // muda — o lojista pesa a peça real antes de liberar entrega.
+                  const temItemPorPeso = (p.itens || []).some(it => it.por_peso);
+                  const temItemPorPesarAinda = (p.itens || []).some(it => it.por_peso && Number(it.quantidade) === Number(it.peso_desejado_kg));
+                  const precisaPesar = temItemPorPeso && temItemPorPesarAinda && (p.status === "pendente" || p.status === "confirmado");
+                  const aguardandoCliente = p.status === "aguardando_confirmacao";
                   return (
                     <div key={p.id} className="cz-card" style={{ borderColor: `${(cor || {}).color || "#2A2A2A"}33` }}>
                       <div className="cz-card-head" onClick={() => setExpandido(aberto ? null : p.id)}>
@@ -1294,7 +1462,7 @@ export default function CozinhaApp({ onNavegar }) {
                           <div style={{ minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                               <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 800 }}>#{p.id.slice(0, 6)}</span>
-                              <span className="cz-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {tipo === "delivery" ? "Delivery" : tipo === "retirada" ? "Retirada" : "No local"}</span>
+                              <span className="cz-badge" style={{ background: cfg.bg, color: cfg.color }}>{cfg.icon} {tipo === "delivery" ? "Delivery" : tipo === "retirada" ? "Retirada" : tipo === "balcao" ? "Balcão" : "No local"}</span>
                               <span className="cz-badge" style={{ background: p.tipo === "online" ? "#172554" : "#1A1A1A", color: p.tipo === "online" ? "#60A5FA" : "#777" }}>
                                 {p.tipo === "online" ? "ONLINE" : "PRESENCIAL"}
                               </span>
@@ -1342,10 +1510,30 @@ export default function CozinhaApp({ onNavegar }) {
                           {/* Items */}
                           <div style={{ background: "#111", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
                             {p.itens?.map((item, i) => {
+                              const itemPorPeso = !!item.por_peso;
+                              const kgFmt = (v) => Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+                              const pesoAtualIgualDesejado = itemPorPeso && Number(item.quantidade) === Number(item.peso_desejado_kg);
                               return (
                                 <div key={i} style={{ padding: "6px 0", borderBottom: i < p.itens.length - 1 ? "1px solid #1F1F1F" : "none" }}>
                                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                                    <span>{item.quantidade}x {item.produto_nome}</span>
+                                    <span>
+                                      {itemPorPeso ? (
+                                        <>
+                                          <span style={{ color: pesoAtualIgualDesejado ? "#FBBF24" : "#4ADE80", fontWeight: 700 }}>
+                                            {kgFmt(item.quantidade)} kg
+                                          </span>
+                                          {" × "}{item.produto_nome}
+                                          {pesoAtualIgualDesejado && <span style={{ color: "#FBBF24", fontSize: 11, marginLeft: 6 }}>⚖️ aguardando pesagem</span>}
+                                          {!pesoAtualIgualDesejado && item.peso_desejado_kg && (
+                                            <span style={{ color: "#777", fontSize: 11, marginLeft: 6 }}>
+                                              (pediu {kgFmt(item.peso_desejado_kg)} kg)
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <>{item.quantidade}x {item.produto_nome}</>
+                                      )}
+                                    </span>
                                   </div>
                                   {item.adicionais?.length > 0 && (
                                     <div style={{ marginTop: 3 }}>
@@ -1401,15 +1589,44 @@ export default function CozinhaApp({ onNavegar }) {
 
                           {/* Action buttons */}
                           {!isTerminal && (
-                            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                              {prox && (
-                                <button className="cz-btn" style={{ background: (STATUS_CORES[prox] || {}).color || "#333" }} disabled={!!marcando[p.id]} onClick={() => atualizarStatusPedido(p.id, prox)}>
-                                  {marcando[p.id] ? "..." : `Avançar → ${STATUS_LABELS[prox]}`}
+                            <div style={{ display: "flex", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                              {/* Aguardando confirmação do cliente (por peso, fora tolerância) */}
+                              {aguardandoCliente ? (
+                                <>
+                                  <button className="cz-btn" style={{ background: "#15803D" }} disabled={!!marcando[p.id]} onClick={() => confirmarPesagemDoCliente(p.id)}>
+                                    ✅ Cliente confirmou
+                                  </button>
+                                  <button className="cz-btn" style={{ background: "#B91C1C" }} disabled={!!marcando[p.id]} onClick={() => recusarPesagemDoCliente(p.id)}>
+                                    ❌ Cliente recusou
+                                  </button>
+                                  <button className="cz-btn" style={{ background: "none", border: "1px solid #7C3AED", color: "#C4B5FD", flex: "none", padding: "10px 16px" }} disabled={!!marcando[p.id]} onClick={() => abrirModalPesar(p)}>
+                                    ⚖️ Ajustar peso
+                                  </button>
+                                </>
+                              ) : precisaPesar ? (
+                                /* Fluxo por peso: primeiro pesar as peças */
+                                <button className="cz-btn" style={{ background: "#7C3AED" }} disabled={!!marcando[p.id]} onClick={() => abrirModalPesar(p)}>
+                                  ⚖️ Pesar peças
+                                </button>
+                              ) : (
+                                <>
+                                  {prox && (
+                                    <button className="cz-btn" style={{ background: (STATUS_CORES[prox] || {}).color || "#333" }} disabled={!!marcando[p.id]} onClick={() => atualizarStatusPedido(p.id, prox)}>
+                                      {marcando[p.id] ? "..." : `Avançar → ${STATUS_LABELS[prox]}`}
+                                    </button>
+                                  )}
+                                  {temItemPorPeso && (
+                                    <button className="cz-btn" style={{ background: "none", border: "1px solid #7C3AED", color: "#C4B5FD", flex: "none", padding: "10px 16px" }} disabled={!!marcando[p.id]} onClick={() => abrirModalPesar(p)}>
+                                      ✏️ Ajustar peso
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                              {!aguardandoCliente && (
+                                <button className="cz-btn" style={{ background: "#350A0A", border: "1px solid #7F1D1D", flex: "none", padding: "10px 16px" }} disabled={!!marcando[p.id]} onClick={() => atualizarStatusPedido(p.id, "cancelado")}>
+                                  Cancelar
                                 </button>
                               )}
-                              <button className="cz-btn" style={{ background: "#350A0A", border: "1px solid #7F1D1D", flex: "none", padding: "10px 16px" }} disabled={!!marcando[p.id]} onClick={() => atualizarStatusPedido(p.id, "cancelado")}>
-                                Cancelar
-                              </button>
                             </div>
                           )}
                           {p.status === "entregue" && (
@@ -1457,6 +1674,16 @@ export default function CozinhaApp({ onNavegar }) {
           cardapios={cardapios}
           onSave={criarPedidoManual}
           onClose={() => setModalManual(false)}
+        />
+      )}
+
+      {modalPesar && (
+        <ModalPesarItens
+          pedido={pedidos.find(p => p.id === modalPesar.pedido.id) || modalPesar.pedido}
+          marcando={marcando}
+          onRegistrarPeso={registrarPesoItem}
+          onAvancar={(id) => atualizarStatusPedido(id, "entregue")}
+          onClose={fecharModalPesar}
         />
       )}
     </div>

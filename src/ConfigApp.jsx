@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
-import { api } from "./api";
+import { api, API_URL } from "./api";
 import Lixeira from "./Lixeira";
 import Logo from "./Logo";
+import { aplicarEscalaUI, lerEscalaUI } from "./ui-escala";
+import { aplicarTemaUI, lerTemaUI } from "./ui-tema";
 // FiscalTab foi movido para dentro do SuporteApp (SecaoFiscal) — não fica mais
 // exposto na config do cliente para evitar sonegação. Ver src/SuporteApp.jsx.
 
@@ -24,6 +26,7 @@ const DIAS_SEMANA = [
 
 const NAV_TABS = [
   { key: "geral", icon: "⚙️", label: "Geral" },
+  { key: "aparencia", icon: "🎨", label: "Aparência" },
   { key: "conexao", icon: "🔗", label: "Conexão" },
   ...(IS_ONLINE ? [] : [{ key: "rede", icon: "🖧", label: "Rede local" }]),
   { key: "lixeira", icon: "🗑️", label: "Lixeira" },
@@ -39,6 +42,56 @@ const SETORES_FUNC = [
   { key: "config", icon: "⚙️", label: "Configurações" },
 ];
 const labelSetor = (k) => (SETORES_FUNC.find(s => s.key === k) || {}).label || k;
+
+// ─── BACKUP DO BANCO (PDV desktop) ───────────────────────────────────────────
+// Botão simples pro dono do estabelecimento fazer backup sozinho (ex.: fim de
+// expediente da semana) — mesma API do Suporte, mas sem qualquer menção à
+// cópia off-site no Drive (isso fica só na área do Operador Nexus).
+function BackupCard({ showToast }) {
+  const [backups, setBackups] = useState(null);
+  const [fazendo, setFazendo] = useState(false);
+
+  const carregar = () => api.suporte.backups().then(setBackups).catch(() => setBackups(null));
+  useEffect(() => { carregar(); }, []);
+
+  const fazerBackup = async () => {
+    setFazendo(true);
+    try {
+      const r = await api.suporte.backup();
+      setBackups(b => ({ pasta: b?.pasta, backups: r.backups }));
+      showToast(`Backup criado: ${r.arquivo}`);
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setFazendo(false); }
+  };
+
+  const fmtBytes = (b) => b > 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+
+  return (
+    <div className="card">
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Backup do banco de dados</div>
+      <div style={{ fontSize: 12, color: "#78716c", marginBottom: 14 }}>
+        Salva uma cópia de segurança de tudo (vendas, produtos, financeiro). Recomendado fazer no fim do expediente,
+        principalmente às sextas-feiras.
+      </div>
+      <button onClick={fazerBackup} disabled={fazendo}
+        style={{ ...cfgBtn, width: "100%", padding: 12, background: "#15803d", opacity: fazendo ? 0.6 : 1, marginBottom: 12 }}>
+        {fazendo ? "Gerando..." : "💾 Fazer backup agora"}
+      </button>
+      {backups?.backups?.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {backups.backups.slice(0, 5).map(b => (
+            <div key={b.arquivo} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#fafaf9", borderRadius: 8, fontSize: 12, color: "#57534e" }}>
+              <span style={{ fontFamily: "monospace" }}>{b.arquivo}</span>
+              <span>{fmtBytes(b.tamanho)} · {new Date(b.criado_em).toLocaleString("pt-BR")}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: "#a8a29e" }}>Nenhum backup ainda — o primeiro automático sai em até 24h, ou clique acima.</div>
+      )}
+    </div>
+  );
+}
 
 // ─── ASSINATURA NEXUS (PDV desktop) ──────────────────────────────────────────
 function AssinaturaNexusCard({ showToast }) {
@@ -316,6 +369,101 @@ function FuncionariosCard({ showToast }) {
   );
 }
 
+// ─── APARÊNCIA (escala/zoom + atalhos visuais) ──────────────────────────────
+// Zoom global do Chromium/Electron (document.body.style.zoom). Aplica em todas
+// as telas ao mesmo tempo — fontes, ícones, botões e imagens crescem juntos,
+// sem quebrar layout. Ideal pra clientes com dificuldade de leitura e pra telas
+// grandes montadas no balcão.
+const ESCALAS = [
+  { valor: 0.9,  rotulo: "Compacta",   desc: "90% — cabe mais na tela" },
+  { valor: 1.0,  rotulo: "Normal",     desc: "100% — tamanho padrão" },
+  { valor: 1.15, rotulo: "Confortável",desc: "115% — um pouco maior" },
+  { valor: 1.3,  rotulo: "Grande",     desc: "130% — mais legível" },
+  { valor: 1.5,  rotulo: "Muito grande",desc:"150% — leitura assistida" },
+];
+function AparenciaTab() {
+  const [escala, setEscala] = useState(() => lerEscalaUI());
+  const [tema, setTema] = useState(() => lerTemaUI());
+  const escolher = (v) => { setEscala(v); aplicarEscalaUI(v); };
+  const escolherTema = (t) => { setTema(t); aplicarTemaUI(t); };
+  return (
+    <div className="anim" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="card">
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Tema</div>
+        <div style={{ fontSize: 12.5, color: "#78716c", marginBottom: 14 }}>
+          Aplica em todas as telas — Frente de Caixa, Produtos, Estoque, Financeiro, Cozinha, Configurações.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, maxWidth: 460 }}>
+          {[
+            { key: "light", rotulo: "☀️ Claro", desc: "Fundo branco, texto escuro" },
+            { key: "dark",  rotulo: "🌙 Escuro", desc: "Fundo preto, texto claro" },
+          ].map(t => {
+            const ativo = tema === t.key;
+            return (
+              <button key={t.key} onClick={() => escolherTema(t.key)}
+                style={{
+                  padding: "16px 14px", borderRadius: 12,
+                  border: `2px solid ${ativo ? "#15803d" : "#e7e5e4"}`,
+                  background: ativo ? "#f0fdf4" : "#fff",
+                  cursor: "pointer", textAlign: "left", fontFamily: "inherit", transition: "all 0.15s",
+                }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: ativo ? "#15803d" : "#1c1917" }}>{t.rotulo}</div>
+                <div style={{ fontSize: 12, color: "#78716c", marginTop: 3 }}>{t.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card">
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Tamanho da interface</div>
+        <div style={{ fontSize: 12.5, color: "#78716c", marginBottom: 16 }}>
+          Ajusta fontes, ícones e botões de TODAS as telas ao mesmo tempo. A escolha fica salva neste computador.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
+          {ESCALAS.map(e => {
+            const ativo = Math.abs(escala - e.valor) < 0.01;
+            return (
+              <button key={e.valor} onClick={() => escolher(e.valor)}
+                style={{
+                  padding: "14px 12px", borderRadius: 12,
+                  border: `2px solid ${ativo ? "#15803d" : "#e7e5e4"}`,
+                  background: ativo ? "#f0fdf4" : "#fff",
+                  cursor: "pointer", textAlign: "left", fontFamily: "inherit",
+                  transition: "all 0.15s",
+                }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 700, color: ativo ? "#15803d" : "#1c1917" }}>
+                  {e.rotulo}
+                </div>
+                <div style={{ fontSize: 11.5, color: "#78716c", marginTop: 3 }}>{e.desc}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="card">
+        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Tela cheia</div>
+        <div style={{ fontSize: 12.5, color: "#78716c", marginBottom: 14 }}>
+          Esconde a barra de tarefas do Windows pra deixar o PDV ocupando 100% do monitor. Ideal quando o computador é dedicado ao caixa.
+        </div>
+        {window.janela?.fullScreen ? (
+          <button onClick={() => window.janela.fullScreen()} className="btn-add" style={{ background: "#1c1917" }}>
+            ⛶ Alternar tela cheia
+          </button>
+        ) : (
+          <div style={{ padding: "10px 14px", background: "#fafaf9", border: "1px dashed #d6d3d1", borderRadius: 8, fontSize: 12, color: "#78716c" }}>
+            Este recurso está disponível apenas no aplicativo instalado (Nexus PDV desktop). No navegador, use F11.
+          </div>
+        )}
+        <div style={{ fontSize: 11.5, color: "#a8a29e", marginTop: 10 }}>
+          Atalho de teclado: <b>F11</b> (Windows). O botão flutuante ⛶ no canto superior direito faz o mesmo.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── CONFIGURAÇÕES GERAIS ────────────────────────────────────────────────────
 function GeralTab() {
   const [loading, setLoading] = useState(true);
@@ -463,6 +611,9 @@ function GeralTab() {
         {/* ── ASSINATURA NEXUS (só PDV desktop) ────────────────────── */}
         {!IS_ONLINE && <AssinaturaNexusCard showToast={showToast} />}
 
+        {/* ── BACKUP DO BANCO (só PDV desktop) ─────────────────────── */}
+        {!IS_ONLINE && <BackupCard showToast={showToast} />}
+
         {/* ── LOGIN E ACESSO (só PDV desktop) ────────────────────────── */}
         <LoginAcessoCard showToast={showToast} />
 
@@ -574,7 +725,7 @@ function BotWhatsAppCard({ showToast }) {
           </div>
         ) : (
           <>
-            <button onClick={() => window.open("/api/bot/qr", "_blank")}
+            <button onClick={() => window.open(`${API_URL}/bot/qr`, "_blank")}
               style={{ ...cfgBtn, width: "100%", padding: "14px 20px", fontSize: 14, background: "#15803d" }}>
               📱 Ativar bot — ler QR Code no WhatsApp
             </button>
@@ -1169,6 +1320,7 @@ export default function ConfigApp({ onNavegar, abaInicial }) {
       {/* Content */}
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 32px" }}>
         {aba === "geral" && <GeralTab />}
+        {aba === "aparencia" && <AparenciaTab />}
         {aba === "conexao" && <ConexaoTab />}
         {aba === "rede" && <RedeLocalTab />}
         {aba === "lixeira" && <Lixeira />}

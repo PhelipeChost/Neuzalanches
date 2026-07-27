@@ -84,9 +84,9 @@ function FormPromocao({ inicial, onSalvar, onCancelar, cardapioAtivo, cardapioNo
   const [salvando, setSalvando]       = useState(false);
   const [erro, setErro]               = useState("");
 
-  // Vinculação opcional com um produto existente (preenche nome/preço/CMV automaticamente)
+  // Vinculação com produtos existentes (preenche nome/preço/CMV automaticamente)
   const [produtos, setProdutos] = useState([]);
-  const [produtoVinculadoId, setProdutoVinculadoId] = useState("");
+  const [produtosSelecionados, setProdutosSelecionados] = useState([]);
   useEffect(() => {
     (async () => {
       try {
@@ -104,20 +104,35 @@ function FormPromocao({ inicial, onSalvar, onCancelar, cardapioAtivo, cardapioNo
     })();
   }, [cardapioAtivo]);
 
-  // Filtro por busca — o cliente pode ter dezenas de produtos por cardápio
   const produtosBusca = produtos.filter(p => !buscaProduto || p.nome.toLowerCase().includes(buscaProduto.toLowerCase()));
 
-  const aoSelecionarProduto = (id) => {
-    setProdutoVinculadoId(id);
-    if (!id) return; // "Nenhum (criar do zero)" — não altera o que já está digitado
-    const p = produtos.find(x => String(x.id) === String(id));
-    if (!p) return;
-    // Autopreenche nome, preço normal e custo. O preço promocional fica em branco
-    // para o dono decidir; a imagem permanece manual (conforme solicitado).
-    setNome(p.nome || "");
-    setPrecoDe(p.preco != null ? String(p.preco) : "");
-    setCusto(p.custo != null ? String(p.custo) : "");
-    if (!descricao && p.descricao) setDescricao(p.descricao);
+  const toggleProduto = (id) => {
+    const jaExiste = produtosSelecionados.find(s => String(s.id) === String(id));
+    if (jaExiste) {
+      const novos = produtosSelecionados.filter(s => String(s.id) !== String(id));
+      setProdutosSelecionados(novos);
+      atualizarCamposDosProdutos(novos);
+    } else {
+      const p = produtos.find(x => String(x.id) === String(id));
+      if (!p) return;
+      const novos = [...produtosSelecionados, { id: p.id, nome: p.nome, preco: p.preco, custo: p.custo || 0 }];
+      setProdutosSelecionados(novos);
+      atualizarCamposDosProdutos(novos);
+    }
+  };
+
+  const atualizarCamposDosProdutos = (lista) => {
+    if (lista.length === 0) return;
+    if (lista.length === 1) {
+      setNome(lista[0].nome);
+      setPrecoDe(String(lista[0].preco));
+      setCusto(String(lista[0].custo || 0));
+    } else {
+      setNome(lista.map(p => p.nome).join(" + "));
+      setPrecoDe(String(lista.reduce((s, p) => s + (p.preco || 0), 0).toFixed(2)));
+      setCusto(String(lista.reduce((s, p) => s + (p.custo || 0), 0).toFixed(2)));
+      if (!descricao) setDescricao(lista.map(p => p.nome).join(" + "));
+    }
   };
 
   const desconto = calcularDesconto(Number(preco), Number(precoDe));
@@ -188,23 +203,34 @@ function FormPromocao({ inicial, onSalvar, onCancelar, cardapioAtivo, cardapioNo
         </div>
       )}
 
-      {/* Seletor: vincular produto existente (autopreenche os campos) */}
+      {/* Seletor: vincular produtos existentes (autopreenche os campos) */}
       {!inicial && (
         <div style={{
           background: "linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%)",
           border: "1.5px solid #93C5FD", borderRadius: 10, padding: "12px 16px",
         }}>
           <label style={{ ...lbl, color: "#1E40AF", marginBottom: 6 }}>
-            🔗 Vincular a um produto existente? {cardapioNome && <span style={{ fontWeight: 400 }}>(do cardápio {cardapioNome})</span>}
+            🔗 Montar combo com produtos existentes {cardapioNome && <span style={{ fontWeight: 400 }}>(do cardápio {cardapioNome})</span>}
           </label>
+          {produtosSelecionados.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {produtosSelecionados.map(s => (
+                <span key={s.id} style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  padding: "4px 10px", background: "#DBEAFE", border: "1px solid #93C5FD",
+                  borderRadius: 6, fontSize: 12, fontWeight: 600, color: "#1E40AF",
+                }}>
+                  {s.nome} · {fmtBRL(s.preco)}
+                  <button type="button" onClick={() => toggleProduto(s.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#1E40AF", fontSize: 14, fontWeight: 700, padding: 0, lineHeight: 1, fontFamily: "inherit" }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
           <input style={{ ...inp, background: "#fff", borderColor: "#93C5FD", marginBottom: 8 }}
             type="search" placeholder="Buscar produto pelo nome…"
             value={buscaProduto} onChange={e => setBuscaProduto(e.target.value)} />
-          <div style={{ maxHeight: 180, overflowY: "auto", background: "#fff", border: "1.5px solid #93C5FD", borderRadius: 8 }}>
-            <button type="button" onClick={() => aoSelecionarProduto("")}
-              style={{ display: "flex", width: "100%", padding: "9px 12px", background: !produtoVinculadoId ? "#DBEAFE" : "transparent", border: "none", borderBottom: "1px solid #DBEAFE", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "#1E40AF", fontFamily: "inherit" }}>
-              — Nenhum (criar promoção do zero) —
-            </button>
+          <div style={{ maxHeight: 200, overflowY: "auto", background: "#fff", border: "1.5px solid #93C5FD", borderRadius: 8 }}>
             {produtosBusca.length === 0 && (
               <div style={{ padding: 14, textAlign: "center", fontSize: 12, color: "#93C5FD" }}>
                 {produtos.length === 0
@@ -213,20 +239,25 @@ function FormPromocao({ inicial, onSalvar, onCancelar, cardapioAtivo, cardapioNo
               </div>
             )}
             {produtosBusca.map(p => {
-              const sel = String(produtoVinculadoId) === String(p.id);
+              const sel = produtosSelecionados.some(s => String(s.id) === String(p.id));
               return (
-                <button type="button" key={p.id} onClick={() => { aoSelecionarProduto(p.id); setBuscaProduto(""); }}
-                  style={{ display: "flex", justifyContent: "space-between", width: "100%", padding: "9px 12px", background: sel ? "#DBEAFE" : "transparent", border: "none", borderBottom: "1px solid #f5f5f4", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "#1c1917", fontFamily: "inherit", gap: 10 }}>
-                  <span>{p.nome}</span>
+                <button type="button" key={p.id} onClick={() => { toggleProduto(p.id); }}
+                  style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%", padding: "9px 12px", background: sel ? "#DBEAFE" : "transparent", border: "none", borderBottom: "1px solid #f5f5f4", cursor: "pointer", textAlign: "left", fontSize: 12.5, color: "#1c1917", fontFamily: "inherit", gap: 10 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${sel ? "#2563eb" : "#d6d3d1"}`, background: sel ? "#2563eb" : "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#fff", flexShrink: 0 }}>
+                      {sel ? "✓" : ""}
+                    </span>
+                    {p.nome}
+                  </span>
                   <span style={{ color: "#78716c", flexShrink: 0 }}>{fmtBRL(p.preco)}{p.custo > 0 ? ` · CMV ${fmtBRL(p.custo)}` : ""}</span>
                 </button>
               );
             })}
           </div>
           <div style={{ fontSize: 11, color: "#1E40AF", marginTop: 6, lineHeight: 1.4 }}>
-            {produtoVinculadoId
-              ? "✓ Preenchi o nome, o preço de referência (riscado) e o CMV. Falta digitar o preço promocional."
-              : "Escolha um produto pra colocar em promoção, ou deixe em Nenhum se for um combo novo."}
+            {produtosSelecionados.length > 0
+              ? `✓ ${produtosSelecionados.length} produto${produtosSelecionados.length > 1 ? "s" : ""} selecionado${produtosSelecionados.length > 1 ? "s" : ""}. Preço "De" = soma dos preços normais (${fmtBRL(produtosSelecionados.reduce((s, p) => s + p.preco, 0))}). Defina o preço promocional abaixo.`
+              : "Selecione um ou mais produtos para montar a promoção/combo, ou preencha os campos manualmente."}
           </div>
         </div>
       )}
@@ -411,11 +442,7 @@ export default function Promocoes({ cardapioAtivo, cardapioNome } = {}) {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Filtra promoções pelo cardápio ativo (mesma lógica de produtos: pela categoria)
-  const nomesCatDoCardapio = new Set(categoriasDoCardapio.map(c => c.nome));
-  const promocoesDoCardapio = cardapioAtivo
-    ? promocoes.filter(p => nomesCatDoCardapio.has(p.categoria))
-    : promocoes;
+  const promocoesDoCardapio = promocoes;
 
   async function salvar(dados) {
     if (editando?.id) {

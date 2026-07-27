@@ -585,7 +585,6 @@ function GraficoEquilibrio({ dados, pe }) {
 export default function FluxoCaixa() {
   const [tab, setTab] = useState("visao-geral");
   const [lancamentos, setLancamentos] = useState([]);
-  const [pedidos, setPedidos] = useState([]);
   const [custosFixosList, setCustosFixosList] = useState([]);
   const [categoriasFin, setCategoriasFin] = useState([]); // categorias editáveis (CRUD)
   const [saldoInicial, setSaldoInicial] = useState(0);
@@ -609,16 +608,14 @@ export default function FluxoCaixa() {
   // ─── CARREGAR DADOS DO BANCO ───────────────────────────────────────────────
   const carregarDados = useCallback(async () => {
     try {
-      const [lancs, config, peds, custos, cats] = await Promise.all([
+      const [lancs, config, custos, cats] = await Promise.all([
         api.lancamentos.listar(),
         api.config.obter(),
-        api.pedidos.listar(),
         api.custosFixos.listar(),
         api.categoriasFinanceiro.listar().catch(() => []),
       ]);
       setLancamentos(lancs);
       setSaldoInicial(config.saldo_inicial);
-      setPedidos(peds);
       setCustosFixosList(custos);
       setCategoriasFin(cats);
     } catch (err) {
@@ -699,25 +696,20 @@ export default function FluxoCaixa() {
     return MESES[m - 1].toLowerCase();
   })();
 
-  // ─── CMV & INDICADORES DO MÊS (baseado em pedidos entregues) ────────────────
-  const pedidosMes = useMemo(() => pedidos.filter(p => p.status === "entregue" && p.created_at && p.created_at.startsWith(mesSel)), [pedidos, mesSel]);
+  // ─── CMV & INDICADORES DO MÊS (baseado em lançamentos de venda) ─────────────
+  // Fonte de verdade = lançamentos (não pedidos). Quando um lançamento é excluído,
+  // o CMV associado sai de todos os indicadores automaticamente.
+  const vendasMes = useMemo(() => lancamentosMes.filter(l => l.tipo === "entrada" && l.cat === "Vendas" && l.status === "realizado"), [lancamentosMes]);
 
-  const receitaVendas = useMemo(() => pedidosMes.reduce((s, p) => s + p.total, 0), [pedidosMes]);
+  const receitaVendas = useMemo(() => vendasMes.reduce((s, l) => s + l.valor, 0), [vendasMes]);
 
-  const cmvTotal = useMemo(() => {
-    return pedidosMes.reduce((total, p) => {
-      const custoItens = (p.itens || []).reduce((s, item) => {
-        return s + (item.custo_unitario || 0) * item.quantidade;
-      }, 0);
-      return total + custoItens;
-    }, 0);
-  }, [pedidosMes]);
+  const cmvTotal = useMemo(() => vendasMes.reduce((s, l) => s + (l.custo || 0), 0), [vendasMes]);
 
   const lucroBruto = receitaVendas - cmvTotal;
   const margemBruta = receitaVendas > 0 ? (lucroBruto / receitaVendas) * 100 : 0;
   const markup = cmvTotal > 0 ? ((receitaVendas - cmvTotal) / cmvTotal) * 100 : 0;
-  const ticketMedio = pedidosMes.length > 0 ? receitaVendas / pedidosMes.length : 0;
-  const custoMedioPedido = pedidosMes.length > 0 ? cmvTotal / pedidosMes.length : 0;
+  const ticketMedio = vendasMes.length > 0 ? receitaVendas / vendasMes.length : 0;
+  const custoMedioPedido = vendasMes.length > 0 ? cmvTotal / vendasMes.length : 0;
 
   // Dados para gráfico Receita vs CMV (últimos 4 meses)
   const dadosReceitaCMV = useMemo(() => {
@@ -731,18 +723,16 @@ export default function FluxoCaixa() {
       meses.push(`${a}-${String(m).padStart(2, "0")}`);
     }
     return meses.map(mesKey => {
-      const pedsEntregues = pedidos.filter(p => p.status === "entregue" && p.created_at && p.created_at.startsWith(mesKey));
-      const receita = pedsEntregues.reduce((s, p) => s + p.total, 0);
-      const cmv = pedsEntregues.reduce((total, p) => {
-        return total + (p.itens || []).reduce((s, item) => s + (item.custo_unitario || 0) * item.quantidade, 0);
-      }, 0);
+      const vendasDoMes = lancamentos.filter(l => l.data.startsWith(mesKey) && l.tipo === "entrada" && l.cat === "Vendas" && l.status === "realizado");
+      const receita = vendasDoMes.reduce((s, l) => s + l.valor, 0);
+      const cmv = vendasDoMes.reduce((s, l) => s + (l.custo || 0), 0);
       return {
         mes: MESES[parseInt(mesKey.split("-")[1]) - 1],
         receita,
         cmv,
       };
     });
-  }, [pedidos, mesSel]);
+  }, [lancamentos, mesSel]);
 
   // Filtros da listagem (sobre o caixa — CMV legado fica fora do feed/tabela)
   const lancamentosFiltrados = useMemo(() => lancamentosCaixa.filter(l => {
@@ -892,20 +882,19 @@ export default function FluxoCaixa() {
   const folga = receitaVendas - pontoEquilibrio;
   const margemSeguranca = pontoEquilibrio > 0 && receitaVendas > 0 ? (folga / receitaVendas) * 100 : 0;
 
-  // Faturamento diário acumulado no mês (para o gráfico e cálculo do dia de equilíbrio)
   const vendasDiariasAcum = useMemo(() => {
     const [ano, mes] = mesSel.split("-").map(Number);
     const diasNoMes = new Date(ano, mes, 0).getDate();
     let acum = 0;
     return Array.from({ length: diasNoMes }, (_, i) => {
       const dia = String(i + 1).padStart(2, "0");
-      const vendas = pedidosMes
-        .filter(p => p.created_at && p.created_at.startsWith(`${mesSel}-${dia}`))
-        .reduce((s, p) => s + p.total, 0);
+      const vendas = vendasMes
+        .filter(l => l.data.startsWith(`${mesSel}-${dia}`))
+        .reduce((s, l) => s + l.valor, 0);
       acum += vendas;
       return { dia: i + 1, vendas, acumulado: acum };
     });
-  }, [pedidosMes, mesSel]);
+  }, [vendasMes, mesSel]);
 
   const diaEquilibrio = pontoEquilibrio > 0
     ? vendasDiariasAcum.find(d => d.acumulado >= pontoEquilibrio)
@@ -1076,7 +1065,7 @@ export default function FluxoCaixa() {
                 const pctDe = (v) => receitaVendas > 0 ? (v / receitaVendas) * 100 : 0;
                 const rotuloPct = (v) => receitaVendas > 0 ? `${pctDe(v).toFixed(0)}% da receita` : "—";
                 const linhas = [
-                  { nome: "Receita com vendas",      desc: `${pedidosMes.length} pedido${pedidosMes.length !== 1 ? "s" : ""} entregue${pedidosMes.length !== 1 ? "s" : ""}`, valor: receitaVendas,    sinal: "+", pct: 100,                  barLabel: `${fmt(receitaVendas)}`, barColor: "var(--verde)",   valClass: "up" },
+                  { nome: "Receita com vendas",      desc: `${vendasMes.length} venda${vendasMes.length !== 1 ? "s" : ""}`, valor: receitaVendas,    sinal: "+", pct: 100,                  barLabel: `${fmt(receitaVendas)}`, barColor: "var(--verde)",   valClass: "up" },
                   { nome: "(−) Custo das mercadorias", desc: "CMV — o que você pagou no que vendeu", valor: cmvTotal,         sinal: "−", pct: pctDe(cmvTotal),      barLabel: rotuloPct(cmvTotal),    barColor: "var(--laranja)", valClass: "down" },
                   { nome: "= Lucro bruto",           desc: "sobrou antes das despesas",            valor: lucroBruto,       sinal: "",  pct: pctDe(lucroBruto),    barLabel: rotuloPct(lucroBruto),  barColor: "var(--verde-d)", valClass: lucroBruto >= 0 ? "up" : "down" },
                   { nome: "(−) Despesas do mês",     desc: "folha, aluguel, luz, taxas…",          valor: totalCustosFixos, sinal: "−", pct: pctDe(totalCustosFixos), barLabel: rotuloPct(totalCustosFixos), barColor: "var(--vermelho)", valClass: "down" },
@@ -1142,7 +1131,7 @@ export default function FluxoCaixa() {
               <div className="card" style={{ padding: "16px 18px", background: "#fafaf9" }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: "#57534e", marginBottom: 12, letterSpacing: "0.06em" }}>DIAGNÓSTICO</div>
                 {receitaVendas === 0 ? (
-                  <div style={{ fontSize: 12, color: "#a8a29e" }}>Sem pedidos entregues neste mês.</div>
+                  <div style={{ fontSize: 12, color: "#a8a29e" }}>Sem vendas registradas neste mês.</div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <DiagItem
@@ -1183,7 +1172,7 @@ export default function FluxoCaixa() {
             {/* Estado sem dados suficientes */}
             {receitaVendas === 0 && (
               <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: 12, padding: "20px 24px", fontSize: 13, color: "#92400e" }}>
-                ⚠ Sem pedidos entregues neste mês. O cálculo precisa de dados de vendas para determinar a margem de contribuição.
+                ⚠ Sem vendas registradas neste mês. O cálculo precisa de dados de vendas para determinar a margem de contribuição.
               </div>
             )}
             {receitaVendas > 0 && totalCustosFixos === 0 && (
@@ -1207,7 +1196,7 @@ export default function FluxoCaixa() {
                   <div className="card" style={{ padding: "16px 18px", borderTop: "3px solid #2563eb" }}>
                     <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 6 }}>FATURAMENTO ATUAL</div>
                     <div style={{ fontFamily: "'Inter',sans-serif", fontSize: 22, fontWeight: 700, color: "#2563eb" }}>{fmt(receitaVendas)}</div>
-                    <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>{pedidosMes.length} pedidos entregues</div>
+                    <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>{vendasMes.length} vendas</div>
                   </div>
                   {/* Resultado vs PE */}
                   <div className="card" style={{ padding: "16px 18px", borderTop: `3px solid ${folga >= 0 ? "#15803d" : "#dc2626"}` }}>
@@ -1249,7 +1238,7 @@ export default function FluxoCaixa() {
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                       <div>
                         <div style={{ fontSize: 13, fontWeight: 600 }}>Faturamento acumulado no mês</div>
-                        <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>Cada dia soma o faturamento dos pedidos entregues</div>
+                        <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>Cada dia soma o faturamento das vendas realizadas</div>
                       </div>
                       <div style={{ display: "flex", gap: 12, fontSize: 11, color: "#78716c" }}>
                         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -1341,7 +1330,7 @@ export default function FluxoCaixa() {
             {/* KPI Cards */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 20 }}>
               {[
-                { label: "RECEITA TOTAL", valor: fmt(receitaVendas), cor: "#2563eb", desc: `${pedidosMes.length} pedidos entregues` },
+                { label: "RECEITA TOTAL", valor: fmt(receitaVendas), cor: "#2563eb", desc: `${vendasMes.length} vendas realizadas` },
                 { label: "CMV TOTAL", valor: fmt(cmvTotal), cor: "#f59e0b", desc: "Custo das mercadorias vendidas" },
                 { label: "LUCRO BRUTO", valor: fmt(lucroBruto), cor: lucroBruto >= 0 ? "#15803d" : "#dc2626", desc: "Receita - CMV" },
                 { label: "MARGEM BRUTA", valor: `${margemBruta.toFixed(1)}%`, cor: margemBruta >= 30 ? "#15803d" : margemBruta >= 15 ? "#d97706" : "#dc2626", desc: margemBruta >= 30 ? "Margem saudavel" : margemBruta >= 15 ? "Margem moderada" : "Margem baixa" },
@@ -1360,7 +1349,7 @@ export default function FluxoCaixa() {
                 { label: "MARKUP", valor: `${markup.toFixed(1)}%`, cor: "#7c3aed", desc: "Margem sobre o custo" },
                 { label: "TICKET MEDIO", valor: fmt(ticketMedio), cor: "#2563eb", desc: "Valor medio por pedido" },
                 { label: "CUSTO MEDIO/PEDIDO", valor: fmt(custoMedioPedido), cor: "#f59e0b", desc: "CMV medio por pedido" },
-                { label: "PEDIDOS NO MES", valor: String(pedidosMes.length), cor: "#1c1917", desc: "Pedidos entregues" },
+                { label: "VENDAS NO MES", valor: String(vendasMes.length), cor: "#1c1917", desc: "Vendas realizadas" },
               ].map(m => (
                 <div key={m.label} className="metric">
                   <div style={{ fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 8 }}>{m.label}</div>
@@ -1412,37 +1401,37 @@ export default function FluxoCaixa() {
             {/* Tabela de detalhamento por pedido */}
             <div className="card" style={{ padding: 0, overflow: "hidden" }}>
               <div style={{ padding: "12px 18px", borderBottom: "1px solid #f5f5f4", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>Detalhamento por pedido entregue</div>
-                <div style={{ fontSize: 11, color: "#a8a29e" }}>{pedidosMes.length} pedidos</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Detalhamento por venda</div>
+                <div style={{ fontSize: 11, color: "#a8a29e" }}>{vendasMes.length} vendas</div>
               </div>
-              {pedidosMes.length === 0 ? (
-                <div style={{ padding: "32px 0", textAlign: "center", color: "#a8a29e", fontSize: 13 }}>Nenhum pedido entregue neste mes.</div>
+              {vendasMes.length === 0 ? (
+                <div style={{ padding: "32px 0", textAlign: "center", color: "#a8a29e", fontSize: 13 }}>Nenhuma venda registrada neste mes.</div>
               ) : (
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>
                     <tr style={{ background: "#fafaf9", borderBottom: "1px solid #f5f5f4" }}>
-                      {["Pedido", "Cliente", "Receita", "CMV", "Lucro", "Margem"].map(h => (
+                      {["Venda", "Data", "Receita", "CMV", "Lucro", "Margem"].map(h => (
                         <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 10, color: "#a8a29e", fontWeight: 600, letterSpacing: "0.08em" }}>{h.toUpperCase()}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {pedidosMes.slice(0, 20).map(p => {
-                      const cmvPedido = (p.itens || []).reduce((s, item) => s + (item.custo_unitario || 0) * item.quantidade, 0);
-                      const lucroPedido = p.total - cmvPedido;
-                      const margemPedido = p.total > 0 ? (lucroPedido / p.total) * 100 : 0;
+                    {vendasMes.slice(0, 20).map(l => {
+                      const cmvVenda = l.custo || 0;
+                      const lucroVenda = l.valor - cmvVenda;
+                      const margemVenda = l.valor > 0 ? (lucroVenda / l.valor) * 100 : 0;
                       return (
-                        <tr key={p.id} style={{ borderBottom: "1px solid #fafaf9" }}
+                        <tr key={l.id} style={{ borderBottom: "1px solid #fafaf9" }}
                           onMouseEnter={e => e.currentTarget.style.background = "#fafaf9"}
                           onMouseLeave={e => e.currentTarget.style.background = ""}>
-                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 500 }}>#{p.id.slice(0, 6)}</td>
-                          <td style={{ padding: "10px 16px", fontSize: 12, color: "#57534e" }}>{p.cliente_nome || "—"}</td>
-                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "#2563eb" }}>{fmt(p.total)}</td>
-                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 500, color: "#f59e0b" }}>{fmt(cmvPedido)}</td>
-                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 600, color: lucroPedido >= 0 ? "#15803d" : "#dc2626" }}>{fmt(lucroPedido)}</td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 500 }}>{l.descricao}</td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, color: "#57534e" }}>{l.data.split("-").reverse().join("/")}</td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 600, color: "#2563eb" }}>{fmt(l.valor)}</td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 500, color: "#f59e0b" }}>{fmt(cmvVenda)}</td>
+                          <td style={{ padding: "10px 16px", fontSize: 12, fontWeight: 600, color: lucroVenda >= 0 ? "#15803d" : "#dc2626" }}>{fmt(lucroVenda)}</td>
                           <td style={{ padding: "10px 16px" }}>
-                            <span style={{ background: margemPedido >= 30 ? "#dcfce7" : margemPedido >= 15 ? "#fef3c7" : "#fee2e2", color: margemPedido >= 30 ? "#15803d" : margemPedido >= 15 ? "#92400e" : "#dc2626", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
-                              {margemPedido.toFixed(1)}%
+                            <span style={{ background: margemVenda >= 30 ? "#dcfce7" : margemVenda >= 15 ? "#fef3c7" : "#fee2e2", color: margemVenda >= 30 ? "#15803d" : margemVenda >= 15 ? "#92400e" : "#dc2626", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 600 }}>
+                              {margemVenda.toFixed(1)}%
                             </span>
                           </td>
                         </tr>

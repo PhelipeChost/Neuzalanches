@@ -3,8 +3,9 @@ import { api, API_URL } from "./api";
 import { ImagemProduto } from "./Produtos";
 import Logo from "./Logo";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
-import { cardapioDoProduto, precoExibicao } from "./segmentos";
+import { cardapioDoProduto, precoExibicao, produtoPorPeso } from "./segmentos";
 import { BRAND, cssVarsDaMarca, visualCategoria } from "./brand";
+import { adicionalCabeNaCategoria } from "./adicionais-filter";
 
 // ─── CONFIGURAÇÕES DA MARCA ───────────────────────────────────────────────────
 const WHATSAPP_NUMERO = "5518991589923"; // número do bot conectado
@@ -826,6 +827,7 @@ function CardPromocao({ p, onAdd, onVerDetalhes }) {
 
 // ─── CARD DE PRODUTO ──────────────────────────────────────────────────────────
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDetalhes, onAdd }) {
+  const porPeso = produtoPorPeso(p);
   const podePersonalizar = catPermiteAdicionais[p.categoria] && adicionaisDisponiveis.some(a => !a.categoria || a.categoria === p.categoria);
 
   // Cor de fundo + emoji por categoria — vem da marca ativa (peixaria, etc.)
@@ -900,13 +902,14 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, onVerDeta
           <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>
             {precoExibicao(p).aPartirDe && <span style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)" }}>a partir de </span>}
             {fmt(precoExibicao(p).preco)}
+            {porPeso && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}> /kg</span>}
           </span>
           <button onClick={e => { e.stopPropagation(); onAdd(p); }}
             style={{ background: "var(--brand)", color: "#fff", border: "none", borderRadius: 8, padding: "9px 16px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Nunito', sans-serif", flexShrink: 0, transition: "background 0.18s" }}
             onMouseEnter={e => e.currentTarget.style.background = "var(--brand-dark)"}
             onMouseLeave={e => e.currentTarget.style.background = "var(--brand)"}
           >
-            + Adicionar
+            {porPeso ? "⚖️ Pedir por peso" : "+ Adicionar"}
           </button>
         </div>
       </div>
@@ -922,6 +925,7 @@ function CardVitrine({ p, onVerDetalhes, onAdd }) {
   const pe = precoExibicao(p);
   const emPromo = p.preco_de && p.preco_de > p.preco;
   const desconto = emPromo ? Math.round(((p.preco_de - p.preco) / p.preco_de) * 100) : 0;
+  const porPeso = produtoPorPeso(p);
   return (
     <div onClick={() => onVerDetalhes(p)} className="nl-vitrine-card" style={{ cursor: "pointer" }}>
       {/* Foto + botão adicionar */}
@@ -941,17 +945,19 @@ function CardVitrine({ p, onVerDetalhes, onAdd }) {
         )}
         <button
           onClick={e => { e.stopPropagation(); onAdd(p); }}
-          aria-label="Adicionar"
+          aria-label={porPeso ? "Pedir por peso" : "Adicionar"}
           style={{
             position: "absolute", bottom: 8, right: 8,
-            width: 34, height: 34, borderRadius: 10, border: "none",
-            background: "var(--brand)", color: "#fff", fontSize: 22, lineHeight: 1,
+            width: porPeso ? "auto" : 34, height: 34, borderRadius: 10, border: "none",
+            background: "var(--brand)", color: "#fff", fontSize: porPeso ? 14 : 22, lineHeight: 1,
+            fontWeight: porPeso ? 800 : "normal", paddingBottom: porPeso ? 0 : 3,
+            padding: porPeso ? "0 12px" : 0, fontFamily: "'Nunito', sans-serif",
             cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.22)", paddingBottom: 3,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.22)",
           }}
           onMouseEnter={e => e.currentTarget.style.background = "var(--brand-dark)"}
           onMouseLeave={e => e.currentTarget.style.background = "var(--brand)"}
-        >+</button>
+        >{porPeso ? "⚖️ peso" : "+"}</button>
       </div>
 
       {/* Preço em destaque + nome secundário */}
@@ -960,6 +966,7 @@ function CardVitrine({ p, onVerDetalhes, onAdd }) {
           <span className="nl-price" style={{ fontSize: 16.5, fontWeight: 800, color: "var(--price)" }}>
             {pe.aPartirDe && <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)" }}>a partir de </span>}
             {fmt(pe.preco)}
+            {porPeso && <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)" }}> /kg</span>}
           </span>
           {emPromo && (
             <span className="nl-price" style={{ fontSize: 12, fontWeight: 600, color: "var(--text-soft)", textDecoration: "line-through" }}>
@@ -973,6 +980,115 @@ function CardVitrine({ p, onVerDetalhes, onAdd }) {
           display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
         }}>
           {p.nome}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MODAL INFORMAR PESO (produto vendido por peso) ──────────────────────────
+// Cliente escolhe o peso APROXIMADO (o lojista vai pesar a peça real no
+// balcão e ajustar; se ficar fora de ±20%, o pedido trava esperando
+// confirmação por WhatsApp). Também dá o atalho "Pedir pelo WhatsApp".
+function ModalInformarPeso({ produto, onConfirmar, onPedirWhatsApp, onClose }) {
+  const [texto, setTexto] = useState("500");
+  const [unidade, setUnidade] = useState("g"); // g | kg
+  const preco = Number(produto.preco || 0);
+
+  const kg = (() => {
+    const n = parseFloat(String(texto).replace(",", "."));
+    if (!n || n <= 0) return 0;
+    return unidade === "kg" ? n : n / 1000;
+  })();
+  const totalEstimado = kg * preco;
+  const kgFmt = kg.toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  const precoFmt = preco.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const totalFmt = totalEstimado.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  const confirmar = () => {
+    if (kg <= 0) return;
+    onConfirmar(produto, kg);
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 350,
+      display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: "var(--surface)", borderRadius: "22px 22px 0 0", width: "100%", maxWidth: 520,
+        boxShadow: "0 -10px 50px rgba(0,0,0,0.25)",
+        animation: "slideUp 0.3s cubic-bezier(.32,.72,0,1)",
+        border: "1.5px solid var(--border)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 0" }}>
+          <div style={{ width: 40, height: 4, background: "var(--border-dark)", borderRadius: 2 }} />
+        </div>
+
+        <div style={{ padding: "16px 22px 22px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 6 }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-display)", fontSize: 20, fontWeight: 800, color: "var(--text)", lineHeight: 1.2 }}>
+                {produto.nome}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 2 }}>
+                <b style={{ color: "var(--brand)" }}>{precoFmt}</b> / kg — vendido por peso
+              </div>
+            </div>
+            <button onClick={onClose} style={{ background: "var(--surface-warm)", border: "none", borderRadius: "50%", width: 32, height: 32, fontSize: 15, cursor: "pointer", color: "var(--text-muted)", flexShrink: 0 }}>✕</button>
+          </div>
+
+          <div style={{ background: "var(--surface-warm)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, color: "var(--text-muted)", margin: "14px 0 16px", lineHeight: 1.5 }}>
+            ⚖️ O peso é aproximado — a peça real é pesada na balança. Se ficar muito diferente do que você escolheu, avisamos aqui no WhatsApp antes de seguir.
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <input
+              type="text" inputMode="decimal" autoFocus
+              value={texto} onChange={e => setTexto(e.target.value.replace(/[^\d.,]/g, ""))}
+              onKeyDown={e => e.key === "Enter" && confirmar()}
+              style={{ flex: 1, padding: "14px 16px", fontSize: 20, fontWeight: 800, textAlign: "right",
+                border: "2px solid var(--border-dark)", borderRadius: 12, background: "var(--surface)",
+                color: "var(--text)", fontFamily: "'Plus Jakarta Sans', sans-serif", outline: "none" }}
+            />
+            <div style={{ display: "flex", gap: 4, background: "var(--surface-warm)", border: "1px solid var(--border)", padding: 4, borderRadius: 10 }}>
+              {["g", "kg"].map(u => (
+                <button key={u} onClick={() => setUnidade(u)}
+                  style={{ padding: "10px 14px", borderRadius: 6, border: "none",
+                    background: unidade === u ? "var(--brand)" : "transparent",
+                    color: unidade === u ? "#fff" : "var(--text-muted)",
+                    fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  {u}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 14, padding: "12px 14px", background: "var(--brand-light)", borderRadius: 10 }}>
+            <div style={{ fontSize: 13, color: "var(--text-muted)", fontWeight: 600 }}>
+              {kg > 0 ? `${kgFmt} kg` : "—"}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: "var(--brand)", fontFamily: "'Plus Jakarta Sans', sans-serif" }}>
+              ≈ {totalFmt}
+            </div>
+          </div>
+
+          <button onClick={confirmar} disabled={kg <= 0}
+            style={{ marginTop: 14, width: "100%", padding: "16px", background: kg > 0 ? "var(--brand)" : "var(--border)",
+              color: kg > 0 ? "#fff" : "var(--text-muted)", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 800,
+              cursor: kg > 0 ? "pointer" : "default", fontFamily: "'Nunito', sans-serif" }}>
+            Adicionar ao carrinho
+          </button>
+
+          <div style={{ textAlign: "center", fontSize: 12, color: "var(--text-muted)", margin: "16px 0 8px" }}>
+            — ou —
+          </div>
+          <button onClick={() => { onPedirWhatsApp(produto); onClose(); }}
+            style={{ width: "100%", padding: "14px", background: "transparent", color: "#25d366",
+              border: "1.5px solid #25d366", borderRadius: 12, fontSize: 14, fontWeight: 800, cursor: "pointer",
+              fontFamily: "'Nunito', sans-serif", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <IconWhatsapp /> Pedir pelo WhatsApp
+          </button>
         </div>
       </div>
     </div>
@@ -1026,6 +1142,7 @@ function ModalProduto({ produto, adicionais, permiteAdicionais, aberto, onAddSim
             <div style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 32, fontWeight: 800, color: "var(--brand)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.8px" }}>
               {precoExibicao(produto).aPartirDe && <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-muted)" }}>a partir de </span>}
               {fmt(precoExibicao(produto).preco)}
+              {produtoPorPeso(produto) && <span style={{ fontSize: 14, fontWeight: 600, color: "var(--text-muted)" }}> /kg</span>}
             </div>
           </div>
 
@@ -1040,7 +1157,7 @@ function ModalProduto({ produto, adicionais, permiteAdicionais, aberto, onAddSim
               onMouseEnter={e => e.currentTarget.style.background = "var(--brand-dark)"}
               onMouseLeave={e => e.currentTarget.style.background = "var(--brand)"}
             >
-              + Adicionar ao carrinho
+              {produtoPorPeso(produto) ? "⚖️ Pedir por peso" : "+ Adicionar ao carrinho"}
             </button>
           )}
         </div>
@@ -1067,6 +1184,7 @@ const STATUS_LABELS_CLI = {
   confirmado: "Confirmado",
   preparando: "Preparando",
   pronto: "Pronto",
+  aguardando_confirmacao: "Aguardando você",
   entregue: "Entregue",
   cancelado: "Cancelado",
 };
@@ -1075,6 +1193,7 @@ const STATUS_EMOJI_CLI = {
   confirmado: "✅",
   preparando: "🍳",
   pronto: "🛵",
+  aguardando_confirmacao: "⚖️",
   entregue: "🎉",
   cancelado: "❌",
 };
@@ -1083,6 +1202,7 @@ const STATUS_DESC_CLI = {
   confirmado: "Pedido confirmado, será preparado em breve",
   preparando: "Seu pedido está sendo preparado agora",
   pronto: "Pronto! Saindo para entrega ou disponível para retirada",
+  aguardando_confirmacao: "O peso de um item pesado ficou diferente do que você pediu — respondemos você pelo WhatsApp, é só confirmar por lá para seguirmos com o pedido",
   entregue: "Pedido entregue. Bom apetite!",
   cancelado: "Pedido cancelado",
 };
@@ -1105,6 +1225,19 @@ function StatusPipelineCli({ status }) {
         border: "1.5px solid rgba(239,68,68,0.3)",
       }}>
         ❌ CANCELADO
+      </div>
+    );
+  }
+  if (status === "aguardando_confirmacao") {
+    return (
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 8,
+        background: "rgba(124,58,237,0.12)", color: "#7C3AED",
+        padding: "8px 14px", borderRadius: 999,
+        fontSize: 13, fontWeight: 800, fontFamily: "'Nunito', sans-serif",
+        border: "1.5px solid rgba(124,58,237,0.3)",
+      }}>
+        ⚖️ AGUARDANDO SUA CONFIRMAÇÃO NO WHATSAPP
       </div>
     );
   }
@@ -1345,7 +1478,7 @@ function MeusPedidosView({ ativo }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           {pedidos.map(p => {
             const aberto = expandido === p.id;
-            const corStatus = p.status === "cancelado" ? "#dc2626" : p.status === "entregue" ? "#16a34a" : "var(--brand)";
+            const corStatus = p.status === "cancelado" ? "#dc2626" : p.status === "aguardando_confirmacao" ? "#7C3AED" : p.status === "entregue" ? "#16a34a" : "var(--brand)";
             const isRetirada = p.tipo_entrega === "retirada" || (!p.endereco_rua && !["entrega", "casa"].includes(p.tipo_entrega));
             const isCasa = p.tipo_entrega === "casa";
             return (
@@ -1359,7 +1492,7 @@ function MeusPedidosView({ ativo }) {
                   style={{ padding: "16px 20px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}>
                   <div style={{
                     width: 48, height: 48, borderRadius: 12,
-                    background: p.status === "cancelado" ? "rgba(239,68,68,0.12)" : "var(--brand-light)",
+                    background: p.status === "cancelado" ? "rgba(239,68,68,0.12)" : p.status === "aguardando_confirmacao" ? "rgba(124,58,237,0.12)" : "var(--brand-light)",
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontSize: 22, flexShrink: 0,
                   }}>
@@ -1372,7 +1505,7 @@ function MeusPedidosView({ ativo }) {
                       </span>
                       <span style={{
                         fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 999,
-                        background: p.status === "cancelado" ? "rgba(239,68,68,0.12)" : p.status === "entregue" ? "rgba(22,163,74,0.12)" : "var(--brand-light)",
+                        background: p.status === "cancelado" ? "rgba(239,68,68,0.12)" : p.status === "aguardando_confirmacao" ? "rgba(124,58,237,0.12)" : p.status === "entregue" ? "rgba(22,163,74,0.12)" : "var(--brand-light)",
                         color: corStatus,
                         textTransform: "uppercase", letterSpacing: "0.05em",
                         fontFamily: "'Nunito', sans-serif",
@@ -1404,12 +1537,12 @@ function MeusPedidosView({ ativo }) {
 
                     {/* Mensagem do status */}
                     <div style={{
-                      background: p.status === "cancelado" ? "rgba(239,68,68,0.08)" : "var(--brand-light)",
-                      border: `1.5px solid ${p.status === "cancelado" ? "rgba(239,68,68,0.25)" : "var(--brand)"}`,
+                      background: p.status === "cancelado" ? "rgba(239,68,68,0.08)" : p.status === "aguardando_confirmacao" ? "rgba(124,58,237,0.08)" : "var(--brand-light)",
+                      border: `1.5px solid ${p.status === "cancelado" ? "rgba(239,68,68,0.25)" : p.status === "aguardando_confirmacao" ? "rgba(124,58,237,0.3)" : "var(--brand)"}`,
                       borderRadius: 10, padding: "10px 14px",
                       marginBottom: 14,
                     }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: p.status === "cancelado" ? "#dc2626" : "var(--brand)", fontFamily: "'Nunito', sans-serif" }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: p.status === "cancelado" ? "#dc2626" : p.status === "aguardando_confirmacao" ? "#7C3AED" : "var(--brand)", fontFamily: "'Nunito', sans-serif" }}>
                         {STATUS_EMOJI_CLI[p.status]} {STATUS_DESC_CLI[p.status]}
                       </div>
                     </div>
@@ -1425,10 +1558,26 @@ function MeusPedidosView({ ativo }) {
                       {p.itens?.map((item, i) => {
                         const adTotal = (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
                         const itemTotal = (item.preco_unitario + adTotal) * item.quantidade;
+                        const porPeso = !!item.por_peso;
+                        const foiPesado = porPeso && Number(item.quantidade) !== Number(item.peso_desejado_kg);
+                        const kgFmt = (v) => Number(v || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
                         return (
                           <div key={i} style={{ padding: "8px 0", borderBottom: i < p.itens.length - 1 ? "1px solid var(--border)" : "none" }}>
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontFamily: "'Nunito', sans-serif", color: "var(--text)" }}>
-                              <span style={{ fontWeight: 700 }}>{item.quantidade}× {item.produto_nome}</span>
+                              <span style={{ fontWeight: 700 }}>
+                                {porPeso ? (
+                                  <>
+                                    ⚖️ {kgFmt(item.quantidade)} kg × {item.produto_nome}
+                                    {!foiPesado ? (
+                                      <span style={{ color: "#7C3AED", fontWeight: 700, fontSize: 11, marginLeft: 6 }}>(peso estimado — aguardando pesagem)</span>
+                                    ) : (
+                                      <span style={{ color: "var(--text-muted)", fontWeight: 600, fontSize: 11, marginLeft: 6 }}>(pedido: {kgFmt(item.peso_desejado_kg)} kg)</span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <>{item.quantidade}× {item.produto_nome}</>
+                                )}
+                              </span>
                               <span style={{ fontWeight: 800 }}>{fmtBR(itemTotal)}</span>
                             </div>
                             {item.adicionais && item.adicionais.length > 0 && (
@@ -1559,6 +1708,7 @@ export default function ClienteApp() {
   const [enviando, setEnviando] = useState(false);
   const [modalAdicional, setModalAdicional] = useState(null);
   const [modalMontagem, setModalMontagem] = useState(null); // { produto, cardapio }
+  const [modalPeso, setModalPeso] = useState(null); // { produto } — venda por peso
   const [modalCheckout, setModalCheckout] = useState(false);
   const [cardapios, setCardapios] = useState([]);
   const [cardapioAtivo, setCardapioAtivo] = useState(null);
@@ -1592,6 +1742,11 @@ export default function ClienteApp() {
     const t = setInterval(() => fetchHorarioAberto().then(setAberto), 5 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
+
+  // Título da guia do navegador — usa o nome que o cliente cadastrou no admin.
+  useEffect(() => {
+    if (nomeEstab) document.title = nomeEstab;
+  }, [nomeEstab]);
 
   const catPermiteAdicionais = {};
   const catMaxAdicionais = {};
@@ -1641,6 +1796,11 @@ export default function ClienteApp() {
       showToast("🔒 Estabelecimento fechado no momento. Volte de Ter–Dom, das 19h às 01h.", "var(--hot)");
       return;
     }
+    // Produto por peso (peixaria/açougue): pede o peso desejado antes.
+    if (produtoPorPeso(produto)) {
+      setModalPeso({ produto });
+      return;
+    }
     // Segmento do cardápio pode exigir montagem (tamanho, meio a meio, complementos)
     const card = cardapioDoProduto(produto, cardapios, categorias);
     if (precisaMontagem(produto, card)) {
@@ -1652,6 +1812,33 @@ export default function ClienteApp() {
     } else {
       addCarrinhoSimples(produto, []);
     }
+  };
+
+  // "Pedir pelo WhatsApp" — atalho pra conversa humana quando o cliente prefere
+  // resolver por chat (ex.: quer negociar peso, escolher a peça, etc.).
+  const pedirPeloWhatsApp = (produto) => {
+    const preco = Number(produto.preco || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    const msg = `Olá! Gostaria de pedir *${produto.nome}* (${preco}/kg). Quero saber sobre o peso disponível.`;
+    const url = `https://wa.me/${WHATSAPP_NUMERO}?text=${encodeURIComponent(msg)}`;
+    window.open(url, "_blank", "noopener");
+  };
+
+  // Adiciona um item por peso ao carrinho. `kg` é o peso desejado — o lojista
+  // vai pesar a peça real e ajustar no PDV (fluxo de tolerância 20%).
+  const addCarrinhoPorPeso = (produto, kg) => {
+    setCarrinho(c => [...c, {
+      _uid: nextUid(),
+      _adKey: `p:${Date.now()}`, // sempre linha nova (cada peça é única)
+      produto_id: produto.id,
+      produto_nome: produto.nome,
+      preco_unitario: produto.preco, // preço por kg
+      quantidade: kg,                 // qtd = kg pedido
+      por_peso: true,
+      adicionais: [],
+    }]);
+    setModalPeso(null);
+    const kgFmt = kg.toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    showToast(`${produto.nome} · ${kgFmt} kg adicionado (peso aproximado)`, "var(--new-green)");
   };
 
   // Item montado (pizza meio a meio, açaí com complementos…) — sempre linha nova
@@ -2249,13 +2436,38 @@ export default function ClienteApp() {
             ) : (
               /* Seções por categoria */
               <div>
-                {/* 🔥 DESTAQUES DO DIA — só promoções com promo_destaque = 1 */}
+                {/* 🔥 DESTAQUES DO DIA — promoções com promo_destaque = 1 */}
                 {promocoes.filter(p => p.promo_destaque !== 0).length > 0 && (
                   <DestaquesSecao
                     promos={promocoes.filter(p => p.promo_destaque !== 0)}
                     onAdd={handleAddProduto}
                     onVerDetalhes={abrirModalProduto}
                   />
+                )}
+
+                {/* Seção "Promoções" para promoções sem destaque (ou todas se nenhuma tem destaque) */}
+                {promocoes.filter(p => p.promo_destaque === 0).length > 0 && (
+                  <div
+                    id="cat-sec-Promoções"
+                    style={{ marginBottom: ehVitrine ? 36 : 48, scrollMarginTop: 130 }}
+                  >
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+                      <span style={{
+                        fontFamily: "var(--font-display)", fontSize: 21, fontWeight: 700,
+                        color: "var(--nl-text, #1c1917)", letterSpacing: "-0.3px",
+                      }}>
+                        Promoções
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--nl-text-secondary, #78716c)" }}>
+                        {promocoes.filter(p => p.promo_destaque === 0).length}
+                      </span>
+                    </div>
+                    <div className="nl-product-grid">
+                      {promocoes.filter(p => p.promo_destaque === 0).map(p => (
+                        <CardPromocao key={p.id} p={p} onAdd={handleAddProduto} onVerDetalhes={abrirModalProduto} />
+                      ))}
+                    </div>
+                  </div>
                 )}
 
                 {categoriasComProdutos.map(cat => {
@@ -2371,11 +2583,18 @@ export default function ClienteApp() {
               <div style={{ background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 16, overflow: "hidden" }}>
                 {carrinho.map((item, i) => {
                   const itemTotal = calcItemTotal(item);
+                  const porPeso = !!item.por_peso;
+                  const kgFmt = porPeso ? item.quantidade.toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : null;
                   return (
                     <div key={item._uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 20px", borderBottom: i < carrinho.length - 1 ? "1px solid var(--border)" : "none", flexWrap: "wrap", gap: 10 }}>
                       <div style={{ flex: "1 1 200px" }}>
-                        <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", fontFamily: "var(--font-display)" }}>{item.produto_nome}</div>
-                        <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, fontWeight: 600 }}>{fmt(item.preco_unitario)} cada</div>
+                        <div style={{ fontSize: 14.5, fontWeight: 800, color: "var(--text)", fontFamily: "var(--font-display)" }}>
+                          {porPeso && <span style={{ color: "var(--brand)" }}>⚖️ {kgFmt} kg × </span>}
+                          {item.produto_nome}
+                        </div>
+                        <div style={{ fontSize: 12.5, color: "var(--text-muted)", marginTop: 2, fontWeight: 600 }}>
+                          {fmt(item.preco_unitario)}{porPeso ? " /kg — peso aproximado" : " cada"}
+                        </div>
                         {item.adicionais && item.adicionais.length > 0 && (
                           <div style={{ marginTop: 6 }}>
                             {item.adicionais.map(a => (
@@ -2387,9 +2606,18 @@ export default function ClienteApp() {
                         )}
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <button onClick={() => updateQtd(item._uid, item.quantidade - 1)} style={{ width: 30, height: 30, border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>−</button>
-                        <span style={{ fontSize: 14, fontWeight: 800, minWidth: 24, textAlign: "center", color: "var(--text)" }}>{item.quantidade}</span>
-                        <button onClick={() => updateQtd(item._uid, item.quantidade + 1)} style={{ width: 30, height: 30, border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>+</button>
+                        {porPeso ? (
+                          <button onClick={() => updateQtd(item._uid, 0)} title="Remover"
+                            style={{ padding: "6px 12px", border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 12, color: "var(--text-muted)", fontWeight: 700, fontFamily: "inherit" }}>
+                            Remover
+                          </button>
+                        ) : (
+                          <>
+                            <button onClick={() => updateQtd(item._uid, item.quantidade - 1)} style={{ width: 30, height: 30, border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>−</button>
+                            <span style={{ fontSize: 14, fontWeight: 800, minWidth: 24, textAlign: "center", color: "var(--text)" }}>{item.quantidade}</span>
+                            <button onClick={() => updateQtd(item._uid, item.quantidade + 1)} style={{ width: 30, height: 30, border: "1.5px solid var(--border-dark)", borderRadius: 7, background: "var(--surface)", cursor: "pointer", fontSize: 16, lineHeight: 1, color: "var(--text)", fontWeight: 700 }}>+</button>
+                          </>
+                        )}
                         <span style={{ fontFamily: "'Plus Jakarta Sans', sans-serif", fontSize: 17, fontWeight: 800, color: "var(--brand)", minWidth: 90, textAlign: "right", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.3px" }}>{fmt(itemTotal)}</span>
                       </div>
                     </div>
@@ -2471,11 +2699,13 @@ export default function ClienteApp() {
           permiteAdicionais={!!catPermiteAdicionais[modalProduto.categoria]}
           aberto={aberto}
           onAddSimples={(p, ads) => {
+            if (produtoPorPeso(p)) { setModalPeso({ produto: p }); return; }
             const card = cardapioDoProduto(p, cardapios, categorias);
             if (precisaMontagem(p, card)) setModalMontagem({ produto: p, cardapio: card });
             else addCarrinhoSimples(p, ads);
           }}
           onAddComAdicionais={(p) => {
+            if (produtoPorPeso(p)) { setModalPeso({ produto: p }); return; }
             const card = cardapioDoProduto(p, cardapios, categorias);
             if (precisaMontagem(p, card)) setModalMontagem({ produto: p, cardapio: card });
             else setModalAdicional(p);
@@ -2504,6 +2734,15 @@ export default function ClienteApp() {
           irmaos={produtos.filter(p => p.categoria === modalMontagem.produto.categoria && p.disponivel !== 0)}
           onConfirm={addItemMontado}
           onClose={() => setModalMontagem(null)}
+        />
+      )}
+
+      {modalPeso && (
+        <ModalInformarPeso
+          produto={modalPeso.produto}
+          onConfirmar={addCarrinhoPorPeso}
+          onPedirWhatsApp={pedirPeloWhatsApp}
+          onClose={() => setModalPeso(null)}
         />
       )}
 

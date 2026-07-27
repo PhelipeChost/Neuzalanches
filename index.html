@@ -56,6 +56,38 @@
         --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       }
 
+      /* ─── Tema escuro (navy Nexus) — espelha a identidade reinonexusideal.com.br ─ */
+      :root[data-theme="dark"] {
+        --bg:        #0a0c12;
+        --card:      #12151f;
+        --card2:     #1a1e2a;
+        --linha:     #252a38;
+        --linha2:    #333a4d;
+
+        --ink:       #e8eaf0;
+        --ink2:      #9ca3b8;
+        --ink3:      #6b7288;
+
+        --verde:     #3ecf8e;
+        --verde-d:   #22c55e;
+        --verde-bg:  rgba(62,207,142,0.12);
+        --verde-bg2: rgba(62,207,142,0.18);
+
+        --vermelho:   #f87171;
+        --vermelho-d: #ef4444;
+        --vermelho-bg: rgba(248,113,113,0.12);
+
+        --laranja:    #fbbf24;
+        --laranja-d:  #f59e0b;
+        --laranja-bg: rgba(251,191,36,0.12);
+
+        --azul:       #60a5fa;
+        --azul-bg:    rgba(96,165,250,0.12);
+
+        --roxo:       #a78bfa;
+        --roxo-bg:    rgba(167,139,250,0.12);
+      }
+
       /* ─── Base ─────────────────────────────────────────────────────────────── */
       html, body {
         font-family: var(--font-ui);
@@ -331,6 +363,63 @@
         .pa-pill { flex: 0 0 auto !important; }
         .ns-tabs { gap: 2px; padding: 3px; }
         .ns-tab { padding: 7px 12px; font-size: 12px; }
+      }
+
+      /* ─── Overrides de classes no tema escuro ─────────────────────────────── */
+      :root[data-theme="dark"] .ns-tab.on { background: #3ecf8e; color: #0a0c12; }
+      :root[data-theme="dark"] .fil.ativo { background: #3ecf8e !important; color: #0a0c12 !important; border-color: #3ecf8e !important; }
+      :root[data-theme="dark"] .ns-nota { color: #93c5fd; border-color: rgba(96,165,250,0.25); }
+      :root[data-theme="dark"] .ns-cf-calc input { background: #1a1e2a; }
+      :root[data-theme="dark"] .ns-mes-sel input[type=month] { color-scheme: dark; }
+      :root[data-theme="dark"] input[type=month] { color-scheme: dark; }
+      :root[data-theme="dark"] input[type=date] { color-scheme: dark; }
+
+      /* Classes dos componentes (ProdutosApp, ConfigApp, Promocoes) que usam
+         cores hardcoded nos <style> embutidos — converte pra variáveis dark. */
+      :root[data-theme="dark"] .card {
+        background: var(--card) !important;
+        border-color: var(--linha) !important;
+        color: var(--ink) !important;
+      }
+      :root[data-theme="dark"] .pa-nav {
+        background: var(--card2) !important;
+      }
+      :root[data-theme="dark"] .pa-pill:hover {
+        background: var(--card2) !important;
+        color: var(--ink) !important;
+      }
+      :root[data-theme="dark"] .pa-pill.active {
+        background: var(--card) !important;
+        color: var(--ink) !important;
+      }
+      :root[data-theme="dark"] .search {
+        background: var(--card2) !important;
+        border-color: var(--linha) !important;
+        color: var(--ink) !important;
+      }
+      :root[data-theme="dark"] .search:focus {
+        border-color: rgba(62, 207, 142, 0.5) !important;
+      }
+      :root[data-theme="dark"] .search::placeholder {
+        color: var(--ink3) !important;
+      }
+      :root[data-theme="dark"] .fil {
+        background: var(--card) !important;
+        border-color: var(--linha) !important;
+        color: var(--ink2) !important;
+      }
+      :root[data-theme="dark"] .icon-btn {
+        border-color: var(--linha) !important;
+        color: var(--ink3) !important;
+      }
+      :root[data-theme="dark"] .icon-btn:hover {
+        background: var(--card2) !important;
+        color: var(--ink) !important;
+      }
+      :root[data-theme="dark"] .icon-btn.del:hover {
+        background: var(--vermelho-bg) !important;
+        border-color: rgba(248,113,113,0.3) !important;
+        color: var(--vermelho) !important;
       }
 
       /* Esconder scrollbar do Chrome em listas scroll-x */

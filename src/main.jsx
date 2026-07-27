@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import SuporteIndicador from './SuporteIndicador.jsx'
 
 // ─── Fix bug de foco do Electron/Chromium no Windows ────────────────────────
 // Depois de um alert()/confirm() nativo, os campos de texto param de aceitar
@@ -17,5 +18,6 @@ if (window.janela?.refocus) {
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
         <App />
+        <SuporteIndicador />
     </React.StrictMode>
 )

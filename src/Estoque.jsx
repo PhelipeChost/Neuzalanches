@@ -1216,6 +1216,460 @@ function CategoriasTab({ categorias, onReload, showToast }) {
   );
 }
 
+// ─── NF-e DE ENTRADA (controle fiscal de compras) ───────────────────────────
+
+function NFeEntrada({ itens, onReload, showToast }) {
+  const [notas, setNotas] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [modalAberto, setModalAberto] = useState(false);
+  const [modalTab, setModalTab] = useState("xml");
+  const [notaDetalhe, setNotaDetalhe] = useState(null);
+
+  // XML tab
+  const [xmlText, setXmlText] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [autoCriar, setAutoCriar] = useState(true);
+  const [tipoEstoque, setTipoEstoque] = useState("revenda");
+  const [saving, setSaving] = useState(false);
+
+  // Resumo fiscal do mês (visão lojista)
+  const [resumo, setResumo] = useState(null);
+
+  // Manual tab
+  const [manualNota, setManualNota] = useState({ numero_nf: "", serie: "1", chave_acesso: "", data_emissao: todayISO(), fornecedor_nome: "", fornecedor_cnpj: "", valor_total: "" });
+  const [manualItens, setManualItens] = useState([{ produto_nome: "", codigo: "", ncm: "", unidade: "un", quantidade: "", valor_unitario: "", valor_total: "" }]);
+
+  const carregar = useCallback(async () => {
+    try {
+      const [r, res] = await Promise.all([
+        api.fiscal.nfeEntrada.listar(),
+        api.fiscal.relatorio({ nivel: "resumo" }).catch(() => null),
+      ]);
+      setNotas(r.notas || []);
+      setTotal(r.total || 0);
+      setResumo(res);
+    } catch { /* ignore */ }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const lerArquivoXml = (file) => {
+    const reader = new FileReader();
+    reader.onload = (e) => setXmlText(e.target.result);
+    reader.readAsText(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith(".xml")) lerArquivoXml(file);
+    else showToast("Selecione um arquivo .xml", "#dc2626");
+  };
+
+  const handleFileInput = (e) => {
+    const file = e.target.files[0];
+    if (file) lerArquivoXml(file);
+  };
+
+  const previewXml = async () => {
+    if (!xmlText.trim()) return showToast("Cole ou carregue o XML da NF-e", "#dc2626");
+    setPreviewLoading(true);
+    try {
+      const r = await api.fiscal.nfeEntrada.preview(xmlText);
+      setPreview(r);
+    } catch (err) { showToast(err.message || "Erro ao ler XML", "#dc2626"); }
+    finally { setPreviewLoading(false); }
+  };
+
+  const enviarXml = async () => {
+    setSaving(true);
+    try {
+      await api.fiscal.nfeEntrada.enviar(xmlText, autoCriar, tipoEstoque);
+      showToast("NF-e de entrada registrada com sucesso!");
+      fecharModal();
+      carregar();
+      if (autoCriar) onReload();
+    } catch (err) { showToast(err.message || "Erro ao salvar", "#dc2626"); }
+    finally { setSaving(false); }
+  };
+
+  const enviarManual = async () => {
+    if (!manualNota.fornecedor_nome.trim()) return showToast("Informe o nome do fornecedor", "#dc2626");
+    if (manualItens.every(i => !i.produto_nome.trim())) return showToast("Adicione ao menos um item", "#dc2626");
+    const itensValidos = manualItens.filter(i => i.produto_nome.trim());
+    const nota = { ...manualNota, valor_total: parseFloat(manualNota.valor_total) || itensValidos.reduce((s, i) => s + (parseFloat(i.valor_total) || 0), 0) };
+    setSaving(true);
+    try {
+      await api.fiscal.nfeEntrada.manual(nota, itensValidos, autoCriar, tipoEstoque);
+      showToast("NF-e de entrada registrada manualmente!");
+      fecharModal();
+      carregar();
+      if (autoCriar) onReload();
+    } catch (err) { showToast(err.message || "Erro ao salvar", "#dc2626"); }
+    finally { setSaving(false); }
+  };
+
+  const excluirNota = async (id) => {
+    if (!confirm("Excluir esta NF-e de entrada? Os itens importados para o estoque NÃO serão removidos.")) return;
+    try {
+      await api.fiscal.nfeEntrada.excluir(id);
+      showToast("NF-e removida");
+      carregar();
+    } catch (err) { showToast(err.message, "#dc2626"); }
+  };
+
+  const verDetalhe = async (id) => {
+    try {
+      const r = await api.fiscal.nfeEntrada.buscar(id);
+      setNotaDetalhe(r);
+    } catch (err) { showToast(err.message, "#dc2626"); }
+  };
+
+  const fecharModal = () => {
+    setModalAberto(false);
+    setXmlText("");
+    setPreview(null);
+    setManualNota({ numero_nf: "", serie: "1", chave_acesso: "", data_emissao: todayISO(), fornecedor_nome: "", fornecedor_cnpj: "", valor_total: "" });
+    setManualItens([{ produto_nome: "", codigo: "", ncm: "", unidade: "un", quantidade: "", valor_unitario: "", valor_total: "" }]);
+  };
+
+  const addManualItem = () => setManualItens([...manualItens, { produto_nome: "", codigo: "", ncm: "", unidade: "un", quantidade: "", valor_unitario: "", valor_total: "" }]);
+  const removeManualItem = (idx) => setManualItens(manualItens.filter((_, i) => i !== idx));
+  const updateManualItem = (idx, field, value) => {
+    const novo = [...manualItens];
+    novo[idx] = { ...novo[idx], [field]: value };
+    if (field === "quantidade" || field === "valor_unitario") {
+      const qtd = parseFloat(novo[idx].quantidade) || 0;
+      const vu = parseFloat(novo[idx].valor_unitario) || 0;
+      novo[idx].valor_total = (qtd * vu).toFixed(2);
+    }
+    setManualItens(novo);
+  };
+
+  const modalOverlay = { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", justifyContent: "center", alignItems: "flex-start", paddingTop: 40, overflowY: "auto" };
+  const modalBox = { background: "#fff", borderRadius: 16, width: "100%", maxWidth: 700, boxShadow: "0 20px 60px rgba(0,0,0,0.2)", padding: 0, marginBottom: 40 };
+  const modalHeader = { padding: "20px 24px", borderBottom: "1px solid #e7e5e4", display: "flex", justifyContent: "space-between", alignItems: "center" };
+  const modalBody = { padding: "20px 24px" };
+  const lbl = { fontSize: 11, color: "#78716c", fontWeight: 700, display: "block", marginBottom: 5, letterSpacing: "0.06em" };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#a8a29e" }}>Carregando...</div>;
+
+  return (
+    <div className="anim">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: "#78716c" }}>
+          {total} nota{total !== 1 ? "s" : ""} de entrada registrada{total !== 1 ? "s" : ""}
+        </div>
+        <button style={btnPrimary} onClick={() => setModalAberto(true)}>+ Registrar NF-e de Entrada</button>
+      </div>
+
+      {/* Resumo fiscal do mês — visão básica pro lojista */}
+      {resumo && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+          <div style={{ ...card, flex: "1 1 160px" }}>
+            <div style={{ fontSize: 10, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>VENDAS (NFC-e SAÍDA)</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#15803d" }}>{fmtR(resumo.saida?.total || 0)}</div>
+            <div style={{ fontSize: 11, color: "#a8a29e" }}>{resumo.saida?.quantidade || 0} nota{(resumo.saida?.quantidade || 0) !== 1 ? "s" : ""}</div>
+          </div>
+          <div style={{ ...card, flex: "1 1 160px" }}>
+            <div style={{ fontSize: 10, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>COMPRAS (NF-e ENTRADA)</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "#d97706" }}>{fmtR(resumo.entrada?.total || 0)}</div>
+            <div style={{ fontSize: 11, color: "#a8a29e" }}>{resumo.entrada?.quantidade || 0} nota{(resumo.entrada?.quantidade || 0) !== 1 ? "s" : ""}</div>
+          </div>
+          <div style={{ ...card, flex: "1 1 160px" }}>
+            <div style={{ fontSize: 10, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>SALDO DO MÊS</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: (resumo.saldo || 0) >= 0 ? "#1c1917" : "#dc2626" }}>{fmtR(resumo.saldo || 0)}</div>
+            <div style={{ fontSize: 11, color: "#a8a29e" }}>Vendas − Compras</div>
+          </div>
+        </div>
+      )}
+
+      {notas.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", padding: 40 }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Nenhuma NF-e de entrada registrada</div>
+          <div style={{ fontSize: 12, color: "#a8a29e", marginBottom: 16 }}>Faça upload do XML de uma nota fiscal de fornecedor ou registre manualmente.</div>
+          <button style={btnPrimary} onClick={() => setModalAberto(true)}>+ Registrar NF-e</button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {notas.map(n => (
+            <div key={n.id} style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", cursor: "pointer" }}
+              onClick={() => verDetalhe(n.id)}>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  NF-e {n.numero_nf || "—"}{n.serie ? ` / ${n.serie}` : ""}
+                  <Badge color={n.origem === "xml" ? "#2563eb" : "#d97706"} bg={n.origem === "xml" ? "#eff6ff" : "#fffbeb"} >
+                    {n.origem === "xml" ? "XML" : "Manual"}
+                  </Badge>
+                </div>
+                <div style={{ fontSize: 12, color: "#78716c", marginTop: 2 }}>
+                  {n.fornecedor_nome || "Fornecedor não informado"}
+                  {n.fornecedor_cnpj ? ` · ${n.fornecedor_cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")}` : ""}
+                </div>
+                <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>
+                  Emissão: {n.data_emissao || "—"} · Cadastro: {(n.created_at || "").slice(0, 10)}
+                </div>
+              </div>
+              <div style={{ textAlign: "right", display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#1c1917" }}>{fmtR(n.valor_total)}</div>
+                <button onClick={(e) => { e.stopPropagation(); excluirNota(n.id); }} style={btnDanger}>Excluir</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* DETALHE DA NOTA */}
+      {notaDetalhe && (
+        <div style={modalOverlay} onClick={() => setNotaDetalhe(null)}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <div style={modalHeader}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>NF-e {notaDetalhe.numero_nf || "—"} / {notaDetalhe.serie || "—"}</div>
+              <button onClick={() => setNotaDetalhe(null)} style={{ ...btnSecondary, fontSize: 18, padding: "2px 10px", lineHeight: 1 }}>×</button>
+            </div>
+            <div style={modalBody}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16, fontSize: 13 }}>
+                <div><strong>Fornecedor:</strong> {notaDetalhe.fornecedor_nome}</div>
+                <div><strong>CNPJ:</strong> {notaDetalhe.fornecedor_cnpj || "—"}</div>
+                <div><strong>Chave:</strong> <span style={{ fontSize: 11, wordBreak: "break-all" }}>{notaDetalhe.chave_acesso || "—"}</span></div>
+                <div><strong>Emissão:</strong> {notaDetalhe.data_emissao}</div>
+                <div><strong>Valor total:</strong> {fmtR(notaDetalhe.valor_total)}</div>
+                <div><strong>Origem:</strong> {notaDetalhe.origem === "xml" ? "Upload XML" : "Manual"}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Itens ({(notaDetalhe.itens || []).length})</div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#f5f5f4" }}>
+                      <th style={{ padding: "6px 10px", textAlign: "left" }}>#</th>
+                      <th style={{ padding: "6px 10px", textAlign: "left" }}>Produto</th>
+                      <th style={{ padding: "6px 10px", textAlign: "left" }}>NCM</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Qtd</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Unit.</th>
+                      <th style={{ padding: "6px 10px", textAlign: "right" }}>Total</th>
+                      <th style={{ padding: "6px 10px", textAlign: "center" }}>Estoque</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(notaDetalhe.itens || []).map(it => (
+                      <tr key={it.id} style={{ borderBottom: "1px solid #f5f5f4" }}>
+                        <td style={{ padding: "6px 10px" }}>{it.num_item}</td>
+                        <td style={{ padding: "6px 10px", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.produto_nome}</td>
+                        <td style={{ padding: "6px 10px" }}>{it.ncm || "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtN(it.quantidade)} {it.unidade}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtR(it.valor_unitario)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right" }}>{fmtR(it.valor_total)}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "center" }}>
+                          {it.estoque_item_id
+                            ? <Badge color="#15803d" bg="#f0fdf4">Vinculado</Badge>
+                            : <span style={{ color: "#a8a29e" }}>—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL REGISTRAR */}
+      {modalAberto && (
+        <div style={modalOverlay} onClick={fecharModal}>
+          <div style={modalBox} onClick={e => e.stopPropagation()}>
+            <div style={modalHeader}>
+              <div style={{ fontSize: 16, fontWeight: 700 }}>Registrar NF-e de Entrada</div>
+              <button onClick={fecharModal} style={{ ...btnSecondary, fontSize: 18, padding: "2px 10px", lineHeight: 1 }}>×</button>
+            </div>
+
+            {/* Abas XML / Manual */}
+            <div style={{ display: "flex", borderBottom: "1px solid #e7e5e4" }}>
+              {[{ k: "xml", l: "Upload XML" }, { k: "manual", l: "Registro Manual" }].map(t => (
+                <button key={t.k} onClick={() => { setModalTab(t.k); setPreview(null); }}
+                  style={{ flex: 1, padding: "12px", border: "none", background: modalTab === t.k ? "#fff" : "#f5f5f4", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: modalTab === t.k ? 700 : 400, color: modalTab === t.k ? "#15803d" : "#78716c", borderBottom: modalTab === t.k ? "2px solid #15803d" : "none" }}>
+                  {t.l}
+                </button>
+              ))}
+            </div>
+
+            <div style={modalBody}>
+              {/* Opção comum: auto-criar estoque */}
+              <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 16, padding: "10px 14px", background: "#f0fdf4", borderRadius: 8 }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, cursor: "pointer" }}>
+                  <input type="checkbox" checked={autoCriar} onChange={e => setAutoCriar(e.target.checked)} />
+                  Trazer itens para o estoque automaticamente
+                </label>
+                {autoCriar && (
+                  <select value={tipoEstoque} onChange={e => setTipoEstoque(e.target.value)} style={{ ...inp, width: "auto", fontSize: 12 }}>
+                    <option value="revenda">Revenda</option>
+                    <option value="insumo">Insumo</option>
+                    <option value="interno">Interno</option>
+                  </select>
+                )}
+              </div>
+
+              {/* ────── ABA XML ────── */}
+              {modalTab === "xml" && (
+                <div>
+                  {!preview ? (
+                    <>
+                      <div
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={handleDrop}
+                        style={{ border: "2px dashed #d6d3d1", borderRadius: 12, padding: 30, textAlign: "center", cursor: "pointer", marginBottom: 14, background: xmlText ? "#f0fdf4" : "#fafaf9" }}
+                        onClick={() => document.getElementById("nfe-file-input").click()}
+                      >
+                        {xmlText ? (
+                          <div style={{ color: "#15803d", fontWeight: 600 }}>✓ XML carregado ({(xmlText.length / 1024).toFixed(0)} KB)</div>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 28, marginBottom: 8 }}>📁</div>
+                            <div style={{ fontSize: 13, color: "#78716c" }}>Arraste o arquivo .xml aqui ou clique para selecionar</div>
+                          </>
+                        )}
+                      </div>
+                      <input id="nfe-file-input" type="file" accept=".xml" style={{ display: "none" }} onChange={handleFileInput} />
+                      <div style={{ marginBottom: 14 }}>
+                        <label style={lbl}>Ou cole o XML diretamente:</label>
+                        <textarea
+                          style={{ ...inp, height: 100, fontFamily: "monospace", fontSize: 11, resize: "vertical" }}
+                          value={xmlText}
+                          onChange={e => setXmlText(e.target.value)}
+                          placeholder="<nfeProc>...</nfeProc>"
+                        />
+                      </div>
+                      <button onClick={previewXml} disabled={previewLoading || !xmlText.trim()} style={{ ...btnPrimary, width: "100%", opacity: previewLoading ? 0.6 : 1 }}>
+                        {previewLoading ? "Lendo XML..." : "Visualizar dados da nota"}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ ...card, marginBottom: 14, background: "#f9fafb" }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Dados extraídos</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12 }}>
+                          <div><strong>NF:</strong> {preview.nota.numero_nf} / {preview.nota.serie}</div>
+                          <div><strong>Data:</strong> {preview.nota.data_emissao}</div>
+                          <div><strong>Fornecedor:</strong> {preview.nota.fornecedor_nome}</div>
+                          <div><strong>CNPJ:</strong> {preview.nota.fornecedor_cnpj}</div>
+                          <div><strong>Valor total:</strong> {fmtR(preview.nota.valor_total)}</div>
+                          <div><strong>Itens:</strong> {preview.itens.length}</div>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>Itens da nota</div>
+                      <div style={{ overflowX: "auto", marginBottom: 14 }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                          <thead>
+                            <tr style={{ background: "#f5f5f4" }}>
+                              <th style={{ padding: "5px 8px", textAlign: "left" }}>#</th>
+                              <th style={{ padding: "5px 8px", textAlign: "left" }}>Produto</th>
+                              <th style={{ padding: "5px 8px", textAlign: "right" }}>Qtd</th>
+                              <th style={{ padding: "5px 8px", textAlign: "right" }}>Unit.</th>
+                              <th style={{ padding: "5px 8px", textAlign: "right" }}>Total</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {preview.itens.map((it, i) => (
+                              <tr key={i} style={{ borderBottom: "1px solid #f5f5f4" }}>
+                                <td style={{ padding: "5px 8px" }}>{it.num_item}</td>
+                                <td style={{ padding: "5px 8px" }}>{it.produto_nome}</td>
+                                <td style={{ padding: "5px 8px", textAlign: "right" }}>{fmtN(it.quantidade)} {it.unidade}</td>
+                                <td style={{ padding: "5px 8px", textAlign: "right" }}>{fmtR(it.valor_unitario)}</td>
+                                <td style={{ padding: "5px 8px", textAlign: "right" }}>{fmtR(it.valor_total)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div style={{ display: "flex", gap: 10 }}>
+                        <button onClick={() => setPreview(null)} style={btnSecondary}>Voltar</button>
+                        <button onClick={enviarXml} disabled={saving} style={{ ...btnPrimary, flex: 1, opacity: saving ? 0.6 : 1 }}>
+                          {saving ? "Salvando..." : "Confirmar e Registrar"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* ────── ABA MANUAL ────── */}
+              {modalTab === "manual" && (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+                    <div>
+                      <label style={lbl}>FORNECEDOR *</label>
+                      <input style={inp} value={manualNota.fornecedor_nome} onChange={e => setManualNota({ ...manualNota, fornecedor_nome: e.target.value })} placeholder="Nome do fornecedor" />
+                    </div>
+                    <div>
+                      <label style={lbl}>CNPJ</label>
+                      <input style={inp} value={manualNota.fornecedor_cnpj} onChange={e => setManualNota({ ...manualNota, fornecedor_cnpj: e.target.value })} placeholder="00.000.000/0000-00" />
+                    </div>
+                    <div>
+                      <label style={lbl}>NÚMERO DA NF</label>
+                      <input style={inp} value={manualNota.numero_nf} onChange={e => setManualNota({ ...manualNota, numero_nf: e.target.value })} placeholder="Ex: 001234" />
+                    </div>
+                    <div>
+                      <label style={lbl}>DATA EMISSÃO</label>
+                      <input style={inp} type="date" value={manualNota.data_emissao} onChange={e => setManualNota({ ...manualNota, data_emissao: e.target.value })} />
+                    </div>
+                    <div>
+                      <label style={lbl}>SÉRIE</label>
+                      <input style={inp} value={manualNota.serie} onChange={e => setManualNota({ ...manualNota, serie: e.target.value })} placeholder="1" />
+                    </div>
+                    <div>
+                      <label style={lbl}>CHAVE DE ACESSO</label>
+                      <input style={inp} value={manualNota.chave_acesso} onChange={e => setManualNota({ ...manualNota, chave_acesso: e.target.value })} placeholder="44 dígitos (opcional)" />
+                    </div>
+                  </div>
+
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>Itens ({manualItens.length})</span>
+                    <button onClick={addManualItem} style={{ ...btnSecondary, fontSize: 11, padding: "4px 10px" }}>+ Adicionar item</button>
+                  </div>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14, maxHeight: 260, overflowY: "auto" }}>
+                    {manualItens.map((it, idx) => (
+                      <div key={idx} style={{ ...card, padding: "10px 12px", display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr auto", gap: 6, alignItems: "end" }}>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 10 }}>Produto</label>
+                          <input style={{ ...inp, fontSize: 12, padding: "6px 8px" }} value={it.produto_nome} onChange={e => updateManualItem(idx, "produto_nome", e.target.value)} placeholder="Nome" />
+                        </div>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 10 }}>Qtd</label>
+                          <input style={{ ...inp, fontSize: 12, padding: "6px 8px" }} type="number" step="0.001" value={it.quantidade} onChange={e => updateManualItem(idx, "quantidade", e.target.value)} placeholder="0" />
+                        </div>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 10 }}>Unit. R$</label>
+                          <input style={{ ...inp, fontSize: 12, padding: "6px 8px" }} type="number" step="0.01" value={it.valor_unitario} onChange={e => updateManualItem(idx, "valor_unitario", e.target.value)} placeholder="0.00" />
+                        </div>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 10 }}>Total R$</label>
+                          <input style={{ ...inp, fontSize: 12, padding: "6px 8px", background: "#f5f5f4" }} value={it.valor_total} readOnly />
+                        </div>
+                        {manualItens.length > 1 && (
+                          <button onClick={() => removeManualItem(idx)} style={{ ...btnDanger, padding: "6px 8px", fontSize: 12 }}>✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={enviarManual} disabled={saving} style={{ ...btnPrimary, width: "100%", opacity: saving ? 0.6 : 1 }}>
+                    {saving ? "Salvando..." : "Registrar NF-e Manual"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export default function Estoque() {
@@ -1254,6 +1708,7 @@ export default function Estoque() {
     { key: "lote", label: "Entrada em Lote" },
     { key: "saidas", label: "Saídas" },
     { key: "ajustes", label: "Ajustes" },
+    { key: "nfe", label: "NF-e Entrada" },
     { key: "fornecedores", label: "Fornecedores" },
     { key: "categorias", label: "Categorias" },
   ];
@@ -1293,6 +1748,7 @@ export default function Estoque() {
       {tab === "lote" && <EntradaLote itens={itens} fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
       {tab === "saidas" && <Saidas itens={itens} onReload={carregarDados} showToast={showToast} />}
       {tab === "ajustes" && <Ajustes itens={itens} onReload={carregarDados} showToast={showToast} />}
+      {tab === "nfe" && <NFeEntrada itens={itens} onReload={carregarDados} showToast={showToast} />}
       {tab === "fornecedores" && <FornecedoresTab fornecedores={fornecedores} onReload={carregarDados} showToast={showToast} />}
       {tab === "categorias" && <CategoriasTab categorias={categorias} onReload={carregarDados} showToast={showToast} />}
 

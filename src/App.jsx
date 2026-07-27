@@ -17,6 +17,159 @@ import SidebarNav, { SIDEBAR_LAYOUT_WIDTH } from "./SidebarNav";
 import Logo from "./Logo";
 import NexusLogo from "./NexusLogo";
 import TipoEstabelecimento, { EscolhaEstabelecimento } from "./TipoEstabelecimento";
+import { aplicarEscalaUI, lerEscalaUI } from "./ui-escala";
+import { aplicarTemaUI, lerTemaUI, NEXUS_DARK as ND } from "./ui-tema";
+
+// CSS global de tema — cobre componentes com cores hardcoded (ProdutosApp,
+// ConfigApp, Estoque, Financeiro) sem refatorar cada style inline.
+//
+// PEGADINHA IMPORTANTE: o browser NORMALIZA cores hex do inline style pra rgb()
+// no attribute HTML. `background:"#fff"` no React vira `background: rgb(255, 255, 255)`
+// no DOM. Então os seletores `[style*="..."]` PRECISAM usar rgb(), não hex.
+// Isso derrubou a tentativa anterior (só matched 0 elementos).
+//
+// FrenteCaixa e MesaApp já têm tema escuro nativo próprio via CSS vars — não
+// precisam do override (e estão em superfícies isoladas).
+
+// hex → "rgb(r, g, b)" exatamente como o browser renderiza no attribute style.
+// PEGADINHA: o browser normaliza hex → rgb() no atributo style, então os
+// seletores [style*=...] PRECISAM usar rgb(), nunca hex.
+function _rgb(hex) {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? h.split("").map(c => c + c).join("") : h;
+  const r = parseInt(full.slice(0, 2), 16);
+  const g = parseInt(full.slice(2, 4), 16);
+  const b = parseInt(full.slice(4, 6), 16);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+// ─── Listas de cores CLARAS (light theme) → alvo ESCURO (navy Nexus) ─────────
+// Fundos de PÁGINA (off-white) → fundo profundo; fundos de CARD (branco) →
+// superfície. A distinção dá profundidade (card mais claro que a página).
+const _bgPagina = ["#f5f5f4", "#fafaf9", "#f9fafb", "#f8fafc", "#f3f4f6", "#fff9f4", "#fff8f0", "#f0f4ff"];
+const _bgCard   = ["#fff", "#ffffff"];
+// Fundos com tinta semântica → tinta escura sutil + texto vibrante
+const _bgVerde  = ["#f0fdf4", "#dcfce7", "#ecfdf5", "#d1fae5", "#bbf7d0"];
+const _bgVerm   = ["#fef2f2", "#fee2e2", "#fecaca", "#fff1f2"];
+const _bgAmbar  = ["#fffbeb", "#fef3c7", "#fefce8", "#fff7ed", "#fff8e1", "#fff2e6", "#ffe0b2", "#fef9c3", "#fde68a"];
+const _bgAzul   = ["#eff6ff", "#dbeafe", "#f0f9ff", "#e0f2fe", "#bae6fd", "#bfdbfe"];
+const _bgRoxo   = ["#f5f3ff", "#efebfe", "#ede9fe", "#f3e8ff", "#ddd6fe", "#ddd3fd"];
+
+// Textos escuros → claro; médios → muted; suaves → soft
+const _txEscuro = ["#1c1917", "#292524", "#0c0a09", "#111827", "#0f172a", "#1e293b", "#44403c", "#334155", "#171717", "#18181b"];
+const _txMedio  = ["#57534e", "#64748b", "#4b5563", "#6b7280", "#475569", "#52525b"];
+const _txSuave  = ["#78716c", "#a8a29e", "#94a3b8", "#9ca3af", "#a1a1aa"];
+// Textos coloridos sobre tinta clara → versão vibrante (legível no navy)
+const _txVerde  = ["#14532d", "#166534", "#15803d", "#16a34a", "#065f46", "#047857"];
+const _txAmbar  = ["#92400e", "#78350f", "#a16207", "#b45309", "#854d0e", "#713f12", "#9a3412"];
+const _txVerm   = ["#b91c1c", "#991b1b", "#7f1d1d"];
+const _txAzul   = ["#1e40af", "#1d4ed8", "#075985", "#1e3a8a", "#0369a1"];
+const _txRoxo   = ["#5b21b6", "#6d28d9", "#5b3df1", "#6b21a8"];
+// Bordas claras → borda navy (casam por rgb final — essas cores só são bordas)
+const _bordas   = ["#e7e5e4", "#d6d3d1", "#e5e7eb", "#d1d5db", "#e2e8f0", "#cbd5e1"];
+
+function _selBg(cores, alvo, texto) {
+  const s = [];
+  for (const c of cores) {
+    const rgb = _rgb(c);
+    s.push(`:root[data-theme="dark"] [style*="background: ${rgb}"]`);
+    s.push(`:root[data-theme="dark"] [style*="background-color: ${rgb}"]`);
+  }
+  return s.join(",\n") + ` { background: ${alvo} !important;${texto ? ` color: ${texto} !important;` : ""} }`;
+}
+function _selColor(cores, corAlvo) {
+  const s = [];
+  for (const c of cores) s.push(`:root[data-theme="dark"] [style*="color: ${_rgb(c)}"]`);
+  return s.join(",\n") + ` { color: ${corAlvo} !important; }`;
+}
+function _selBorda(cores, corAlvo) {
+  const s = [];
+  for (const c of cores) s.push(`:root[data-theme="dark"] [style*="${_rgb(c)}"]`);
+  return s.join(",\n") + ` { border-color: ${corAlvo} !important; }`;
+}
+
+const TEMA_GLOBAL_CSS = `
+:root[data-theme="dark"], :root[data-theme="dark"] body {
+  background: ${ND.bg} !important;
+  color: ${ND.text} !important;
+}
+
+/* Fundos: página → profundo, card → superfície */
+${_selBg(_bgPagina, ND.bg, ND.text)}
+${_selBg(_bgCard, ND.surface, ND.text)}
+
+/* Fundos com tinta semântica (mantém o "clima" do card, mas no escuro) */
+${_selBg(_bgVerde, "rgba(62, 207, 142, 0.10)", ND.brand)}
+${_selBg(_bgVerm,  "rgba(248, 113, 113, 0.10)", ND.danger)}
+${_selBg(_bgAmbar, "rgba(251, 191, 36, 0.10)", ND.warning)}
+${_selBg(_bgAzul,  "rgba(96, 165, 250, 0.10)", ND.info)}
+${_selBg(_bgRoxo,  "rgba(167, 139, 250, 0.10)", ND.purple)}
+
+/* Glassmorphism (branco translúcido) */
+:root[data-theme="dark"] [style*="background: rgba(255, 255, 255"],
+:root[data-theme="dark"] [style*="background-color: rgba(255, 255, 255"] {
+  background: rgba(26, 30, 42, 0.75) !important;
+  color: ${ND.text} !important;
+}
+
+/* Textos */
+${_selColor(_txEscuro, ND.text)}
+${_selColor(_txMedio, ND.textMuted)}
+${_selColor(_txSuave, ND.textSoft)}
+${_selColor(_txVerde, ND.brand)}
+${_selColor(_txAmbar, ND.warning)}
+${_selColor(_txVerm, ND.danger)}
+${_selColor(_txAzul, ND.info)}
+${_selColor(_txRoxo, ND.purple)}
+
+/* Bordas */
+${_selBorda(_bordas, ND.border)}
+
+/* Inputs/selects/textareas — força bg escuro + texto claro */
+:root[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea {
+  background: ${ND.surface2} !important;
+  color: ${ND.text} !important;
+  border-color: ${ND.border} !important;
+}
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder { color: ${ND.textSoft} !important; }
+
+/* Scrollbar */
+:root[data-theme="dark"] ::-webkit-scrollbar { background: ${ND.bgSubtle}; width: 8px; height: 8px; }
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: ${ND.border}; border-radius: 4px; }
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: ${ND.borderStrong}; }
+`;
+
+// ─── Botão flutuante de fullscreen ──────────────────────────────────────────
+// Só aparece no PDV desktop (Electron) — expõe janela.fullScreen() via preload.
+// Canto superior direito, ícone ⛶ quando pequeno / ⛶ com contorno quando cheio.
+function BotaoFullScreen() {
+  const [cheio, setCheio] = useState(false);
+  useEffect(() => {
+    if (!window.janela?.isFullScreen) return;
+    window.janela.isFullScreen().then(r => setCheio(!!r?.fullScreen)).catch(() => {});
+    // Sincroniza estado se o usuário sair do fullscreen pelo F11 do teclado
+    const iv = setInterval(() => {
+      window.janela.isFullScreen().then(r => setCheio(!!r?.fullScreen)).catch(() => {});
+    }, 2000);
+    return () => clearInterval(iv);
+  }, []);
+  if (!window.janela?.fullScreen) return null;
+  const alternar = async () => {
+    try { const r = await window.janela.fullScreen(); if (r) setCheio(!!r.fullScreen); } catch {}
+  };
+  return (
+    <button onClick={alternar} title={cheio ? "Sair da tela cheia (F11)" : "Tela cheia — esconde a barra do Windows (F11)"}
+      style={{ position: "fixed", top: 10, right: 10, zIndex: 9999, width: 34, height: 34,
+        borderRadius: 8, border: "1.5px solid #d6d3d1", background: "#fff", cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.08)", color: "#57534e", padding: 0 }}>
+      {cheio ? "⛶" : "⛶"}
+    </button>
+  );
+}
 
 // A senha do Suporte Nexus agora é validada no SERVIDOR (POST /api/suporte/login).
 
@@ -94,6 +247,22 @@ const SETORES_BUILD = IS_ONLINE
   // que só o Operador Nexus abre (senha). Ver src/SuporteApp.jsx → SecaoFiscal.
 
 export default function App() {
+  // Aplica escala + tema salvos LOGO no primeiro render — antes do primeiro
+  // pixel na tela — pra evitar "flash" de tamanho/tema errado quando o cliente
+  // configurou zoom maior ou tema escuro. Injeta o CSS global de tema uma
+  // única vez (no head, não como <style> filho) pra funcionar já na tela de
+  // login, antes do primeiro conteúdo carregar.
+  useEffect(() => {
+    aplicarEscalaUI(lerEscalaUI());
+    aplicarTemaUI(lerTemaUI());
+    if (!document.getElementById("nx-tema-global")) {
+      const s = document.createElement("style");
+      s.id = "nx-tema-global";
+      s.textContent = TEMA_GLOBAL_CSS;
+      document.head.appendChild(s);
+    }
+  }, []);
+
   const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
   const _path = window.location.pathname.startsWith(_base)
     ? window.location.pathname.slice(_base.length) || "/"
@@ -698,7 +867,10 @@ export default function App() {
       : null;
 
     return (
-      <div style={{ minHeight: "100vh", paddingLeft: SIDEBAR_LAYOUT_WIDTH, background: "#f5f5f4" }}>
+      // background:transparent — o <html>/<body> já recebem a cor do tema em
+      // ui-tema.js. Antes tinha #f5f5f4 hardcoded que aparecia como borda clara
+      // no tema escuro quando a escala de UI (zoom) deixava o conteúdo menor.
+      <div style={{ minHeight: "100vh", paddingLeft: SIDEBAR_LAYOUT_WIDTH, background: "transparent" }}>
         <SidebarNav
           setorAtivo={setor}
           onNavegar={navegar}
@@ -714,6 +886,7 @@ export default function App() {
           modoListaPedidos={modoListaPedidos}
         />
         <div style={{ minHeight: "100vh" }}>{conteudoSetor}</div>
+        <BotaoFullScreen />
       </div>
     );
   }

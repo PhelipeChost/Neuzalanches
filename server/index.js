@@ -7,12 +7,14 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { reportarReceitaNexo } from "./services/nexo.js";
-import { notificarPedidoConfirmado, notificarStatusPedido, enviarMensagem, evolutionCfg } from "./services/whatsapp.js";
+import { montarZip } from "./services/zipmin.js";
+import { enviarBackup as enviarBackupDrive, testarConexao as testarDrive, listarBackups as listarBackupsDrive, baixarArquivo as baixarArquivoDrive } from "./services/gdrive.js";
+import { notificarPedidoConfirmado, notificarStatusPedido, notificarPesoAjustado, enviarMensagem, evolutionCfg } from "./services/whatsapp.js";
 import {
   criarUsuario, buscarUsuarioPorEmail, buscarUsuarioPorTelefone, buscarUsuarioPorId,
   isEmailAdmin, buscarAdminEmail, listarAdminEmails, adicionarAdminEmail, atualizarAdminEmail, removerAdminEmail, isAdminPrincipal, ADMIN_PRINCIPAL,
   listarLancamentos, buscarLancamento, criarLancamento, atualizarLancamento, excluirLancamento,
-  listarLixeira, restaurarItemLixeira, excluirDefinitivoLixeira,
+  listarLixeira, restaurarItemLixeira, excluirDefinitivoLixeira, esvaziarLixeira,
   obterConfig, salvarConfig,
   listarCategorias, buscarCategoria, criarCategoria, atualizarCategoria, reordenarCategorias, excluirCategoria,
   listarAdicionais, buscarAdicional, criarAdicional, atualizarAdicional, excluirAdicional,
@@ -20,6 +22,7 @@ import {
   importarProdutosEmLote,
   listarPromocoes, listarPromocoesAtivas, criarPromocao, atualizarPromocao,
   listarPedidos, listarPedidosPorTelefone, buscarPedido, buscarItensPedido, criarPedido, atualizarStatusPedido, excluirPedido, contarPedidosPendentes,
+  pedidoTemPorPeso, registrarPesoItem, confirmarPesagem, recusarPesagem,
   pedidosAlteradosDesde, upsertPedidoSync, upsertCatalogoSync,
   comandasAlteradasDesde, upsertComandaSync,
   listarEnderecos, buscarEndereco, criarEndereco, excluirEndereco,
@@ -44,9 +47,14 @@ import {
   obterFiscalConfig, salvarFiscalConfig, salvarCertificadoA1, removerCertificadoA1,
   emitirNFCe, listarNFCe, verificarPendentesFocus, dispararNFCeAutomatica, buscarNFCePorPedido,
   montarRelatorioFiscalMensal, marcarRelatorioFiscalEnviado, verificarEnvioRelatorioFiscalPendente,
-  consultarStatusSefazAntigo, emitirNFCeAntigo, listarNFCeAntigo, obterXmlNFCeAntigo, reenviarPendentesAntigo,
+  documentosFiscaisDoMes, mesesComNotasFiscais,
+  parseNFeXml, salvarNotaEntrada, listarNotasEntrada, buscarNotaEntrada, excluirNotaEntrada,
+  vincularItemEntradaAoEstoque, criarEstoqueAPartirDeEntrada, notasEntradaDoMes,
+  relatorioFiscal,
+  consultarStatusSefazAntigo, emitirNFCeAntigo, listarNFCeAntigo, obterXmlNFCeAntigo, reenviarPendentesAntigo, diagnosticoNFCeAntigo, montarXmlNFCeAntigo,
   obterSessaoAberta, abrirCaixa, registrarMovimentoCaixa, fecharCaixa, listarMovimentosCaixa,
   listarCardapios, criarCardapio, atualizarCardapio, excluirCardapio, contarOrfaosCardapio,
+  previewExclusaoCascata, executarExclusaoCascata,
   definirCategoriasCardapio, definirAdicionaisCardapio, garantirCardapioPrincipal,
   listarCardapiosPorCategoria, listarCardapiosPorAdicional,
   caminhoBanco, backupBanco,
@@ -60,6 +68,82 @@ const JWT_SECRET = process.env.JWT_SECRET || "fluxo-caixa-secret-key-2026";
 app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 
+// ─── SSE (real-time push) ────────────────────────────────────────────────────
+// Duas rotas de SSE convivem aqui, servidas pelo MESMO server (usado tanto no
+// PDV local quanto no backend online do cardápio de cada cliente):
+//   /api/sync/events   → conexão dos PDVs desktop com o backend online do
+//                        cliente (VPS). Autenticada por sync_receive_token.
+//   /api/events        → conexão do frontend do PDV com o backend LOCAL. Sem
+//                        auth (localhost/rede local) — só sinaliza "algo mudou",
+//                        o payload real vem via GET autenticado.
+// Heartbeat de 15s pra detectar link morto rápido e evitar proxy/nginx matando
+// a conexão idle. Cada cliente tem um id sequencial pra log/debug.
+const _sseSync = new Set();   // conexões PDV→VPS (autenticadas)
+const _sseLocal = new Set();  // conexões front→backend-local (sem auth, localhost)
+let _sseIdSeq = 0;
+
+function _headSSE(res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no", // nginx: não bufferar esta rota
+  });
+  res.write("retry: 3000\n\n");   // cliente reconecta em 3s se cair
+  res.write(": conectado\n\n");
+}
+
+function _abrirSSE(set, req, res) {
+  _headSSE(res);
+  const client = { id: ++_sseIdSeq, res };
+  set.add(client);
+  const hb = setInterval(() => {
+    try { res.write(": ping\n\n"); } catch { /* conn morta */ }
+  }, 15000);
+  const fim = () => { clearInterval(hb); set.delete(client); };
+  req.on("close", fim);
+  req.on("error", fim);
+  res.on("error", fim);
+}
+
+// Broadcast: envia evento nomeado (comanda|pedido|mesa) pra todos os listeners
+// do set. Se write falha (peer desapareceu sem close), remove silenciosamente.
+function _emit(set, tipoEvento, dados) {
+  const msg = `event: ${tipoEvento}\ndata: ${JSON.stringify(dados || {})}\n\n`;
+  for (const c of Array.from(set)) {
+    try { c.res.write(msg); }
+    catch { set.delete(c); }
+  }
+}
+
+// Chamada pelas rotas de comanda/pedido/mesa quando algo muda: broadcast pros
+// PDVs conectados via SSE ao VPS (real-time) + pros fronts do PDV local.
+function notificarMudanca(tipo, dados = {}) {
+  _emit(_sseSync, tipo, dados);
+  _emit(_sseLocal, tipo, dados);
+}
+
+// GET /api/sync/events — canal PDV→VPS. Auth via ?token=<sync_receive_token>
+// (EventSource do browser/Node não permite headers custom). Se as envs de
+// suporte remoto estão ativas, o middleware do túnel injeta o token, mas
+// preferimos manter o esquema por query pra compat com o motor de sync.
+app.get("/api/sync/events", (req, res) => {
+  const tokenEsperado = obterConfig("sync_receive_token") || "";
+  const tokenRecebido = String(req.query.token || "");
+  if (!tokenEsperado || tokenRecebido !== tokenEsperado) {
+    res.status(401).end();
+    return;
+  }
+  _abrirSSE(_sseSync, req, res);
+});
+
+// GET /api/events — canal front→backend-local. Sem auth (server escuta em
+// localhost/LAN, e o payload é só o TIPO da mudança, não dados sensíveis).
+// O front sempre puxa dados via GET autenticado depois de receber o gatilho.
+app.get("/api/events", (req, res) => {
+  _abrirSSE(_sseLocal, req, res);
+});
+
 // ─── AUTH MIDDLEWARE ─────────────────────────────────────────────────────────
 
 // PDV desktop (Electron seta NEXUS_DESKTOP=1): login é OPCIONAL — desligado por
@@ -70,7 +154,47 @@ function loginNecessario() {
   return !IS_DESKTOP_APP || obterConfig("login_ativo") === "1";
 }
 
+// ─── Suporte remoto (túnel Nexus) ──────────────────────────────────────────
+// O main.js do desktop, quando conectado ao túnel, seta essas 2 envs com a
+// chave pública RS256 da Nexus e o client_id da licença deste PDV. Se ambas
+// existem e o header x-nexus-suporte-token vem numa requisição, validamos e
+// concedemos admin pleno (ignorando restrições de cargo de funcionário).
+// No VPS, nenhuma dessas envs está definida — o header é ignorado
+// silenciosamente e o fluxo normal de autenticação segue.
+const SUPORTE_PUBKEY = process.env.NEXUS_SUPORTE_PUBKEY || null;
+const SUPORTE_CLIENT_ID = process.env.NEXUS_SUPORTE_CLIENT_ID || null;
+const SUPORTE_ATIVO = !!(SUPORTE_PUBKEY && SUPORTE_CLIENT_ID);
+
+function verificarSuporteToken(tokenSuporte) {
+  if (!SUPORTE_ATIVO || !tokenSuporte) return null;
+  try {
+    const claims = jwt.verify(tokenSuporte, SUPORTE_PUBKEY, { algorithms: ["RS256"] });
+    if (claims.tipo !== "suporte") return null;
+    if (String(claims.client_id) !== String(SUPORTE_CLIENT_ID)) return null;
+    return claims;
+  } catch {
+    return null;
+  }
+}
+
 function authMiddleware(req, res, next) {
+  // 1) Token de suporte Nexus (via túnel) — se válido, admin pleno.
+  const suporte = req.headers["x-nexus-suporte-token"];
+  if (suporte) {
+    const claims = verificarSuporteToken(suporte);
+    if (!claims) return res.status(401).json({ error: "Token de suporte inválido" });
+    req.user = {
+      id: "suporte-nexus",
+      nome: "Suporte Nexus",
+      email: claims.admin_email || null,
+      tipo: "admin",
+      suporte: true,
+      setores: null,
+      session_id: claims.session_id || null,
+    };
+    return next();
+  }
+
   const header = req.headers.authorization;
   if (header && header.startsWith("Bearer ")) {
     try {
@@ -396,6 +520,53 @@ app.post("/api/suporte/login", (req, res) => {
 // Mantém os 7 mais recentes. Roda tanto no PDV (userData) quanto no VPS.
 const dirBackups = () => join(dirname(caminhoBanco()), "backups");
 
+// ── Config do backup no Google Drive (Nexus) ────────────────────────────────
+// Aceita tanto o ID puro quanto a URL colada do Drive
+// (…/folders/<ID>?…  ou  ?id=<ID>).
+function extrairFolderId(valor) {
+  const s = String(valor || "").trim();
+  const mFolders = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (mFolders) return mFolders[1];
+  const mId = s.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  if (mId) return mId[1];
+  return s.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+// Credencial OAuth é GLOBAL da Nexus: vem de env (embutida no build) OU da
+// config local (env tem prioridade). A pasta é POR CLIENTE (só na config).
+function driveConfig() {
+  const cred = {
+    client_id: process.env.DRIVE_CLIENT_ID || obterConfig("drive_client_id") || "",
+    client_secret: process.env.DRIVE_CLIENT_SECRET || obterConfig("drive_client_secret") || "",
+    refresh_token: process.env.DRIVE_REFRESH_TOKEN || obterConfig("drive_refresh_token") || "",
+  };
+  const folderId = (obterConfig("drive_folder_id") || "").trim();
+  const enabled = obterConfig("drive_enabled") === "1";
+  const credOk = !!(cred.client_id && cred.client_secret && cred.refresh_token);
+  return { enabled, cred, folderId, credOk, folderOk: !!folderId };
+}
+
+// Envia um arquivo de backup local pro Drive (se configurado). Best-effort:
+// registra sucesso/erro na config, nunca lança pra fora.
+async function enviarBackupParaDrive(caminhoLocal) {
+  const cfg = driveConfig();
+  if (!cfg.enabled || !cfg.credOk || !cfg.folderOk) return;
+  try {
+    const buffer = fs.readFileSync(caminhoLocal);
+    const prefixo = basename(caminhoBanco()).replace(/\.db$/, "");
+    await enviarBackupDrive({
+      cred: cfg.cred, folderId: cfg.folderId,
+      nomeArquivo: basename(caminhoLocal), buffer, prefixo, manter: 15,
+    });
+    salvarConfig("drive_ultimo_envio", new Date().toISOString());
+    salvarConfig("drive_ultimo_erro", "");
+    console.log("[backup/drive] enviado:", basename(caminhoLocal));
+  } catch (e) {
+    salvarConfig("drive_ultimo_erro", String(e.message || e).slice(0, 300));
+    console.error("[backup/drive] falhou:", e.message);
+  }
+}
+
 async function fazerBackup() {
   const dir = dirBackups();
   fs.mkdirSync(dir, { recursive: true });
@@ -408,6 +579,7 @@ async function fazerBackup() {
   for (const f of arquivos.slice(0, Math.max(0, arquivos.length - 7))) {
     try { fs.unlinkSync(join(dir, f)); } catch { /* em uso: fica pra próxima */ }
   }
+  await enviarBackupParaDrive(destino);  // off-site (Nexus) — best-effort
   return destino;
 }
 
@@ -486,6 +658,99 @@ app.post("/api/suporte/backup", authMiddleware, adminOnly, async (req, res) => {
   try {
     const destino = await fazerBackup();
     res.json({ ok: true, arquivo: basename(destino), backups: listarBackups() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Backup no Google Drive (Nexus) — só Operador ────────────────────────────
+// Status: nunca devolve os segredos, só se estão preenchidos e de onde vêm.
+app.get("/api/suporte/drive", authMiddleware, adminOnly, (req, res) => {
+  const cfg = driveConfig();
+  const credViaEnv = !!(process.env.DRIVE_CLIENT_ID && process.env.DRIVE_CLIENT_SECRET && process.env.DRIVE_REFRESH_TOKEN);
+  res.json({
+    enabled: cfg.enabled,
+    folder_id: cfg.folderId,
+    cred_ok: cfg.credOk,
+    cred_via_env: credViaEnv,
+    ultimo_envio: obterConfig("drive_ultimo_envio") || "",
+    ultimo_erro: obterConfig("drive_ultimo_erro") || "",
+  });
+});
+
+app.put("/api/suporte/drive", authMiddleware, adminOnly, (req, res) => {
+  const { enabled, folder_id, client_id, client_secret, refresh_token } = req.body || {};
+  if (enabled !== undefined) salvarConfig("drive_enabled", enabled ? "1" : "0");
+  if (folder_id !== undefined) salvarConfig("drive_folder_id", extrairFolderId(String(folder_id)));
+  // Credencial: só sobrescreve o que veio preenchido (não zera sem querer).
+  if (client_id) salvarConfig("drive_client_id", String(client_id).trim());
+  if (client_secret) salvarConfig("drive_client_secret", String(client_secret).trim());
+  if (refresh_token) salvarConfig("drive_refresh_token", String(refresh_token).trim());
+  const cfg = driveConfig();
+  res.json({ ok: true, enabled: cfg.enabled, folder_id: cfg.folderId, cred_ok: cfg.credOk });
+});
+
+app.post("/api/suporte/drive/testar", authMiddleware, adminOnly, async (req, res) => {
+  const cfg = driveConfig();
+  if (!cfg.credOk) return res.status(400).json({ ok: false, error: "Credencial do Drive incompleta (client_id, client_secret e refresh_token)." });
+  if (!cfg.folderOk) return res.status(400).json({ ok: false, error: "Informe a pasta do cliente no Drive." });
+  try {
+    await testarDrive({ cred: cfg.cred, folderId: cfg.folderId });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/suporte/drive/enviar", authMiddleware, adminOnly, async (req, res) => {
+  const cfg = driveConfig();
+  if (!cfg.credOk || !cfg.folderOk) return res.status(400).json({ ok: false, error: "Configure a credencial e a pasta antes de enviar." });
+  try {
+    const ultimo = listarBackups()[0];
+    const destino = ultimo ? join(dirBackups(), ultimo.arquivo) : await fazerBackup();
+    const buffer = fs.readFileSync(destino);
+    const prefixo = basename(caminhoBanco()).replace(/\.db$/, "");
+    await enviarBackupDrive({ cred: cfg.cred, folderId: cfg.folderId, nomeArquivo: basename(destino), buffer, prefixo, manter: 15 });
+    salvarConfig("drive_ultimo_envio", new Date().toISOString());
+    salvarConfig("drive_ultimo_erro", "");
+    res.json({ ok: true, arquivo: basename(destino) });
+  } catch (e) {
+    salvarConfig("drive_ultimo_erro", String(e.message || e).slice(0, 300));
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Lista os backups disponíveis na pasta do Drive — alimenta a tela de
+// restauração no Suporte (não baixa nada, só metadados).
+app.get("/api/suporte/drive/backups", authMiddleware, adminOnly, async (req, res) => {
+  const cfg = driveConfig();
+  if (!cfg.credOk || !cfg.folderOk) return res.status(400).json({ error: "Configure a credencial e a pasta antes de listar." });
+  try {
+    const arquivos = await listarBackupsDrive({ cred: cfg.cred, folderId: cfg.folderId });
+    res.json(arquivos.filter(a => a.name.endsWith(".db")));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Restaura o banco a partir de um backup do Drive — SÓ no PDV desktop (é lá
+// que existe o hook de boot que aplica a troca com segurança antes de abrir
+// o banco). Baixa, valida o cabeçalho SQLite, e grava como ".pending-restore"
+// ao lado do banco ativo; a troca de fato acontece no próximo boot (main.js),
+// com backup de segurança do banco atual antes de sobrescrever.
+app.post("/api/suporte/drive/restaurar", authMiddleware, adminOnly, async (req, res) => {
+  if (!IS_DESKTOP_APP) return res.status(400).json({ error: "Restauração disponível apenas no PDV desktop." });
+  const { file_id, nome } = req.body || {};
+  if (!file_id) return res.status(400).json({ error: "Informe o arquivo a restaurar." });
+  const cfg = driveConfig();
+  if (!cfg.credOk || !cfg.folderOk) return res.status(400).json({ error: "Drive não configurado." });
+  try {
+    const buffer = await baixarArquivoDrive({ cred: cfg.cred, fileId: file_id });
+    if (buffer.length < 16 || buffer.toString("utf8", 0, 15) !== "SQLite format 3") {
+      return res.status(400).json({ error: "Arquivo baixado não parece ser um banco de dados válido." });
+    }
+    fs.writeFileSync(`${caminhoBanco()}.pending-restore`, buffer);
+    res.json({ ok: true, requer_reinicio: true, arquivo: nome || file_id, bytes: buffer.length });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -770,6 +1035,25 @@ app.delete("/api/categorias/:id", authMiddleware, adminOnly, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── EXCLUSÃO EM CASCATA ────────────────────────────────────────────────────
+
+app.get("/api/exclusao-cascata/preview/:tipo/:id", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const r = previewExclusaoCascata(req.params.tipo, req.params.id);
+    if (!r) return res.status(404).json({ error: "Não encontrado" });
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/exclusao-cascata/executar/:tipo/:id", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const r = executarExclusaoCascata(req.params.tipo, req.params.id, req.body);
+    if (!r.ok) return res.status(400).json({ error: r.error });
+    agendarSyncCatalogo();
+    res.json(r);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ─── ADICIONAIS ─────────────────────────────────────────────────────────────
 
 // Público: listar adicionais disponíveis (clientes veem ao montar pedido)
@@ -787,18 +1071,18 @@ app.get("/api/adicionais", (req, res) => {
 });
 
 app.post("/api/adicionais", authMiddleware, adminOnly, (req, res) => {
-  const { nome, preco, custo, disponivel, max_quantidade, categoria_id, cardapio_id } = req.body;
+  const { nome, preco, custo, disponivel, max_quantidade, categoria_id, categorias_ids, cardapio_id } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço são obrigatórios" });
   if (typeof preco !== "number" || preco < 0) return res.status(400).json({ error: "Preço inválido" });
-  const a = criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id, cardapio_id });
+  const a = criarAdicional({ nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id, categorias_ids, cardapio_id });
   agendarSyncCatalogo();
   res.status(201).json(a);
 });
 
 app.put("/api/adicionais/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, preco, custo, disponivel, max_quantidade, categoria_id } = req.body;
+  const { nome, preco, custo, disponivel, max_quantidade, categoria_id, categorias_ids } = req.body;
   if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
-  const a = atualizarAdicional(req.params.id, { nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id });
+  const a = atualizarAdicional(req.params.id, { nome, preco, custo: custo || 0, disponivel, max_quantidade, categoria_id, categorias_ids });
   if (!a) return res.status(404).json({ error: "Não encontrado" });
   agendarSyncCatalogo();
   res.json(a);
@@ -849,11 +1133,14 @@ app.post("/api/produtos", authMiddleware, adminOnly, (req, res) => {
 });
 
 app.put("/api/produtos/:id", authMiddleware, adminOnly, (req, res) => {
-  const { nome, descricao, preco, custo, categoria, imagem, disponivel, codigo, config,
-          codigo_barras, ncm, cest, um, pertence_estoque } = req.body;
-  if (!nome || preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
-  const p = atualizarProduto(req.params.id, { nome, descricao, preco, custo: custo || 0, categoria, imagem, disponivel, codigo, config,
-                                              codigo_barras, ncm, cest, um, pertence_estoque });
+  const existing = buscarProduto(req.params.id);
+  if (!existing) return res.status(404).json({ error: "Não encontrado" });
+  const merged = { ...existing, ...req.body };
+  if (!merged.nome || merged.preco === undefined) return res.status(400).json({ error: "Nome e preço obrigatórios" });
+  const p = atualizarProduto(req.params.id, { nome: merged.nome, descricao: merged.descricao, preco: merged.preco,
+    custo: merged.custo || 0, categoria: merged.categoria, imagem: merged.imagem, disponivel: merged.disponivel,
+    codigo: merged.codigo, config: merged.config, codigo_barras: merged.codigo_barras, ncm: merged.ncm,
+    cest: merged.cest, um: merged.um, pertence_estoque: merged.pertence_estoque });
   if (!p) return res.status(404).json({ error: "Não encontrado" });
   agendarSyncCatalogo();
   res.json(p);
@@ -1082,6 +1369,8 @@ app.post("/api/pedidos/publico", (req, res) => {
 
   // Notificar cliente via WhatsApp (não bloqueia a resposta)
   notificarPedidoConfirmado(pedido).catch(() => {});
+  // Broadcast SSE — pedido delivery/retirada aparece imediatamente no PDV.
+  notificarMudanca("pedido", { pedido_id: pedido.id, acao: "criado", origem: "publico" });
 
   res.status(201).json(pedido);
 });
@@ -1131,6 +1420,8 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
     emitir_nfce: emitirNfceFinal,
     cliente_cpf: emitirNfceFinal ? (cliente_cpf || "") : "",
   });
+  // Broadcast SSE — pedido de balcão/admin aparece imediatamente no PDV.
+  notificarMudanca("pedido", { pedido_id: pedido.id, acao: "criado", origem: isAdmin ? "balcao" : "cliente-logado" });
   res.status(201).json(pedido);
 
   // Emissão fiscal da venda de balcão — dispara depois de responder ao caixa,
@@ -1143,13 +1434,16 @@ app.post("/api/pedidos", authMiddleware, (req, res) => {
 
 app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
   const { status } = req.body;
-  const statusValidos = ["pendente", "confirmado", "preparando", "pronto", "entregue", "cancelado"];
+  const statusValidos = ["pendente", "confirmado", "preparando", "pronto", "aguardando_confirmacao", "entregue", "cancelado"];
   if (!status || !statusValidos.includes(status)) {
     return res.status(400).json({ error: "Status inválido" });
   }
 
   const pedido = atualizarStatusPedido(req.params.id, status);
   if (!pedido) return res.status(404).json({ error: "Pedido não encontrado" });
+
+  // Broadcast SSE — cozinha muda status → operador do caixa vê na hora.
+  notificarMudanca("pedido", { pedido_id: req.params.id, acao: "status", status });
 
   // Notificar cliente via WhatsApp em TODA mudança de status (exceto pendente, que é o estado inicial)
   if (status !== "pendente") {
@@ -1168,15 +1462,13 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       return d.toISOString().slice(0, 10);
     })();
 
-    // CMV (custo de produção) — embutido na venda como atributo, NÃO como
-    // lançamento separado. O feed mostra venda + custo + margem em 1 linha.
-    // O CMV continua no DRE (calculado a partir dos pedidos), só sai do feed.
+    // CMV (custo de produção) — embutido no lançamento de venda (campo custo).
+    // DRE e indicadores CMV usam lançamentos como fonte de verdade.
     const itens = buscarItensPedido(pedido.id);
     const cmvTotal = itens.reduce((s, item) => {
       return s + (item.custo_unitario * item.quantidade);
     }, 0);
 
-    // Lançamento de RECEITA (entrada) — carrega o custo (CMV) da venda
     criarLancamento({
       tipo: "entrada",
       descricao: `Pedido #${pedido.id.slice(0, 6)} — ${pedido.cliente_nome || "Cliente"}`,
@@ -1186,6 +1478,7 @@ app.put("/api/pedidos/:id/status", authMiddleware, adminOnly, (req, res) => {
       status: "realizado",
       obs: `Pedido ${pedido.tipo} entregue automaticamente`,
       custo: cmvTotal > 0 ? cmvTotal : null,
+      pedido_id: pedido.id,
     });
 
     // Reportar receita para NEXO (não bloqueia, não quebra o fluxo)
@@ -1210,6 +1503,43 @@ app.delete("/api/pedidos/:id", authMiddleware, adminOnly, (req, res) => {
   const ok = excluirPedido(req.params.id);
   if (!ok) return res.status(404).json({ error: "Pedido não encontrado" });
   res.json({ success: true });
+});
+
+// ─── Venda por peso ─────────────────────────────────────────────────────────
+// Lojista pesou a peça e informa o peso real. Se estiver dentro da tolerância
+// (±20%), só avisa o cliente pelo WhatsApp e segue. Se estiver fora, o pedido
+// vai pra 'aguardando_confirmacao' e o cliente é chamado a aprovar.
+app.post("/api/pedidos/:id/pesar-item", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { item_id, peso_kg } = req.body || {};
+    if (!item_id) return res.status(400).json({ error: "item_id é obrigatório" });
+    const r = registrarPesoItem(req.params.id, item_id, peso_kg);
+    notificarPesoAjustado(r.pedido, r).catch(() => {});
+    res.json({ ...r.pedido, itens: buscarItensPedido(r.pedido.id), _ajuste: r });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Lojista leu a resposta do cliente no WhatsApp e destrava o pedido.
+app.post("/api/pedidos/:id/confirmar-pesagem", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const p = confirmarPesagem(req.params.id);
+    res.json({ ...p, itens: buscarItensPedido(p.id) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post("/api/pedidos/:id/recusar-pesagem", authMiddleware, adminOnly, async (req, res) => {
+  try {
+    const { motivo } = req.body || {};
+    const p = recusarPesagem(req.params.id, motivo);
+    notificarStatusPedido(p, "cancelado").catch(() => {});
+    res.json({ ...p, itens: buscarItensPedido(p.id) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ─── SINCRONIZAÇÃO (cozinha simultânea local ↔ nuvem) ────────────────────────
@@ -1412,6 +1742,18 @@ app.delete("/api/lixeira/:tipo/:id", authMiddleware, adminOnly, (req, res) => {
     const ok = excluirDefinitivoLixeira(req.params.tipo, req.params.id);
     if (!ok) return res.status(404).json({ error: "Item não encontrado na lixeira" });
     res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Esvaziar a lixeira toda (todos os tipos, exclusão definitiva). Não tem
+// como recuperar depois — o botão do frontend confirma antes de chamar.
+app.delete("/api/lixeira", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const contagem = esvaziarLixeira();
+    const total = Object.values(contagem).reduce((s, c) => s + c.removidos, 0);
+    res.json({ success: true, total, contagem });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -1864,6 +2206,254 @@ app.get("/api/fiscal/antigo/nfce/:id/xml", authMiddleware, adminOnly, (req, res)
   const r = obterXmlNFCeAntigo(req.params.id);
   if (!r) return res.status(404).json({ error: "XML não encontrado" });
   res.json({ numero: r.numero, serie: r.serie, chave: r.chave, xml: r.xml_assinado });
+});
+
+app.get("/api/fiscal/antigo/diagnostico", authMiddleware, adminOnly, (req, res) => {
+  const ultimas = diagnosticoNFCeAntigo();
+  res.json(ultimas.map(n => ({
+    ...n,
+    retorno_resumo: (n.retorno_json || "").slice(0, 500),
+    retorno_json: undefined,
+  })));
+});
+
+app.get("/api/fiscal/antigo/dryrun", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const fisc = obterFiscalConfig();
+    const cnpj = (fisc.cnpj || "").replace(/\D/g, "");
+    const tpAmb = fisc.ambiente === "producao" ? "1" : "2";
+    const numero = fisc.antigo_proximo_numero || 1;
+    const serie = fisc.antigo_serie || "1";
+    const pedidoTeste = {
+      id: "DRYRUN", cliente_nome: "", cliente_cpf: "", metodo_pagamento: "dinheiro", troco_para: 0,
+      itens: [{ produto_id: "T1", produto_nome: "PRODUTO TESTE", quantidade: 1, preco_unitario: 1.0, adicionais: [] }],
+    };
+    const { infNFe, chave, vNF } = montarXmlNFCeAntigo(pedidoTeste, fisc, cnpj, { numero, serie, tpAmb });
+    res.json({ ok: true, chave, vNF, numero, serie, tpAmb, cnpj, infNFe_preview: infNFe.slice(0, 4000) });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+// Resumo do mês (qtd de notas autorizadas, total) + meses disponíveis —
+// alimenta a navegação entre meses no Suporte, sem baixar o pacote.
+app.get("/api/fiscal/documentos-mes/:anoMes/meta", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const anoMes = String(req.params.anoMes || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(anoMes)) return res.status(400).json({ error: "Mês inválido (use AAAA-MM)" });
+    const doc = documentosFiscaisDoMes(anoMes);
+    const nfEntrada = notasEntradaDoMes(anoMes);
+    const totalEntrada = nfEntrada.reduce((s, n) => s + (n.valor_total || 0), 0);
+    res.json({
+      periodo: doc.periodo,
+      quantidade: doc.quantidade,
+      total: doc.total,
+      com_xml: doc.com_xml,
+      entrada_quantidade: nfEntrada.length,
+      entrada_total: totalEntrada,
+      meses_disponiveis: mesesComNotasFiscais(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Pacote .zip com os XMLs autorizados do mês (saída + entrada) + resumo.csv.
+app.get("/api/fiscal/documentos-mes/:anoMes", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const anoMes = String(req.params.anoMes || "").slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(anoMes)) return res.status(400).json({ error: "Mês inválido (use AAAA-MM)" });
+    const doc = documentosFiscaisDoMes(anoMes);
+    const nfEntrada = notasEntradaDoMes(anoMes);
+    if (doc.quantidade === 0 && nfEntrada.length === 0) return res.status(404).json({ error: "Nenhuma nota neste mês." });
+
+    const fmtBRL = (v) => Number(v || 0).toFixed(2).replace(".", ",");
+    const arquivos = [];
+
+    // ── SAÍDA (NFC-e) ──
+    for (const n of doc.notas) {
+      const xml = (n.xml_assinado || "").trim();
+      if (!xml) continue;
+      const base = n.chave ? `NFCe-${n.chave}` : `NFCe-${n.numero}-${n.serie}`;
+      arquivos.push({ nome: `saida/${base}.xml`, conteudo: xml });
+    }
+
+    // resumo-saida.csv
+    if (doc.notas.length > 0) {
+      const linhas = [["Numero", "Serie", "Chave", "Data", "Motor", "Status", "Valor (R$)"].join(";")];
+      for (const n of doc.notas) {
+        linhas.push([
+          n.numero, n.serie, n.chave || "",
+          (n.created_at || "").replace("T", " ").slice(0, 19),
+          n.motor === "antigo" ? "SEFAZ direto" : "Focus NFe",
+          n.status, fmtBRL(n.valor_total),
+        ].join(";"));
+      }
+      linhas.push(["", "", "", "", "", "TOTAL", fmtBRL(doc.total)].join(";"));
+      arquivos.push({ nome: `resumo-saida-${anoMes}.csv`, conteudo: "﻿" + linhas.join("\r\n") });
+    }
+
+    // ── ENTRADA (NF-e de fornecedores) ──
+    let totalEntrada = 0;
+    for (const ne of nfEntrada) {
+      totalEntrada += ne.valor_total || 0;
+      const xmlE = (ne.xml_original || "").trim();
+      if (xmlE) {
+        const base = ne.chave_acesso ? `NFe-${ne.chave_acesso}` : `NFe-${ne.numero_nf}-${ne.serie}`;
+        arquivos.push({ nome: `entrada/${base}.xml`, conteudo: xmlE });
+      }
+    }
+
+    // resumo-entrada.csv
+    if (nfEntrada.length > 0) {
+      const linhasE = [["Numero", "Serie", "Chave", "Fornecedor", "CNPJ", "Data", "Origem", "Valor (R$)"].join(";")];
+      for (const ne of nfEntrada) {
+        linhasE.push([
+          ne.numero_nf, ne.serie, ne.chave_acesso || "",
+          ne.fornecedor_nome, ne.fornecedor_cnpj,
+          ne.data_emissao, ne.origem === "manual" ? "Manual" : "XML",
+          fmtBRL(ne.valor_total),
+        ].join(";"));
+      }
+      linhasE.push(["", "", "", "", "", "", "TOTAL", fmtBRL(totalEntrada)].join(";"));
+      arquivos.push({ nome: `resumo-entrada-${anoMes}.csv`, conteudo: "﻿" + linhasE.join("\r\n") });
+    }
+
+    // resumo.txt geral
+    const resumo = [
+      `Documentos fiscais — ${anoMes}`,
+      ``,
+      `SAÍDA (NFC-e):`,
+      `  Notas autorizadas: ${doc.quantidade}`,
+      `  Faturamento: R$ ${fmtBRL(doc.total)}`,
+      ``,
+      `ENTRADA (NF-e fornecedores):`,
+      `  Notas registradas: ${nfEntrada.length}`,
+      `  Total compras: R$ ${fmtBRL(totalEntrada)}`,
+      ``,
+      "A apuração e o cálculo dos tributos são responsabilidade da contabilidade.",
+    ].join("\r\n");
+    arquivos.push({ nome: `resumo-${anoMes}.txt`, conteudo: "﻿" + resumo });
+
+    const zip = montarZip(arquivos);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="documentos-fiscais-${anoMes}.zip"`);
+    res.setHeader("Content-Length", zip.length);
+    res.end(zip);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── RELATÓRIO FISCAL CONSOLIDADO ───────────────────────────────────────────
+
+app.get("/api/fiscal/relatorio", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { mes, nivel, tipo } = req.query;
+    res.json(relatorioFiscal({ mes, nivel, tipo }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── NF-e DE ENTRADA ────────────────────────────────────────────────────────
+
+app.post("/api/fiscal/nfe-entrada", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { xml, auto_criar_estoque, tipo_estoque } = req.body;
+    if (!xml || typeof xml !== "string") return res.status(400).json({ error: "XML é obrigatório" });
+    const { nota, itens } = parseNFeXml(xml);
+    if (!nota.numero_nf && !nota.chave_acesso) return res.status(400).json({ error: "XML inválido: não foi possível extrair dados da NF-e" });
+
+    const { id, itensIds } = salvarNotaEntrada(nota, itens, xml);
+
+    if (auto_criar_estoque) {
+      const tipo = tipo_estoque || "revenda";
+      for (let i = 0; i < itens.length; i++) {
+        const estoqueId = criarEstoqueAPartirDeEntrada(itens[i], tipo);
+        vincularItemEntradaAoEstoque(itensIds[i], estoqueId);
+      }
+    }
+
+    res.json({ id, nota, itens: itens.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/fiscal/nfe-entrada/preview", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { xml } = req.body;
+    if (!xml) return res.status(400).json({ error: "XML é obrigatório" });
+    const { nota, itens } = parseNFeXml(xml);
+    res.json({ nota, itens });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/fiscal/nfe-entrada/manual", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { nota: dadosNota, itens: dadosItens, auto_criar_estoque, tipo_estoque } = req.body;
+    if (!dadosNota) return res.status(400).json({ error: "Dados da nota são obrigatórios" });
+    if (!Array.isArray(dadosItens) || dadosItens.length === 0) return res.status(400).json({ error: "Ao menos um item é obrigatório" });
+
+    const nota = { ...dadosNota, origem: "manual" };
+    const itens = dadosItens.map((it, i) => ({ ...it, num_item: i + 1 }));
+
+    const { id, itensIds } = salvarNotaEntrada(nota, itens, "");
+
+    if (auto_criar_estoque) {
+      const tipo = tipo_estoque || "revenda";
+      for (let i = 0; i < itens.length; i++) {
+        const estoqueId = criarEstoqueAPartirDeEntrada(itens[i], tipo);
+        vincularItemEntradaAoEstoque(itensIds[i], estoqueId);
+      }
+    }
+
+    res.json({ id, itens: itens.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/fiscal/nfe-entrada", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { limite, offset, mes } = req.query;
+    res.json(listarNotasEntrada({ limite, offset, mes }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get("/api/fiscal/nfe-entrada/:id", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const nota = buscarNotaEntrada(req.params.id);
+    if (!nota) return res.status(404).json({ error: "Nota não encontrada" });
+    res.json(nota);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete("/api/fiscal/nfe-entrada/:id", authMiddleware, adminOnly, (req, res) => {
+  try {
+    excluirNotaEntrada(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put("/api/fiscal/nfe-entrada/item/:itemId/vincular", authMiddleware, adminOnly, (req, res) => {
+  try {
+    const { estoque_item_id } = req.body;
+    if (!estoque_item_id) return res.status(400).json({ error: "estoque_item_id é obrigatório" });
+    vincularItemEntradaAoEstoque(req.params.itemId, estoque_item_id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // PUT autenticado — admin salva configuração
@@ -2333,7 +2923,9 @@ app.post('/api/comandas', authMiddleware, (req, res) => {
   try {
     const { mesa_id, cliente_nome, pessoas } = req.body;
     if (!mesa_id) return res.status(400).json({ error: "mesa_id é obrigatório" });
-    res.status(201).json(abrirComanda({ mesa_id, cliente_nome, pessoas }));
+    const c = abrirComanda({ mesa_id, cliente_nome, pessoas });
+    notificarMudanca("comanda", { comanda_id: c.id, acao: "aberta" });
+    res.status(201).json(c);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
@@ -2353,18 +2945,27 @@ app.get('/api/comandas/mesa/:mesa_id', authMiddleware, (req, res) => {
 });
 
 app.post('/api/comandas/:id/fechar', authMiddleware, (req, res) => {
-  try { res.json(fecharComanda(req.params.id)); }
-  catch (err) { res.status(400).json({ error: err.message }); }
+  try {
+    const c = fecharComanda(req.params.id);
+    notificarMudanca("comanda", { comanda_id: req.params.id, acao: "fechada" });
+    res.json(c);
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.post('/api/comandas/:id/cancelar', authMiddleware, (req, res) => {
-  try { res.json(cancelarComanda(req.params.id)); }
-  catch (err) { res.status(400).json({ error: err.message }); }
+  try {
+    const c = cancelarComanda(req.params.id);
+    notificarMudanca("comanda", { comanda_id: req.params.id, acao: "cancelada" });
+    res.json(c);
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.post('/api/mesas/:id/pedir-conta', authMiddleware, (req, res) => {
-  try { res.json(pedirConta(req.params.id)); }
-  catch (err) { res.status(400).json({ error: err.message }); }
+  try {
+    const m = pedirConta(req.params.id);
+    notificarMudanca("mesa", { mesa_id: req.params.id, acao: "pediu-conta" });
+    res.json(m);
+  } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 // ─── FRENTE DE CAIXA: ITENS DA COMANDA ──────────────────────────────────────
@@ -2378,20 +2979,25 @@ app.post('/api/comandas/:id/itens', authMiddleware, (req, res) => {
   try {
     const { produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem } = req.body;
     if (!produto_nome || preco_unitario == null) return res.status(400).json({ error: "produto_nome e preco_unitario obrigatórios" });
-    res.status(201).json(adicionarItemComanda({ comanda_id: req.params.id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem }));
+    const it = adicionarItemComanda({ comanda_id: req.params.id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem });
+    notificarMudanca("comanda", { comanda_id: req.params.id, acao: "item-adicionado" });
+    res.status(201).json(it);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.put('/api/comanda-itens/:id/status', authMiddleware, (req, res) => {
   try {
     const { status } = req.body;
-    res.json(atualizarStatusItemComanda(req.params.id, status));
+    const it = atualizarStatusItemComanda(req.params.id, status);
+    notificarMudanca("comanda", { item_id: req.params.id, acao: "item-status", status });
+    res.json(it);
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
 app.delete('/api/comanda-itens/:id', authMiddleware, (req, res) => {
   try {
     if (!removerItemComanda(req.params.id)) return res.status(404).json({ error: "Item não encontrado" });
+    notificarMudanca("comanda", { item_id: req.params.id, acao: "item-removido" });
     res.json({ ok: true });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -2418,11 +3024,13 @@ app.post('/api/cozinha/atualizar-status', authMiddleware, (req, res) => {
       const filtro = status === "preparando" ? ["pendente"] : ["pendente", "preparando"];
       const itens = listarItensComanda(comandaId).filter(i => filtro.includes(i.status));
       for (const item of itens) atualizarStatusItemComanda(item.id, status);
+      notificarMudanca("comanda", { comanda_id: comandaId, acao: "cozinha-status", status });
       res.json({ ok: true, tipo: "mesa", marcados: itens.length, status });
     } else if (grupo_id.startsWith("pedido_")) {
       const pedidoId = grupo_id.replace("pedido_", "");
       const pedido = atualizarStatusPedido(pedidoId, status);
       if (!pedido) return res.status(404).json({ error: "Pedido não encontrado" });
+      notificarMudanca("pedido", { pedido_id: pedidoId, acao: "status", status });
       res.json({ ok: true, tipo: "delivery", pedido_id: pedidoId, status });
     } else {
       res.status(400).json({ error: "grupo_id inválido" });
@@ -2491,6 +3099,9 @@ app.post('/api/mesa/:numero/pedido', (req, res) => {
     }
 
     const comandaAtualizada = buscarComanda(comanda.id);
+    // Notifica os PDVs conectados via SSE — pedido do QR aparece
+    // imediatamente no FrenteCaixa, sem esperar tick de polling.
+    notificarMudanca("comanda", { comanda_id: comanda.id, mesa: numero });
     res.status(201).json({ comanda: comandaAtualizada, itens: itensAdicionados });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -2522,6 +3133,184 @@ if (fs.existsSync(distIndex)) {
 let syncPedidosCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
 let syncComandasCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
 let syncPedidosTimer = null;
+// Estado visível pro cliente diagnosticar o QR das mesas. Atualizado a cada tick.
+// Se comandas do QR não descem, o cliente pode olhar aqui e ver o que aconteceu:
+// "0 comandas puxadas nos últimos 5s" vs. "erro 401 Unauthorized" vs. "sem conexão".
+const syncStatus = {
+  ativo: false,
+  url: "",
+  ultimo_tick_at: null,
+  ultimo_erro: null,
+  contagem: { comandas_puxadas: 0, comandas_enviadas: 0, pedidos_puxados: 0, pedidos_enviados: 0 },
+  totais_sessao: { comandas_puxadas: 0, comandas_enviadas: 0 },
+};
+
+async function executarTickSyncPedidos() {
+  const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
+  const token = obterConfig("sync_token") || "";
+  if (!url || !token) {
+    syncStatus.ativo = false;
+    syncStatus.ultimo_erro = "URL ou token de sincronização não configurados";
+    return { ok: false, erro: syncStatus.ultimo_erro };
+  }
+  syncStatus.ativo = true;
+  syncStatus.url = url;
+
+  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+  const cnt = { comandas_puxadas: 0, comandas_enviadas: 0, pedidos_puxados: 0, pedidos_enviados: 0 };
+  let erroFinal = null;
+
+  try {
+    // PULL pedidos
+    const pullR = await fetch(`${url}/api/sync/pull?desde=${encodeURIComponent(syncPedidosCursor.pull)}`, { headers, signal: AbortSignal.timeout(8000) });
+    if (pullR.ok) {
+      const { pedidos = [], cursor } = await pullR.json();
+      for (const p of pedidos) upsertPedidoSync(p);
+      cnt.pedidos_puxados = pedidos.length;
+      if (cursor && cursor > syncPedidosCursor.pull) syncPedidosCursor.pull = cursor;
+    } else if (pullR.status === 401 || pullR.status === 403) {
+      erroFinal = `Token de sincronização inválido (HTTP ${pullR.status})`;
+    }
+
+    // PUSH pedidos
+    const locais = pedidosAlteradosDesde(syncPedidosCursor.push);
+    if (locais.length > 0) {
+      const pushR = await fetch(`${url}/api/sync/push`, { method: "POST", headers, body: JSON.stringify({ pedidos: locais }), signal: AbortSignal.timeout(8000) });
+      if (pushR.ok) {
+        cnt.pedidos_enviados = locais.length;
+        const novo = locais.reduce((m, p) => { const t = p.updated_at || p.created_at || ""; return t > m ? t : m; }, syncPedidosCursor.push);
+        if (novo > syncPedidosCursor.push) syncPedidosCursor.push = novo;
+      }
+    }
+
+    // PULL comandas (QR/AtenderMesas do online)
+    const pullCR = await fetch(`${url}/api/sync/pull-comandas?desde=${encodeURIComponent(syncComandasCursor.pull)}`, { headers, signal: AbortSignal.timeout(8000) });
+    if (pullCR.ok) {
+      const { comandas = [], cursor } = await pullCR.json();
+      for (const c of comandas) upsertComandaSync(c);
+      cnt.comandas_puxadas = comandas.length;
+      if (cursor && cursor > syncComandasCursor.pull) syncComandasCursor.pull = cursor;
+    } else if ((pullCR.status === 401 || pullCR.status === 403) && !erroFinal) {
+      erroFinal = `Token de sincronização inválido (HTTP ${pullCR.status})`;
+    }
+
+    // PUSH comandas
+    const locaisC = comandasAlteradasDesde(syncComandasCursor.push);
+    if (locaisC.length > 0) {
+      const pushCR = await fetch(`${url}/api/sync/push-comandas`, { method: "POST", headers, body: JSON.stringify({ comandas: locaisC }), signal: AbortSignal.timeout(8000) });
+      if (pushCR.ok) {
+        cnt.comandas_enviadas = locaisC.length;
+        const novo = locaisC.reduce((m, c) => { const t = c.updated_at || c.opened_at || ""; return t > m ? t : m; }, syncComandasCursor.push);
+        if (novo > syncComandasCursor.push) syncComandasCursor.push = novo;
+      }
+    }
+  } catch (err) {
+    erroFinal = err?.name === "TimeoutError" ? "Sem conexão com o servidor online (timeout)"
+              : err?.name === "AbortError" ? "Sem conexão com o servidor online (timeout)"
+              : "Erro de rede: " + (err?.message || "desconhecido");
+  }
+
+  syncStatus.ultimo_tick_at = new Date().toISOString();
+  syncStatus.ultimo_erro = erroFinal;
+  syncStatus.contagem = cnt;
+  syncStatus.totais_sessao.comandas_puxadas += cnt.comandas_puxadas;
+  syncStatus.totais_sessao.comandas_enviadas += cnt.comandas_enviadas;
+  // Se o tick trouxe algo novo, notifica o front local (SSE) pra re-render
+  // imediato. Isso é o "segundo hop" da propagação: VPS → PDV local → front.
+  if (cnt.comandas_puxadas > 0) notificarMudanca("comanda", { origem: "sync", n: cnt.comandas_puxadas });
+  if (cnt.pedidos_puxados > 0) notificarMudanca("pedido", { origem: "sync", n: cnt.pedidos_puxados });
+  return { ok: !erroFinal, erro: erroFinal, contagem: cnt };
+}
+
+// ─── SSE cliente do backend online (real-time push VPS → PDV local) ─────────
+// Conecta em /api/sync/events do VPS via HTTP request chunked (implementação
+// nativa, sem dependência EventSource). Quando o VPS anuncia mudança, dispara
+// tick imediato — comanda cai no PDV em <1s. Se conexão morre (rede, restart),
+// reconecta com backoff exponencial. Heartbeat de 15s do server + timeout de
+// 45s no cliente detectam link morto rápido. O polling continua rodando em
+// paralelo como fallback (não redundante — cobre janela de reconexão).
+let sseAbort = null;
+let sseReconnectTimer = null;
+let sseReconnectDelay = 3000;
+let sseBackoffMax = 30000;
+
+function pararSSE() {
+  if (sseAbort) { try { sseAbort.abort(); } catch {} sseAbort = null; }
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+}
+
+async function conectarSSEVPS() {
+  const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
+  const token = obterConfig("sync_token") || "";
+  const enabledCfg = obterConfig("sync_enabled");
+  const ligado = url && token && (enabledCfg === null || enabledCfg === undefined || enabledCfg === "" || enabledCfg === "1");
+  if (!ligado) return;
+
+  pararSSE();
+  const abort = new AbortController();
+  sseAbort = abort;
+
+  try {
+    const eventsUrl = `${url}/api/sync/events?token=${encodeURIComponent(token)}`;
+    const r = await fetch(eventsUrl, {
+      headers: { "Accept": "text/event-stream", "Cache-Control": "no-cache" },
+      signal: abort.signal,
+    });
+    if (!r.ok || !r.body) {
+      const motivo = r.status === 401 ? "token inválido" : `HTTP ${r.status}`;
+      console.log(`[sync-sse] falha inicial (${motivo}) — reconecta em ${Math.round(sseReconnectDelay/1000)}s`);
+      agendarReconexaoSSE();
+      return;
+    }
+
+    // Conexão OK, reset backoff
+    sseReconnectDelay = 3000;
+    console.log(`[sync-sse] conectado → ${eventsUrl.replace(/token=[^&]+/, "token=***")}`);
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let ultimoDado = Date.now();
+
+    // Watchdog: se ficar 45s sem NENHUM byte (nem ping do server), força reconnect
+    const watchdog = setInterval(() => {
+      if (Date.now() - ultimoDado > 45000) {
+        console.log(`[sync-sse] sem dados há 45s — reconectando`);
+        clearInterval(watchdog);
+        try { abort.abort(); } catch {}
+      }
+    }, 5000);
+
+    while (!abort.signal.aborted) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      ultimoDado = Date.now();
+      buf += decoder.decode(value, { stream: true });
+      const eventos = buf.split("\n\n");
+      buf = eventos.pop() || "";
+      for (const evtRaw of eventos) {
+        if (!evtRaw.trim() || evtRaw.startsWith(":")) continue; // heartbeat/coment
+        // Qualquer evento (comanda|pedido|mesa) → dispara tick pra reconciliar
+        // com o cursor. Assim garantimos coerência mesmo se algum evento perder.
+        executarTickSyncPedidos().catch(() => {});
+      }
+    }
+    clearInterval(watchdog);
+  } catch (err) {
+    if (!abort.signal.aborted) {
+      console.log(`[sync-sse] desconectado (${err.message}) — reconecta em ${Math.round(sseReconnectDelay/1000)}s`);
+    }
+  }
+  if (!abort.signal.aborted) agendarReconexaoSSE();
+}
+
+function agendarReconexaoSSE() {
+  if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectDelay = Math.min(sseReconnectDelay * 1.5, sseBackoffMax);
+    conectarSSEVPS();
+  }, sseReconnectDelay);
+}
 
 function iniciarSyncPedidos() {
   if (syncPedidosTimer) clearInterval(syncPedidosTimer);
@@ -2529,69 +3318,26 @@ function iniciarSyncPedidos() {
 
   const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
   const token = obterConfig("sync_token") || "";
-  const enabled = obterConfig("sync_enabled") === "1";
-  if (!url || !token || !enabled) return;
-
-  const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
-
-  async function tick() {
-    try {
-      // PULL — baixa pedidos novos/alterados do remoto
-      const pullUrl = `${url}/api/sync/pull?desde=${encodeURIComponent(syncPedidosCursor.pull)}`;
-      const pullR = await fetch(pullUrl, { headers, signal: AbortSignal.timeout(8000) });
-      if (pullR.ok) {
-        const { pedidos = [], cursor } = await pullR.json();
-        for (const p of pedidos) upsertPedidoSync(p);
-        if (cursor && cursor > syncPedidosCursor.pull) syncPedidosCursor.pull = cursor;
-      }
-
-      // PUSH — envia pedidos locais novos/alterados para o remoto
-      const locais = pedidosAlteradosDesde(syncPedidosCursor.push);
-      if (locais.length > 0) {
-        const pushR = await fetch(`${url}/api/sync/push`, {
-          method: "POST", headers, body: JSON.stringify({ pedidos: locais }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (pushR.ok) {
-          const novo = locais.reduce((m, p) => {
-            const t = p.updated_at || p.created_at || "";
-            return t > m ? t : m;
-          }, syncPedidosCursor.push);
-          if (novo > syncPedidosCursor.push) syncPedidosCursor.push = novo;
-        }
-      }
-
-      // ─── COMANDAS DE MESA (QR das mesas) ─────────────────────────────────
-      // PULL — baixa comandas + itens novos/alterados do remoto
-      const pullCUrl = `${url}/api/sync/pull-comandas?desde=${encodeURIComponent(syncComandasCursor.pull)}`;
-      const pullCR = await fetch(pullCUrl, { headers, signal: AbortSignal.timeout(8000) });
-      if (pullCR.ok) {
-        const { comandas = [], cursor } = await pullCR.json();
-        for (const c of comandas) upsertComandaSync(c);
-        if (cursor && cursor > syncComandasCursor.pull) syncComandasCursor.pull = cursor;
-      }
-
-      // PUSH — envia comandas locais novas/alteradas para o remoto
-      const locaisC = comandasAlteradasDesde(syncComandasCursor.push);
-      if (locaisC.length > 0) {
-        const pushCR = await fetch(`${url}/api/sync/push-comandas`, {
-          method: "POST", headers, body: JSON.stringify({ comandas: locaisC }),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (pushCR.ok) {
-          const novo = locaisC.reduce((m, c) => {
-            const t = c.updated_at || c.opened_at || "";
-            return t > m ? t : m;
-          }, syncComandasCursor.push);
-          if (novo > syncComandasCursor.push) syncComandasCursor.push = novo;
-        }
-      }
-    } catch { /* offline — tenta de novo no próximo tick */ }
+  // Auto-ativa quando URL+token estão preenchidos. O toggle "enabled" ainda
+  // permite desligar explicitamente (default: ativo se configurado).
+  const enabledCfg = obterConfig("sync_enabled");
+  const ligado = url && token && (enabledCfg === null || enabledCfg === undefined || enabledCfg === "" || enabledCfg === "1");
+  if (!ligado) {
+    syncStatus.ativo = false;
+    pararSSE();
+    return;
   }
 
-  syncPedidosTimer = setInterval(tick, 5000);
-  tick();
-  console.log(`[sync-pedidos] iniciado → ${url}`);
+  // Polling agora é FALLBACK (SSE cobre real-time). 15s cobre janela de
+  // reconexão do SSE — se algum evento perder, chega no próximo tick.
+  syncPedidosTimer = setInterval(executarTickSyncPedidos, 15000);
+  executarTickSyncPedidos();
+
+  // Real-time via SSE — reconecta sozinho se cair.
+  sseReconnectDelay = 3000;
+  conectarSSEVPS();
+
+  console.log(`[sync-pedidos] iniciado → ${url} (polling 15s + SSE push)`);
 }
 
 // ─── MOTOR DE AUTO-SYNC DO CATÁLOGO ─────────────────────────────────────────
@@ -2659,6 +3405,40 @@ app.post("/api/sync/reiniciar", authMiddleware, adminOnly, (_req, res) => {
   iniciarSyncPedidos();
   iniciarSyncCatalogo();
   res.json({ ok: true });
+});
+
+// Status detalhado do sync — pra a UI mostrar pro cliente o que está acontecendo
+// com a sincronização das comandas do QR (quando não descem, o operador olha aqui).
+app.get("/api/sync/status", authMiddleware, (_req, res) => {
+  const url = (obterConfig("sync_url") || "").replace(/\/+$/, "");
+  const token = obterConfig("sync_token") || "";
+  const enabledCfg = obterConfig("sync_enabled");
+  const ligado = !!(url && token && (enabledCfg === null || enabledCfg === undefined || enabledCfg === "" || enabledCfg === "1"));
+  res.json({
+    configurado: !!(url && token),
+    ligado,
+    url_publica: url || null,
+    ...syncStatus,
+  });
+});
+
+// Trigger manual — o cliente aperta "Sincronizar agora" na UI e vê o resultado
+// imediato. Útil pra diagnosticar quando o QR não desceu ainda.
+app.post("/api/sync/agora", authMiddleware, async (_req, res) => {
+  const r = await executarTickSyncPedidos();
+  res.json(r);
+});
+
+// Reset dos cursores do sync — força puxar TUDO desde o começo. Usar quando
+// o cursor está "preso no futuro" (relógio errado no servidor local ou remoto)
+// ou pra recuperar comandas antigas que ficaram pra trás por causa de bug.
+app.post("/api/sync/reset-cursor", authMiddleware, adminOnly, async (_req, res) => {
+  syncPedidosCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
+  syncComandasCursor = { pull: "1970-01-01T00:00:00", push: "1970-01-01T00:00:00" };
+  console.log("[sync-pedidos] cursor resetado — próximo tick vai puxar tudo desde 1970");
+  // Já executa um tick pra popular imediatamente
+  const r = await executarTickSyncPedidos();
+  res.json({ ok: true, ...r });
 });
 
 // ─── START ──────────────────────────────────────────────────────────────────

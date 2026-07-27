@@ -84,17 +84,40 @@ function listarItens(pedido) {
 }
 
 // ─── Envio ───────────────────────────────────────────────────────────────────
+// No desktop, o servidor local não tem as credenciais da Evolution (elas só
+// existem no banco da nuvem do estabelecimento). Sem instância local
+// configurada, repassamos o envio pra nuvem via /api/bot/enviar (mesma rota
+// que o n8n já usa como proxy da Evolution) em vez de tentar falar direto
+// com a Evolution a partir da máquina do lojista — assim o app desktop nunca
+// precisa guardar a chave da Evolution. A URL da nuvem vem de `sync_url`
+// (config local, a mesma usada pela sincronização de pedidos/catálogo em
+// server/index.js — iniciarSyncPedidos) — é o dado que realmente existe no
+// banco do desktop, ao contrário do sync.json (mecanismo separado, não usado
+// na prática pelos clientes atuais). VPS_PROXY_URL (env var setada pelo
+// desktop/main.js a partir do sync.json) fica como fallback secundário.
+function baseProxyNuvem() {
+  const syncUrl = (obterConfig('sync_url') || '').trim();
+  if (syncUrl) return syncUrl.replace(/\/+$/, '');
+  if (process.env.VPS_PROXY_URL) return process.env.VPS_PROXY_URL.replace(/\/+$/, '');
+  return '';
+}
+
 export async function enviarMensagem(telefone, texto) {
   if (!telefone) return false;
-  try {
-    const numero = String(telefone).replace(/\D/g, '');
-    if (numero.length < 10) {
-      console.error(`[WhatsApp] Telefone inválido: ${telefone}`);
-      return false;
-    }
-    const numeroCompleto = numero.startsWith('55') ? numero : `55${numero}`;
+  const numero = String(telefone).replace(/\D/g, '');
+  if (numero.length < 10) {
+    console.error(`[WhatsApp] Telefone inválido: ${telefone}`);
+    return false;
+  }
+  const numeroCompleto = numero.startsWith('55') ? numero : `55${numero}`;
 
-    const evo = evolutionCfg();
+  const evo = evolutionCfg();
+  if (!evo.instance) {
+    const base = baseProxyNuvem();
+    if (base) return enviarViaProxyNuvem(numeroCompleto, texto, base);
+  }
+
+  try {
     const resp = await fetch(`${evo.url}/message/sendText/${evo.instance}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'apikey': evo.key },
@@ -111,6 +134,26 @@ export async function enviarMensagem(telefone, texto) {
     return true;
   } catch (err) {
     console.error('[WhatsApp] Falha ao conectar na Evolution API:', err.message);
+    return false;
+  }
+}
+
+async function enviarViaProxyNuvem(numeroCompleto, texto, base) {
+  try {
+    const resp = await fetch(`${base}/api/bot/enviar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number: numeroCompleto, text: texto }),
+    });
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error(`[WhatsApp] Erro ao enviar (via nuvem) para ${numeroCompleto}:`, err);
+      return false;
+    }
+    console.log(`[WhatsApp] Mensagem enviada (via nuvem) para ${numeroCompleto}`);
+    return true;
+  } catch (err) {
+    console.error('[WhatsApp] Falha ao repassar envio pra nuvem:', err.message);
     return false;
   }
 }
@@ -203,4 +246,77 @@ export async function notificarStatusPedido(pedido, status) {
   if (texto) {
     await enviarMensagem(pedido.cliente_telefone, texto);
   }
+}
+
+// ─── Venda por peso: notifica o cliente do ajuste de peso da peça ────────────
+// Duas modalidades: AVISO (dentro da tolerância — segue o pedido) e ESPERA
+// (fora da tolerância — o pedido está travado esperando resposta do cliente).
+const fmtKg = (kg) => Number(kg || 0).toLocaleString("pt-BR", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+export async function notificarPesoAjustado(pedido, ajuste) {
+  if (!pedido?.cliente_telefone) return;
+  const nome = primeiroNome(pedido.cliente_nome);
+  const codigo = pedidoCurto(pedido);
+  const produto = ajuste.item?.produto_nome || "seu produto";
+  const desejado = fmtKg(ajuste.peso_desejado_kg);
+  const real = fmtKg(ajuste.peso_real_kg);
+  const diferencaPct = Math.round((ajuste.diferenca_pct || 0) * 100);
+  const ehAjuste = !!ajuste.eh_ajuste; // já tinha sido pesado antes — isso é uma correção do lojista
+
+  if (ajuste.dentro_tolerancia) {
+    // Reajuste que destrava um pedido que estava preso esperando confirmação
+    // (o lojista corrigiu o peso e agora está dentro da tolerância de novo).
+    if (ehAjuste && ajuste.novo_status === "confirmado") {
+      const texto =
+        `⚖️ *${nome}*, atualização do pedido ${codigo}\n` +
+        `\n` +
+        `Reajustamos o peso da peça de *${produto}* — agora está em *${real} kg* (você pediu ${desejado} kg).\n` +
+        `\n` +
+        `💰 Novo total: *${fmtBRL(ajuste.total_novo)}* (era ${fmtBRL(ajuste.total_anterior)}).\n` +
+        `\n` +
+        `✅ Seu pedido está liberado e seguimos com o preparo — qualquer coisa, é só responder aqui.` +
+        linhaLink('\n');
+      await enviarMensagem(pedido.cliente_telefone, texto);
+      return;
+    }
+    // Aviso simples: peso corrigido, pedido já seguia normalmente e continua.
+    const texto = ehAjuste
+      ? `⚖️ *${nome}*, aviso do pedido ${codigo}\n` +
+        `\n` +
+        `O peso da peça de *${produto}* foi reajustado — o disponível agora é *${real} kg* (você pediu ${desejado} kg).\n` +
+        `\n` +
+        `💰 Novo total: *${fmtBRL(ajuste.total_novo)}* (era ${fmtBRL(ajuste.total_anterior)}).\n` +
+        `\n` +
+        `Seguimos com o preparo normalmente — qualquer coisa, é só responder aqui.` +
+        linhaLink('\n')
+      : `⚖️ *${nome}*, atualização do pedido ${codigo}\n` +
+        `\n` +
+        `A peça de *${produto}* ficou em *${real} kg* (você pediu ${desejado} kg).\n` +
+        `\n` +
+        `💰 Novo total: *${fmtBRL(ajuste.total_novo)}* (era ${fmtBRL(ajuste.total_anterior)}).\n` +
+        `\n` +
+        `Estamos seguindo com o preparo — qualquer coisa, é só responder aqui.` +
+        linhaLink('\n');
+    await enviarMensagem(pedido.cliente_telefone, texto);
+    return;
+  }
+
+  const texto = ehAjuste
+    ? `⚖️ *${nome}*, reajuste no pedido ${codigo}\n` +
+      `\n` +
+      `O peso da peça de *${produto}* foi reajustado — o disponível agora é *${real} kg* (você pediu ${desejado} kg — diferença de ${diferencaPct}%).\n` +
+      `\n` +
+      `💰 Novo total: *${fmtBRL(ajuste.total_novo)}* (era ${fmtBRL(ajuste.total_anterior)}).\n` +
+      `\n` +
+      `Podemos seguir com esse peso? Responda *sim* pra confirmar ou *não* pra cancelar. Seu pedido está *aguardando sua resposta* pra continuar.` +
+      linhaLink('\n')
+    : `⚖️ *${nome}*, precisamos da sua confirmação no pedido ${codigo}\n` +
+      `\n` +
+      `A peça de *${produto}* disponível ficou em *${real} kg* (você pediu ${desejado} kg — diferença de ${diferencaPct}%).\n` +
+      `\n` +
+      `💰 Novo total: *${fmtBRL(ajuste.total_novo)}* (era ${fmtBRL(ajuste.total_anterior)}).\n` +
+      `\n` +
+      `Podemos seguir com esse ajuste? Responda *sim* pra confirmar ou *não* pra cancelar. Seu pedido está *aguardando sua resposta* pra continuar.` +
+      linhaLink('\n');
+  await enviarMensagem(pedido.cliente_telefone, texto);
 }

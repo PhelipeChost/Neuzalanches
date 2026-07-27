@@ -6,7 +6,7 @@
 //   2) Lanchonete → módulos, modo mesas/balcão, nome, ações de sync/update
 //   3) Mercado    → status do stack próprio + acesso
 // Novos tipos de estabelecimento entram como novas seções aqui.
-import { useState, useEffect, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { api, API_URL } from "./api";
 import NexusLogo from "./NexusLogo";
 import { SEGMENTOS, RECURSOS_LABELS } from "./segmentos";
@@ -271,6 +271,8 @@ function SecaoOperador({ tipos, setTipos, showToast }) {
         ) : (
           <div style={{ fontSize: 12, color: "#a8a29e" }}>Nenhum backup ainda — o primeiro automático sai em até 24h, ou clique acima.</div>
         )}
+
+        <DriveBackupBox showToast={showToast} />
       </div>
 
       {/* Diagnóstico */}
@@ -285,6 +287,195 @@ function SecaoOperador({ tipos, setTipos, showToast }) {
         </div>
       </div>
     </>
+  );
+}
+
+// ─── Backup no Google Drive (Nexus) ─────────────────────────────────────────
+// Fica dentro do card de Backup. A credencial OAuth é da Nexus (global — via
+// env do build ou digitada aqui). A pasta é do cliente. O cliente não vê nada
+// disso; é ferramenta do Operador pra recuperar o estabelecimento se o PC do
+// cliente sumir/formatar.
+function DriveBackupBox({ showToast }) {
+  const [st, setSt] = useState(null);
+  const [pasta, setPasta] = useState("");
+  const [cred, setCred] = useState({ client_id: "", client_secret: "", refresh_token: "" });
+  const [mostrarCred, setMostrarCred] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [testando, setTestando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+
+  const [mostrarLista, setMostrarLista] = useState(false);
+  const [listaBackups, setListaBackups] = useState(null);
+  const [carregandoLista, setCarregandoLista] = useState(false);
+  const [restaurandoId, setRestaurandoId] = useState(null);
+  const [restaurado, setRestaurado] = useState(null); // { arquivo } quando pronto p/ reiniciar
+
+  const carregar = () => api.suporte.drive.obter().then(r => { setSt(r); setPasta(r.folder_id || ""); }).catch(() => setSt({ erro: true }));
+  useEffect(() => { carregar(); }, []);
+
+  const salvar = async (extra = {}) => {
+    setSalvando(true);
+    try {
+      await api.suporte.drive.salvar({ folder_id: pasta, ...cred, ...extra });
+      setCred({ client_id: "", client_secret: "", refresh_token: "" });
+      await carregar();
+      showToast("Configuração do Drive salva!");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setSalvando(false); }
+  };
+
+  const testar = async () => {
+    setTestando(true);
+    try { await api.suporte.drive.testar(); showToast("Conexão com o Drive OK ✅"); await carregar(); }
+    catch (e) { showToast("Falhou: " + e.message, "#dc2626"); }
+    finally { setTestando(false); }
+  };
+
+  const enviarAgora = async () => {
+    setEnviando(true);
+    try { const r = await api.suporte.drive.enviar(); showToast("Enviado ao Drive: " + r.arquivo); await carregar(); }
+    catch (e) { showToast("Falhou: " + e.message, "#dc2626"); }
+    finally { setEnviando(false); }
+  };
+
+  const abrirLista = async () => {
+    const abrindo = !mostrarLista;
+    setMostrarLista(abrindo);
+    if (abrindo) {
+      setCarregandoLista(true);
+      try { setListaBackups(await api.suporte.drive.backups()); }
+      catch (e) { showToast("Erro ao listar: " + e.message, "#dc2626"); setListaBackups([]); }
+      finally { setCarregandoLista(false); }
+    }
+  };
+
+  const restaurar = async (arq) => {
+    if (!confirm(
+      `Restaurar "${arq.name}"?\n\nISSO VAI SUBSTITUIR TODOS OS DADOS ATUAIS deste PDV (vendas, produtos, financeiro) pelos ` +
+      `deste backup, na próxima vez que o programa abrir. O banco atual é salvo antes de trocar, mas essa ação não é pra fazer sem certeza.\n\n` +
+      `Confirma a restauração?`
+    )) return;
+    setRestaurandoId(arq.id);
+    try {
+      const r = await api.suporte.drive.restaurar(arq.id, arq.name);
+      setRestaurado(r);
+      showToast("Restauração pronta — reinicie o PDV para aplicar", "#0369a1");
+    } catch (e) { showToast("Falhou: " + e.message, "#dc2626"); }
+    finally { setRestaurandoId(null); }
+  };
+
+  const reiniciarAgora = () => {
+    if (window.licenca?.reiniciar) window.licenca.reiniciar();
+    else showToast("Feche e abra o Nexus PDV manualmente pra aplicar", "#0369a1");
+  };
+
+  if (!st) return null;
+
+  const inp = { width: "100%", padding: "9px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12.5, fontFamily: "inherit", boxSizing: "border-box" };
+  const btnMini = { ...btnBase, padding: "8px 14px", fontSize: 12.5 };
+
+  return (
+    <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px dashed #e7e5e4" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: "#1c1917" }}>☁️ Cópia off-site no Google Drive (Nexus)</div>
+          <div style={{ fontSize: 12, color: "#78716c", marginTop: 2 }}>
+            Além do backup local, envia uma cópia pra pasta deste cliente no Drive da Nexus. Recupera o estabelecimento se o PC do cliente sumir ou for formatado.
+          </div>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", whiteSpace: "nowrap" }}>
+          <input type="checkbox" checked={!!st.enabled} onChange={e => salvar({ enabled: e.target.checked })} disabled={salvando} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: st.enabled ? "#15803d" : "#a8a29e" }}>{st.enabled ? "Ativado" : "Desativado"}</span>
+        </label>
+      </div>
+
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: "#78716c", letterSpacing: "0.05em" }}>PASTA DESTE CLIENTE NO DRIVE (link ou ID)</label>
+          <input value={pasta} onChange={e => setPasta(e.target.value)} placeholder="https://drive.google.com/drive/folders/…  ou  o ID da pasta"
+            style={{ ...inp, marginTop: 4 }} />
+        </div>
+
+        <div style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ color: "#78716c" }}>Credencial da Nexus:</span>
+          {st.cred_ok
+            ? <span style={{ color: "#15803d", fontWeight: 700 }}>✓ configurada{st.cred_via_env ? " (embutida no app)" : ""}</span>
+            : <span style={{ color: "#dc2626", fontWeight: 700 }}>✗ não configurada</span>}
+          {!st.cred_via_env && (
+            <button onClick={() => setMostrarCred(v => !v)} style={{ ...btnMini, background: "#f5f5f4", color: "#57534e", border: "1px solid #e7e5e4", padding: "5px 10px" }}>
+              {mostrarCred ? "Ocultar" : (st.cred_ok ? "Trocar credencial" : "Inserir credencial")}
+            </button>
+          )}
+        </div>
+
+        {mostrarCred && !st.cred_via_env && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "#fafaf9", border: "1px solid #f0efed", borderRadius: 8, padding: 12 }}>
+            <div style={{ fontSize: 11, color: "#a8a29e", marginBottom: 2 }}>
+              OAuth da conta Google da Nexus (escopo <code>drive.file</code>). Global — vale pra todos os PDVs. Some após salvar; nunca é reexibida.
+            </div>
+            <input value={cred.client_id} onChange={e => setCred(c => ({ ...c, client_id: e.target.value }))} placeholder="client_id" style={inp} />
+            <input value={cred.client_secret} onChange={e => setCred(c => ({ ...c, client_secret: e.target.value }))} placeholder="client_secret" type="password" style={inp} />
+            <input value={cred.refresh_token} onChange={e => setCred(c => ({ ...c, refresh_token: e.target.value }))} placeholder="refresh_token" type="password" style={inp} />
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 }}>
+          <button onClick={() => salvar()} disabled={salvando} style={{ ...btnMini, background: "#15803d", color: "#fff", opacity: salvando ? 0.6 : 1 }}>
+            {salvando ? "Salvando…" : "Salvar"}
+          </button>
+          <button onClick={testar} disabled={testando} style={{ ...btnMini, background: "#fff", color: "#57534e", border: "1px solid #e7e5e4", opacity: testando ? 0.6 : 1 }}>
+            {testando ? "Testando…" : "🔌 Testar conexão"}
+          </button>
+          <button onClick={enviarAgora} disabled={enviando} style={{ ...btnMini, background: "#0369a1", color: "#fff", opacity: enviando ? 0.6 : 1 }}>
+            {enviando ? "Enviando…" : "☁️ Enviar backup agora"}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 11.5, color: "#78716c" }}>
+          {st.ultimo_envio && <>Último envio: {new Date(st.ultimo_envio).toLocaleString("pt-BR")}. </>}
+          {st.ultimo_erro && <span style={{ color: "#dc2626" }}>Último erro: {st.ultimo_erro}</span>}
+          {!st.ultimo_envio && !st.ultimo_erro && "Nenhum envio ao Drive ainda."}
+        </div>
+
+        {restaurado ? (
+          <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8, padding: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 12.5, color: "#1e40af" }}>
+              ✅ <b>{restaurado.arquivo}</b> pronto pra aplicar. Reinicie o PDV pra concluir a restauração.
+            </div>
+            <button onClick={reiniciarAgora} style={{ ...btnMini, background: "#1d4ed8", color: "#fff" }}>🔄 Reiniciar agora</button>
+          </div>
+        ) : (
+          <button onClick={abrirLista} style={{ ...btnMini, background: "#fff", color: "#57534e", border: "1px solid #e7e5e4", alignSelf: "flex-start" }}>
+            {mostrarLista ? "Ocultar backups do Drive" : "📂 Ver backups disponíveis (restaurar)"}
+          </button>
+        )}
+
+        {mostrarLista && !restaurado && (
+          carregandoLista ? (
+            <div style={{ fontSize: 12, color: "#a8a29e" }}>Carregando…</div>
+          ) : listaBackups && listaBackups.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {listaBackups.map(a => (
+                <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#fafaf9", borderRadius: 8, fontSize: 12 }}>
+                  <div>
+                    <div style={{ fontFamily: "monospace", color: "#1c1917" }}>{a.name}</div>
+                    <div style={{ color: "#a8a29e", fontSize: 11 }}>
+                      {a.createdTime ? new Date(a.createdTime).toLocaleString("pt-BR") : ""}{a.size ? ` · ${(a.size / 1e6).toFixed(1)} MB` : ""}
+                    </div>
+                  </div>
+                  <button onClick={() => restaurar(a)} disabled={restaurandoId === a.id}
+                    style={{ ...btnMini, background: "#dc2626", color: "#fff", opacity: restaurandoId === a.id ? 0.6 : 1, padding: "6px 12px", fontSize: 11.5 }}>
+                    {restaurandoId === a.id ? "Restaurando…" : "Restaurar"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: "#a8a29e" }}>Nenhum backup encontrado nessa pasta do Drive.</div>
+          )
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -684,6 +875,7 @@ function SecaoRelatorios({ showToast }) {
           { key: "impressao", icon: "🖨️", label: "Lista de Impressão" },
           { key: "pedidos", icon: "📋", label: "Lista de Pedidos" },
           { key: "nfce", icon: "🧾", label: "Notas Fiscais Emitidas" },
+          { key: "fiscal", icon: "📈", label: "Relatório Fiscal" },
         ].map(a => (
           <button key={a.key} onClick={() => setAba(a.key)}
             style={{
@@ -701,6 +893,7 @@ function SecaoRelatorios({ showToast }) {
       {aba === "impressao" && <ListaImpressao showToast={showToast} />}
       {aba === "pedidos" && <ListaPedidos showToast={showToast} />}
       {aba === "nfce" && <ListaNFCeEmitidas showToast={showToast} />}
+      {aba === "fiscal" && <RelatorioFiscal showToast={showToast} />}
     </>
   );
 }
@@ -968,6 +1161,84 @@ function PDado({ label, v, mono, destaque }) {
 }
 
 // ─── Lista unificada de NFC-e emitidas (motor Focus + motor antigo SEFAZ) ────
+const NOMES_MES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const anoMesAtual = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; };
+const rotuloMes = (anoMes) => { const [a, m] = anoMes.split("-").map(Number); return `${NOMES_MES[m - 1]} ${a}`; };
+const deslocarMes = (anoMes, delta) => {
+  const [a, m] = anoMes.split("-").map(Number);
+  const d = new Date(a, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
+
+// Card de download dos documentos fiscais do mês (XMLs + resumo.csv + apuração),
+// com navegação ◀ ▶ entre meses. Fica no topo da aba "Notas Fiscais Emitidas".
+function DocumentosDoMes({ showToast }) {
+  const [mes, setMes] = useState(anoMesAtual());
+  const [meta, setMeta] = useState(null);
+  const [baixando, setBaixando] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    setMeta(null);
+    api.fiscal.documentosMesMeta(mes).then(m => { if (vivo) setMeta(m); }).catch(() => { if (vivo) setMeta({ quantidade: 0, total: 0 }); });
+    return () => { vivo = false; };
+  }, [mes]);
+
+  const baixar = async () => {
+    setBaixando(true);
+    try {
+      await api.fiscal.baixarDocumentosMes(mes);
+      showToast("Download iniciado 📥");
+    } catch (e) { showToast("Erro: " + e.message, "#dc2626"); }
+    finally { setBaixando(false); }
+  };
+
+  const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const temNota = (meta?.quantidade || 0) > 0 || (meta?.entrada_quantidade || 0) > 0;
+  const ehMesAtual = mes === anoMesAtual();
+  const navBtn = { border: "1px solid #e7e5e4", background: "#fff", borderRadius: 8, width: 34, height: 34, cursor: "pointer", fontSize: 15, color: "#57534e", display: "flex", alignItems: "center", justifyContent: "center" };
+
+  return (
+    <div style={{ ...cardStyle, background: "#fffdfa", border: "1.5px solid #fde9d3" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={tituloCard}>📥 Documentos fiscais do mês</div>
+          <div style={{ ...subCard, marginBottom: 0 }}>
+            Baixa um <b>.zip</b> com os XMLs de todas as notas autorizadas do mês + <code style={{ fontSize: 11 }}>resumo.csv</code> pra enviar à contabilidade.
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setMes(deslocarMes(mes, -1))} style={navBtn} title="Mês anterior">◀</button>
+          <div style={{ minWidth: 130, textAlign: "center", fontSize: 13.5, fontWeight: 700, color: "#1c1917" }}>{rotuloMes(mes)}</div>
+          <button onClick={() => setMes(deslocarMes(mes, 1))} disabled={ehMesAtual}
+            style={{ ...navBtn, opacity: ehMesAtual ? 0.4 : 1, cursor: ehMesAtual ? "default" : "pointer" }} title="Próximo mês">▶</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 20, flex: 1, minWidth: 220, flexWrap: "wrap", fontSize: 12.5, color: "#57534e" }}>
+          <div><span style={{ color: "#a8a29e" }}>Saída (NFC-e)</span><br /><b style={{ fontSize: 16, color: "#15803d" }}>{meta === null ? "…" : meta.quantidade}</b> <span style={{ fontSize: 11 }}>notas</span> · <b style={{ fontSize: 14, color: "#15803d" }}>{meta === null ? "…" : fmtBRL(meta.total)}</b></div>
+          {meta && (meta.entrada_quantidade || 0) > 0 && (
+            <div><span style={{ color: "#a8a29e" }}>Entrada (NF-e)</span><br /><b style={{ fontSize: 16, color: "#d97706" }}>{meta.entrada_quantidade}</b> <span style={{ fontSize: 11 }}>notas</span> · <b style={{ fontSize: 14, color: "#d97706" }}>{fmtBRL(meta.entrada_total)}</b></div>
+          )}
+        </div>
+        <button onClick={baixar} disabled={!temNota || baixando}
+          style={{ ...btnBase, background: temNota ? "#ea580c" : "#e7e5e4", color: temNota ? "#fff" : "#a8a29e", cursor: temNota && !baixando ? "pointer" : "default", opacity: baixando ? 0.6 : 1, padding: "11px 20px" }}>
+          {baixando ? "Gerando .zip…" : "📥 Baixar documentos do mês"}
+        </button>
+      </div>
+      {meta !== null && !temNota && (
+        <div style={{ fontSize: 12, color: "#a8a29e", marginTop: 10 }}>Nenhuma nota autorizada em {rotuloMes(mes)}. Use ◀ ▶ para navegar entre os meses.</div>
+      )}
+      {meta !== null && temNota && meta.com_xml < meta.quantidade && (
+        <div style={{ fontSize: 11.5, color: "#b45309", marginTop: 10 }}>
+          ⓘ {meta.quantidade - meta.com_xml} nota(s) sem XML local (emitidas pelo provedor Focus NFe) entram no resumo, mas o XML fica com o provedor.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Aparece dentro de Relatórios como sub-aba "Notas Fiscais Emitidas". Toda
 // nota emitida (tanto pelo provedor terceirizado quanto pelo motor direto)
 // é registrada aqui, com chave de acesso, status, valor e link de consulta
@@ -1020,6 +1291,8 @@ function ListaNFCeEmitidas({ showToast }) {
 
   return (
     <>
+      <DocumentosDoMes showToast={showToast} />
+
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <input placeholder="Buscar por chave, nº ou pedido…" value={busca} onChange={e => setBusca(e.target.value)}
           className="sup-inp" style={{ maxWidth: 320 }} />
@@ -1092,6 +1365,197 @@ function ListaNFCeEmitidas({ showToast }) {
 
       <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
         Fonte: <code>nfce_emitidas</code> (motores <code>novo</code> = Focus NFe, <code>antigo</code> = SEFAZ direto). Registros imutáveis — não podem ser editados/removidos pelo cliente.
+      </div>
+    </>
+  );
+}
+
+// ═══ RELATÓRIO FISCAL CONSOLIDADO (Suporte — visão completa) ═════════════════
+
+function RelatorioFiscal({ showToast }) {
+  const [mes, setMes] = useState(anoMesAtual());
+  const [nivel, setNivel] = useState("resumo");
+  const [tipo, setTipo] = useState("todos");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const carregar = useCallback(() => {
+    setLoading(true);
+    api.fiscal.relatorio({ mes, nivel, tipo })
+      .then(setData)
+      .catch(e => showToast("Erro: " + e.message, "#dc2626"))
+      .finally(() => setLoading(false));
+  }, [mes, nivel, tipo]);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const fmtBRL = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const fmtPct = (v) => (v || 0).toFixed(1) + "%";
+  const fmtN = (v) => (parseFloat(v) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const ehMesAtual = mes === anoMesAtual();
+  const navBtn = { border: "1px solid #e7e5e4", background: "#fff", borderRadius: 8, width: 34, height: 34, cursor: "pointer", fontSize: 15, color: "#57534e", display: "flex", alignItems: "center", justifyContent: "center" };
+
+  return (
+    <>
+      {/* Filtros */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setMes(deslocarMes(mes, -1))} style={navBtn}>◀</button>
+          <div style={{ minWidth: 130, textAlign: "center", fontSize: 13.5, fontWeight: 700, color: "#1c1917" }}>{rotuloMes(mes)}</div>
+          <button onClick={() => setMes(deslocarMes(mes, 1))} disabled={ehMesAtual}
+            style={{ ...navBtn, opacity: ehMesAtual ? 0.4 : 1, cursor: ehMesAtual ? "default" : "pointer" }}>▶</button>
+        </div>
+        <select value={nivel} onChange={e => setNivel(e.target.value)}
+          style={{ padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12.5, background: "#fff", cursor: "pointer" }}>
+          <option value="resumo">Resumo mensal</option>
+          <option value="produto">Detalhado por produto</option>
+          <option value="completo">Completo (com margem)</option>
+        </select>
+        <select value={tipo} onChange={e => setTipo(e.target.value)}
+          style={{ padding: "10px 14px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 12.5, background: "#fff", cursor: "pointer" }}>
+          <option value="todos">Entrada + Saída</option>
+          <option value="saida">Só Saída (NFC-e)</option>
+          <option value="entrada">Só Entrada (NF-e)</option>
+        </select>
+        <button onClick={carregar}
+          style={{ ...btnBase, background: "#f5f5f4", color: "#57534e", border: "1px solid #e7e5e4", padding: "8px 14px" }}>
+          🔄 Atualizar
+        </button>
+      </div>
+
+      {loading && <div style={{ fontSize: 13, color: "#a8a29e", padding: 20 }}>Carregando relatório…</div>}
+
+      {!loading && data && (
+        <>
+          {/* KPIs */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            {(tipo === "todos" || tipo === "saida") && (
+              <>
+                <div style={{ ...cardStyle, flex: "1 1 180px" }}>
+                  <div style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>SAÍDA (NFC-e)</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#15803d" }}>{fmtBRL(data.saida.total)}</div>
+                  <div style={{ fontSize: 12, color: "#a8a29e" }}>{data.saida.quantidade} nota{data.saida.quantidade !== 1 ? "s" : ""} autorizadas</div>
+                </div>
+              </>
+            )}
+            {(tipo === "todos" || tipo === "entrada") && (
+              <div style={{ ...cardStyle, flex: "1 1 180px" }}>
+                <div style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>ENTRADA (NF-e)</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: "#d97706" }}>{fmtBRL(data.entrada.total)}</div>
+                <div style={{ fontSize: 12, color: "#a8a29e" }}>{data.entrada.quantidade} nota{data.entrada.quantidade !== 1 ? "s" : ""} de fornecedores</div>
+              </div>
+            )}
+            {tipo === "todos" && (
+              <div style={{ ...cardStyle, flex: "1 1 180px" }}>
+                <div style={{ fontSize: 11, color: "#78716c", fontWeight: 700, letterSpacing: "0.06em", marginBottom: 4 }}>SALDO (saída − entrada)</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: data.saldo >= 0 ? "#1c1917" : "#dc2626" }}>{fmtBRL(data.saldo)}</div>
+                <div style={{ fontSize: 12, color: "#a8a29e" }}>Diferença fiscal do mês</div>
+              </div>
+            )}
+          </div>
+
+          {/* Detalhamento por produto — SAÍDA */}
+          {(nivel === "produto" || nivel === "completo") && data.saida.produtos && data.saida.produtos.length > 0 && (
+            <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "14px 18px", background: "#f9fafb", borderBottom: "1px solid #e7e5e4" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1c1917" }}>Vendas por Produto (NFC-e saída)</div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#fafaf9", borderBottom: "1.5px solid #e7e5e4" }}>
+                      <th style={{ padding: "8px 14px", textAlign: "left", fontWeight: 700, color: "#57534e", fontSize: 11 }}>PRODUTO</th>
+                      <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>QTD</th>
+                      <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>FATURAMENTO</th>
+                      {nivel === "completo" && <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>CUSTO</th>}
+                      {nivel === "completo" && <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>MARGEM</th>}
+                      {nivel === "completo" && <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>%</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.saida.produtos.map((p, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #f5f5f4" }}>
+                        <td style={{ padding: "8px 14px", fontWeight: 500 }}>{p.nome}</td>
+                        <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmtN(p.quantidade)}</td>
+                        <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 600, color: "#15803d" }}>{fmtBRL(p.faturamento)}</td>
+                        {nivel === "completo" && <td style={{ padding: "8px 14px", textAlign: "right", color: "#d97706" }}>{fmtBRL(p.custo)}</td>}
+                        {nivel === "completo" && <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: p.margem >= 0 ? "#1c1917" : "#dc2626" }}>{fmtBRL(p.margem)}</td>}
+                        {nivel === "completo" && <td style={{ padding: "8px 14px", textAlign: "right", fontSize: 11, color: p.margem_pct >= 30 ? "#15803d" : p.margem_pct >= 15 ? "#d97706" : "#dc2626" }}>{fmtPct(p.margem_pct)}</td>}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#f9fafb", borderTop: "1.5px solid #e7e5e4", fontWeight: 700 }}>
+                      <td style={{ padding: "8px 14px" }}>TOTAL</td>
+                      <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmtN(data.saida.produtos.reduce((s, p) => s + p.quantidade, 0))}</td>
+                      <td style={{ padding: "8px 14px", textAlign: "right", color: "#15803d" }}>{fmtBRL(data.saida.total)}</td>
+                      {nivel === "completo" && <td style={{ padding: "8px 14px", textAlign: "right", color: "#d97706" }}>{fmtBRL(data.saida.produtos.reduce((s, p) => s + p.custo, 0))}</td>}
+                      {nivel === "completo" && <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmtBRL(data.saida.total - data.saida.produtos.reduce((s, p) => s + p.custo, 0))}</td>}
+                      {nivel === "completo" && <td style={{ padding: "8px 14px", textAlign: "right" }}>{fmtPct(data.saida.total > 0 ? ((data.saida.total - data.saida.produtos.reduce((s, p) => s + p.custo, 0)) / data.saida.total * 100) : 0)}</td>}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Detalhamento — ENTRADA */}
+          {(nivel === "produto" || nivel === "completo") && data.entrada.itens && data.entrada.itens.length > 0 && (
+            <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "14px 18px", background: "#fffbeb", borderBottom: "1px solid #fde68a" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#92400e" }}>Compras por Fornecedor (NF-e entrada)</div>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#fafaf9", borderBottom: "1.5px solid #e7e5e4" }}>
+                      <th style={{ padding: "8px 14px", textAlign: "left", fontWeight: 700, color: "#57534e", fontSize: 11 }}>NF-e</th>
+                      <th style={{ padding: "8px 14px", textAlign: "left", fontWeight: 700, color: "#57534e", fontSize: 11 }}>FORNECEDOR</th>
+                      <th style={{ padding: "8px 14px", textAlign: "left", fontWeight: 700, color: "#57534e", fontSize: 11 }}>DATA</th>
+                      <th style={{ padding: "8px 14px", textAlign: "center", fontWeight: 700, color: "#57534e", fontSize: 11 }}>ORIGEM</th>
+                      <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>VALOR</th>
+                      <th style={{ padding: "8px 14px", textAlign: "right", fontWeight: 700, color: "#57534e", fontSize: 11 }}>ITENS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.entrada.itens.map((ne, i) => (
+                      <tr key={i} style={{ borderBottom: "1px solid #f5f5f4" }}>
+                        <td style={{ padding: "8px 14px", fontWeight: 500 }}>{ne.numero_nf || "—"}</td>
+                        <td style={{ padding: "8px 14px" }}>{ne.fornecedor}</td>
+                        <td style={{ padding: "8px 14px" }}>{ne.data}</td>
+                        <td style={{ padding: "8px 14px", textAlign: "center" }}>
+                          <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: ne.origem === "xml" ? "#eff6ff" : "#fffbeb", color: ne.origem === "xml" ? "#2563eb" : "#d97706" }}>
+                            {ne.origem === "xml" ? "XML" : "Manual"}
+                          </span>
+                        </td>
+                        <td style={{ padding: "8px 14px", textAlign: "right", fontWeight: 600, color: "#d97706" }}>{fmtBRL(ne.valor_nota)}</td>
+                        <td style={{ padding: "8px 14px", textAlign: "right" }}>{ne.produtos.length}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#fffbeb", borderTop: "1.5px solid #fde68a", fontWeight: 700 }}>
+                      <td colSpan={4} style={{ padding: "8px 14px" }}>TOTAL</td>
+                      <td style={{ padding: "8px 14px", textAlign: "right", color: "#d97706" }}>{fmtBRL(data.entrada.total)}</td>
+                      <td style={{ padding: "8px 14px", textAlign: "right" }}>{data.entrada.itens.reduce((s, ne) => s + ne.produtos.length, 0)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Vazio */}
+          {data.saida.quantidade === 0 && data.entrada.quantidade === 0 && (
+            <div style={{ ...cardStyle, textAlign: "center", padding: 40, color: "#a8a29e" }}>
+              Nenhum documento fiscal em {rotuloMes(mes)}.
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 4 }}>
+        Saída = NFC-e autorizadas (vendas). Entrada = NF-e de fornecedores registradas no estoque. A apuração de tributos é responsabilidade da contabilidade.
       </div>
     </>
   );

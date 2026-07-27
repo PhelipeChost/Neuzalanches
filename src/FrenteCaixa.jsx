@@ -4,6 +4,9 @@ import QRCode from "qrcode";
 import { agenteStatus, imprimirBytesViaAgente, gerarQRMesaBytes, gerarCupomNFCeBytes, gerarCupomNaoFiscalBytes } from "./cozinhaImpressoraUSB";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
 import { cardapioDoProduto, precoExibicao, produtoPorPeso, fmtQuantidade, fmtPrecoUnitario } from "./segmentos";
+import { filtrarAdicionaisPorCategoria } from "./adicionais-filter";
+import { conectarEventosSync } from "./events-sync";
+import { lerTemaUI, alternarTemaUI, NEXUS_DARK as ND } from "./ui-tema";
 
 const escHtml = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -55,7 +58,9 @@ const tempoDesde = (iso) => {
 };
 
 export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesas" }) {
-  const [tema, setTema] = useState(() => localStorage.getItem("caixa-tema") || "light");
+  // Tema segue o global (Configurações → Aparência). O botão da topbar troca o
+  // tema geral da plataforma, não só o do caixa.
+  const [tema, setTema] = useState(() => lerTemaUI());
   const [mesas, setMesas] = useState([]);
   const [mesaSel, setMesaSel] = useState(null);
   const [comanda, setComanda] = useState(null);
@@ -120,6 +125,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
 
   // Montagem por segmento (pizza meio a meio, açaí…): { produto, cardapio, destino }
   const [modalMontagem, setModalMontagem] = useState(null);
+  // Modal de adicionais: { produto, destino, adicionaisDisponiveis }
+  const [modalAdicionais, setModalAdicionais] = useState(null);
+  const [adicionaisSel, setAdicionaisSel] = useState([]);
   // Prompt de peso para produtos por kg (peixaria etc): { produto, destino }
   const [modalPeso, setModalPeso] = useState(null);
   const [pesoInput, setPesoInput] = useState("");
@@ -160,6 +168,52 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const [novaMesaNumero, setNovaMesaNumero] = useState("");
   const [novaMesaLugares, setNovaMesaLugares] = useState(4);
 
+  // Status do sync de comandas do QR — indicador visual + botão "sincronizar agora"
+  const [syncQR, setSyncQR] = useState({ configurado: false, ligado: false, ultimo_erro: null, ultimo_tick_at: null });
+  const [syncPuxando, setSyncPuxando] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    const carregar = () => api.sync.status().then(s => { if (mounted) setSyncQR(s); }).catch(() => {});
+    carregar();
+    const iv = setInterval(carregar, 15000);
+    return () => { mounted = false; clearInterval(iv); };
+  }, []);
+  const forcarSyncAgora = async () => {
+    setSyncPuxando(true);
+    try {
+      const r = await api.sync.agora();
+      if (r.ok) {
+        const puxados = (r.contagem?.comandas_puxadas || 0) + (r.contagem?.pedidos_puxados || 0);
+        if (puxados > 0) {
+          showToast(`✓ Sincronizado — ${puxados} novo(s)`);
+        } else {
+          // Zero puxados pode ser: (a) tudo em dia, ou (b) cursor preso.
+          // Oferece reset ao operador — se cliente diz "fiz pedido no QR mas
+          // não desceu", provavelmente é o cursor.
+          const oferecerReset = confirm(
+            "Sincronização feita — nada de novo desceu do servidor online.\n\n" +
+            "Se você fez pedidos pelo QR das mesas que ainda não aparecem aqui, " +
+            "o cursor de sincronização pode estar travado.\n\n" +
+            "Quer resetar o cursor e puxar TUDO do zero?"
+          );
+          if (oferecerReset) {
+            const rr = await api.sync.resetCursor();
+            const puxadosR = (rr.contagem?.comandas_puxadas || 0) + (rr.contagem?.pedidos_puxados || 0);
+            showToast(rr.ok ? `✓ Cursor resetado — ${puxadosR} pedido(s)/comanda(s) puxada(s)` : "Falha ao resetar: " + (rr.erro || ""), rr.ok ? undefined : "var(--danger)");
+          }
+        }
+      } else {
+        showToast("Falha: " + (r.erro || "erro desconhecido"), "var(--danger)");
+      }
+      const s = await api.sync.status(); setSyncQR(s);
+      await carregarTudo();
+    } catch (e) {
+      showToast("Erro: " + e.message, "var(--danger)");
+    } finally {
+      setSyncPuxando(false);
+    }
+  };
+
   // Clock
   useEffect(() => {
     const tick = () => setClock(new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }));
@@ -168,10 +222,13 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     return () => clearInterval(iv);
   }, []);
 
-  // Tema
+  // Tema: sincroniza ao vivo com o tema global (troca em Configurações reflete
+  // aqui na hora, e vice-versa).
   useEffect(() => {
-    localStorage.setItem("caixa-tema", tema);
-  }, [tema]);
+    const onTema = (e) => setTema(e.detail === "dark" ? "dark" : "light");
+    window.addEventListener("ui-tema-change", onTema);
+    return () => window.removeEventListener("ui-tema-change", onTema);
+  }, []);
 
   // Carregar dados
   const carregarTudo = useCallback(async () => {
@@ -184,7 +241,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         api.adicionais.listar(),
         api.cardapios.listar(),
       ];
-      if (modoPerfil === "mesas") promessas.push(api.mesas.listar());
+      // No modo mesas também carrega pedidos — agora mostra "Balcão em andamento"
+      // ao lado do mapa das mesas (mesmo fluxo de acompanhamento do modo balcão).
+      if (modoPerfil === "mesas") { promessas.push(api.mesas.listar()); promessas.push(api.pedidos.listar()); }
       if (modoPerfil === "balcao") promessas.push(api.pedidos.listar());
       const r = await Promise.all(promessas);
       setFila(r[0]);
@@ -193,7 +252,11 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
       setCategorias(r[3] || []);
       setAdicionais((r[4] || []).filter(a => a.disponivel));
       setCardapios(r[5] || []);
-      if (modoPerfil === "mesas") setMesas(r[6]);
+      if (modoPerfil === "mesas") {
+        setMesas(r[6]);
+        const hoje = new Date().toISOString().slice(0, 10);
+        setBalcaoPedidos((r[7] || []).filter(p => p.created_at && p.created_at.slice(0, 10) === hoje && p.tipo_entrega === "balcao"));
+      }
       if (modoPerfil === "balcao") {
         const hoje = new Date().toISOString().slice(0, 10);
         setBalcaoPedidos((r[6] || []).filter(p => p.created_at && p.created_at.slice(0, 10) === hoje));
@@ -235,8 +298,22 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
 
   // Polling a cada 10s
   useEffect(() => {
-    const iv = setInterval(() => { carregarTudo(); carregarSessao(); }, 10000);
-    return () => clearInterval(iv);
+    // Real-time via SSE: server empurra "algo mudou" e a UI recarrega na hora
+    // (latência <1s). Polling continua ativo em 20s como FALLBACK — cobre
+    // janela de reconexão se o SSE cair. Debounce evita repique de eventos
+    // (10 itens adicionados em rajada = 1 carregarTudo, não 10).
+    let debounce = null;
+    const carregarDebounced = () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => { carregarTudo(); carregarSessao(); }, 150);
+    };
+    const desconectarSSE = conectarEventosSync({
+      comanda: carregarDebounced,
+      pedido: carregarDebounced,
+      mesa: carregarDebounced,
+    });
+    const iv = setInterval(() => { carregarTudo(); carregarSessao(); }, 20000);
+    return () => { clearInterval(iv); clearTimeout(debounce); desconectarSSE(); };
   }, [carregarTudo, carregarSessao]);
 
   // Gerar QR codes quando o modal abre
@@ -390,8 +467,14 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
   const adicionaisParaProduto = (prod) => {
     const cat = categorias.find(c => c.nome === prod.categoria);
     if (!cat || !cat.permite_adicionais) return [];
-    const especificos = adicionais.filter(a => !a.categoria_id || a.categoria_id === cat.id);
-    return especificos.length > 0 ? especificos : adicionais;
+    // filtrarAdicionaisPorCategoria respeita categorias_ids (novo) e categoria_id (legacy).
+    const especificos = filtrarAdicionaisPorCategoria(adicionais, cat.id);
+    // Fallback só se TODOS os adicionais são legacy sem match — pra não deixar
+    // categorias novas vazias enquanto o cliente não migrou tudo. Quando algum
+    // tem categorias_ids explícito, respeita a escolha (não faz fallback).
+    const algumTemMulti = adicionais.some(a => Array.isArray(a.categorias_ids));
+    if (especificos.length > 0 || algumTemMulti) return especificos;
+    return adicionais;
   };
   const itemAdTotal = (it) => (it.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0);
 
@@ -401,6 +484,12 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
     const card = cardapioDe(prod);
     if (precisaMontagem(prod, card)) {
       setModalMontagem({ produto: prod, cardapio: card, destino: "comanda" });
+      return;
+    }
+    const ads = adicionaisParaProduto(prod);
+    if (ads.length > 0) {
+      setModalAdicionais({ produto: prod, destino: "comanda", adicionaisDisponiveis: ads });
+      setAdicionaisSel([]);
       return;
     }
     try {
@@ -463,7 +552,9 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
           adicionais: it.adicionais || [],
         })),
         tipo: "presencial",
-        tipo_entrega: "retirada",
+        // "balcao" ≠ "retirada": balcão = venda presencial no caixa (cliente na loja);
+        // retirada = pedido online pra buscar depois. Na cozinha vira label "Balcão".
+        tipo_entrega: "balcao",
         metodo_pagamento: "",
         desconto: balcaoDescontoValor,
         emitir_nfce: balcaoEmitirNfce,
@@ -528,11 +619,15 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
       setModalMontagem({ produto: prod, cardapio: card, destino: "balcao" });
       return;
     }
-    // Produto vendido por peso (peixaria etc.): pede o peso em kg antes.
-    // Cada peça é única (peso varia), então NÃO agrupa com item existente.
     if (produtoPorPeso(prod)) {
       setModalPeso({ produto: prod, destino: "balcao" });
       setPesoInput("");
+      return;
+    }
+    const ads = adicionaisParaProduto(prod);
+    if (ads.length > 0) {
+      setModalAdicionais({ produto: prod, destino: "balcao", adicionaisDisponiveis: ads });
+      setAdicionaisSel([]);
       return;
     }
     setBalcaoItens(prev => {
@@ -618,6 +713,53 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         setItemObs("");
         setItemQtd(1);
         showToast(`${item.produto_nome} adicionado!`);
+      } catch (err) { showToast(err.message, "var(--danger)"); }
+    }
+  };
+
+  const confirmarAdicionais = async (selecionados) => {
+    if (!modalAdicionais) return;
+    const { produto, destino } = modalAdicionais;
+    setModalAdicionais(null);
+    if (destino === "balcao") {
+      const temAd = selecionados.length > 0;
+      setBalcaoItens(prev => {
+        if (!temAd) {
+          const existing = prev.find(it => it.produto_id === produto.id && !it._uid);
+          if (existing) return prev.map(it => (it.produto_id === produto.id && !it._uid) ? { ...it, qtd: it.qtd + 1 } : it);
+          return [...prev, { produto_id: produto.id, nome: produto.nome, preco: produto.preco, qtd: 1 }];
+        }
+        return [...prev, {
+          _uid: `ad_${Date.now()}`,
+          produto_id: produto.id,
+          nome: produto.nome,
+          preco: produto.preco,
+          qtd: 1,
+          adicionais: selecionados,
+        }];
+      });
+      showToast(`${produto.nome} adicionado!`);
+    } else if (destino === "comanda" && comanda) {
+      try {
+        await api.comandas.itens.adicionar(comanda.id, {
+          produto_id: produto.id,
+          produto_nome: `${itemQtd}× ${produto.nome}`,
+          quantidade: itemQtd,
+          preco_unitario: produto.preco,
+          adicionais: selecionados,
+          obs: itemObs,
+          origem: "caixa",
+        });
+        const it = await api.comandas.itens.listar(comanda.id);
+        setItens(it);
+        const c = await api.comandas.buscar(comanda.id);
+        setComanda(c);
+        await carregarTudo();
+        setModalItem(false);
+        setBusca("");
+        setItemObs("");
+        setItemQtd(1);
+        showToast(`${produto.nome} adicionado!`);
       } catch (err) { showToast(err.message, "var(--danger)"); }
     }
   };
@@ -811,33 +953,34 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
       background: "var(--bg)",
       color: "var(--text)",
       minHeight: "100vh",
-      "--gold": isDark ? "#FBBF24" : "#F59E0B",
-      "--gold-deep": isDark ? "#F59E0B" : "#D97706",
-      "--gold-soft": isDark ? "#422006" : "#FEF3C7",
-      "--gold-glow": isDark ? "#FCD34D" : "#FBBF24",
-      "--brown": isDark ? "#FED7AA" : "#78350F",
-      "--brown-soft": isDark ? "#FCD34D" : "#92400E",
-      "--cream": isDark ? "#2A1F12" : "#FFF7E6",
-      "--cream-soft": isDark ? "#1F1810" : "#FFFBEB",
-      "--bg": isDark ? "#0F0B07" : "#FAFAF9",
-      "--bg-subtle": isDark ? "#1A130C" : "#F5F5F4",
-      "--surface": isDark ? "#1A130C" : "#FFFFFF",
-      "--surface-2": isDark ? "#221A11" : "#FAFAF9",
-      "--border": isDark ? "#2D2317" : "#E7E5E4",
-      "--border-strong": isDark ? "#3D2F1F" : "#D6D3D1",
-      "--text": isDark ? "#F5F5F4" : "#1C1917",
-      "--text-muted": isDark ? "#A8A29E" : "#78716C",
-      "--text-soft": isDark ? "#78716C" : "#A8A29E",
-      "--success": isDark ? "#4ADE80" : "#15803D",
-      "--success-bg": isDark ? "#052E16" : "#F0FDF4",
+      // Accent da marca Nexus: champagne/ouro (interação) + esmeralda (sucesso).
+      "--gold": isDark ? "#d4b25f" : "#c9a84c",
+      "--gold-deep": isDark ? "#c9a84c" : "#a8842c",
+      "--gold-soft": isDark ? "rgba(201,168,76,0.14)" : "#f7f0dc",
+      "--gold-glow": isDark ? "#e2c574" : "#d4b25f",
+      "--brown": isDark ? "#e6c98a" : "#78350F",
+      "--brown-soft": isDark ? "#d4b25f" : "#92400E",
+      "--cream": isDark ? ND.surface2 : "#FFF7E6",
+      "--cream-soft": isDark ? ND.surface : "#FFFBEB",
+      "--bg": isDark ? ND.bg : "#FAFAF9",
+      "--bg-subtle": isDark ? ND.bgSubtle : "#F5F5F4",
+      "--surface": isDark ? ND.surface : "#FFFFFF",
+      "--surface-2": isDark ? ND.surface2 : "#FAFAF9",
+      "--border": isDark ? ND.border : "#E7E5E4",
+      "--border-strong": isDark ? ND.borderStrong : "#D6D3D1",
+      "--text": isDark ? ND.text : "#1C1917",
+      "--text-muted": isDark ? ND.textMuted : "#78716C",
+      "--text-soft": isDark ? ND.textSoft : "#A8A29E",
+      "--success": isDark ? ND.brand : "#15803D",
+      "--success-bg": isDark ? "rgba(62,207,142,0.12)" : "#F0FDF4",
       "--warning": isDark ? "#FBBF24" : "#D97706",
-      "--warning-bg": isDark ? "#422006" : "#FEF3C7",
+      "--warning-bg": isDark ? "rgba(251,191,36,0.12)" : "#FEF3C7",
       "--danger": isDark ? "#F87171" : "#DC2626",
-      "--danger-bg": isDark ? "#450A0A" : "#FEF2F2",
+      "--danger-bg": isDark ? "rgba(248,113,113,0.12)" : "#FEF2F2",
       "--info": isDark ? "#60A5FA" : "#2563EB",
-      "--info-bg": isDark ? "#172554" : "#EFF6FF",
-      "--header-bg": isDark ? "#1A130C" : "#FFFFFF",
-      "--tab-bg": isDark ? "#221A11" : "#F5F5F4",
+      "--info-bg": isDark ? "rgba(96,165,250,0.12)" : "#EFF6FF",
+      "--header-bg": isDark ? ND.surface : "#FFFFFF",
+      "--tab-bg": isDark ? ND.surface2 : "#F5F5F4",
     }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
@@ -854,8 +997,8 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         .fc-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; position: relative; overflow: hidden; }
         .fc-stat-icon { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; }
         .fc-map-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
-        .fc-salon-bg { background: linear-gradient(135deg, ${isDark ? "#1F1610" : "#FFFBEB"} 0%, ${isDark ? "#2A1E12" : "#FEF3C7"} 100%); padding: 28px 24px; position: relative; }
-        .fc-salon-bg::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(circle at 1px 1px, ${isDark ? "rgba(251,191,36,0.06)" : "rgba(217,119,6,0.05)"} 1px, transparent 0); background-size: 22px 22px; pointer-events: none; }
+        .fc-salon-bg { background: linear-gradient(135deg, ${isDark ? "#0e1119" : "#FFFBEB"} 0%, ${isDark ? "#141824" : "#FEF3C7"} 100%); padding: 28px 24px; position: relative; }
+        .fc-salon-bg::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(circle at 1px 1px, ${isDark ? "rgba(62,207,142,0.06)" : "rgba(217,119,6,0.05)"} 1px, transparent 0); background-size: 22px 22px; pointer-events: none; }
         .fc-mesas-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; position: relative; z-index: 1; }
         .fc-mesa { aspect-ratio: 1/1; background: var(--surface); border-radius: 16px; padding: 14px; cursor: pointer; border: 2px solid transparent; box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04); transition: transform 0.18s cubic-bezier(0.4,0,0.2,1), box-shadow 0.18s, border-color 0.18s; display: flex; flex-direction: column; position: relative; overflow: hidden; }
         .fc-mesa:hover { transform: translateY(-3px); box-shadow: 0 4px 8px rgba(0,0,0,0.06), 0 12px 28px rgba(217,119,6,0.15); border-color: var(--gold); }
@@ -938,7 +1081,7 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
         )}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontVariantNumeric: "tabular-nums", fontSize: 13, color: "var(--text-muted)", fontWeight: 500 }}>{clock}</span>
-          <button className="fc-theme-toggle" onClick={() => setTema(t => t === "dark" ? "light" : "dark")} title="Alternar tema">
+          <button className="fc-theme-toggle" onClick={() => setTema(alternarTemaUI())} title="Alternar tema (claro/escuro) — vale pra plataforma toda">
             {isDark ? "☀️" : "🌙"}
           </button>
           <div style={{ width: 1, height: 22, background: "var(--border)" }} />
@@ -1011,6 +1154,51 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
             ))}
           </div>
 
+          {/* BALCÃO EM ANDAMENTO — mesmo fluxo do modo balcão, agora visível junto
+              com o mapa das mesas. Antes o operador precisava trocar de perfil pra
+              acompanhar pedidos criados via F8; agora eles ficam bem aqui. */}
+          {(() => {
+            const ativos = (balcaoPedidos || []).filter(p => !["entregue", "cancelado"].includes(p.status));
+            if (ativos.length === 0) return null;
+            return (
+              <div className="fc-map-card" style={{ marginBottom: 20 }}>
+                <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, letterSpacing: -0.2, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>💵</span> Balcão em andamento
+                  </div>
+                  <span className="fc-pill">{ativos.length}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, padding: 16 }}>
+                  {ativos.map(ped => {
+                    const statusCor = { pendente: "var(--info)", confirmado: "var(--info)", preparando: "var(--warning)", pronto: "var(--success)" }[ped.status] || "var(--text-muted)";
+                    const statusLabel = { pendente: "Pendente", confirmado: "Confirmado", preparando: "Preparando", pronto: "Pronto" }[ped.status] || ped.status;
+                    const statusBg = statusCor === "var(--info)" ? "var(--info-bg)" : statusCor === "var(--warning)" ? "var(--warning-bg)" : "var(--success-bg)";
+                    return (
+                      <div key={ped.id} onClick={() => handleCobrarPedido(ped)}
+                        title="Clique pra cobrar / finalizar"
+                        style={{
+                          background: "var(--surface)", border: "2px solid var(--border)",
+                          borderRadius: 14, padding: "14px 16px", cursor: "pointer", transition: "border-color 0.15s, transform 0.1s",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--gold)"; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 14, fontWeight: 700 }}>#{ped.id.slice(0, 6)}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", padding: "2px 8px", borderRadius: 6, letterSpacing: 0.5, background: statusBg, color: statusCor }}>{statusLabel}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{ped.cliente_nome || "Balcão"}</div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 16, fontWeight: 700 }}>{fmtBRL(ped.total)}</span>
+                          <span style={{ fontSize: 10, color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>{fmtHora(ped.created_at)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* MAPA DE MESAS */}
           <div className="fc-map-card">
             <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
@@ -1031,7 +1219,25 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               ].map(f => (
                 <button key={f.key} className={`fc-chip ${filtro === f.key ? "active" : ""}`} onClick={() => setFiltro(f.key)}>{f.label}</button>
               ))}
-              <div style={{ marginLeft: "auto" }}>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                {syncQR.configurado && (
+                  <button className="fc-chip" onClick={forcarSyncAgora} disabled={syncPuxando}
+                    title={
+                      syncQR.ultimo_erro
+                        ? "Erro no último sync: " + syncQR.ultimo_erro
+                        : syncQR.ligado
+                          ? `Sincronização automática ativa (a cada 5s). Última: ${syncQR.ultimo_tick_at ? new Date(syncQR.ultimo_tick_at).toLocaleTimeString("pt-BR") : "—"}. Clique pra puxar agora.`
+                          : "Sincronização desligada — habilite em Configurações → Conexão."
+                    }
+                    style={{
+                      background: syncQR.ultimo_erro ? "#fee2e2" : syncQR.ligado ? "#f0fdf4" : "#fafaf9",
+                      color: syncQR.ultimo_erro ? "#dc2626" : syncQR.ligado ? "#15803d" : "#78716c",
+                      borderColor: syncQR.ultimo_erro ? "#fecaca" : syncQR.ligado ? "#bbf7d0" : undefined,
+                      opacity: syncPuxando ? 0.6 : 1,
+                    }}>
+                    {syncPuxando ? "⏳ Sincronizando…" : syncQR.ultimo_erro ? "⚠ QR: erro no sync" : "🔄 Sincronizar QR"}
+                  </button>
+                )}
                 <button className="fc-chip" onClick={() => setModalMesas(v => !v)} style={{ background: modalMesas ? "var(--gold)" : undefined, color: modalMesas ? "#fff" : undefined }}>⚙ Mesas</button>
               </div>
             </div>
@@ -1131,18 +1337,29 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               </div>
               <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8, maxHeight: 320, overflowY: "auto" }}>
                 {balcaoItens.map(it => (
-                  <div key={it._uid || it.produto_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "var(--surface-2)", borderRadius: 8, border: "1px solid var(--border)" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 }}>{it.nome}</div>
-                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                        {fmtQuantidade(it.qtd, it.por_peso)} × {fmtPrecoUnitario(it.preco, it.por_peso)}
+                  <div key={it._uid || it.produto_id} style={{ padding: "8px 10px", background: "var(--surface-2)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.3 }}>{it.nome}</div>
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                          {fmtQuantidade(it.qtd, it.por_peso)} × {fmtPrecoUnitario(it.preco, it.por_peso)}
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap" }}>{fmtBRL((it.preco + itemAdTotal(it)) * it.qtd)}</div>
+                        <button onClick={() => handleRemoveBalcaoItem(it._uid || it.produto_id)}
+                          style={{ width: 20, height: 20, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 }}>×</button>
                       </div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--gold-deep)", whiteSpace: "nowrap" }}>{fmtBRL((it.preco + itemAdTotal(it)) * it.qtd)}</div>
-                      <button onClick={() => handleRemoveBalcaoItem(it._uid || it.produto_id)}
-                        style={{ width: 20, height: 20, borderRadius: "50%", border: "none", background: "var(--danger-bg)", color: "var(--danger)", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1, flexShrink: 0 }}>×</button>
-                    </div>
+                    {(it.adicionais || []).length > 0 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+                        {it.adicionais.map(a => (
+                          <span key={a.id} style={{ fontSize: 10, background: "var(--success-bg, #f0fdf4)", color: "var(--success, #15803d)", padding: "2px 6px", borderRadius: 4, fontWeight: 600 }}>
+                            + {a.quantidade > 1 ? `${a.quantidade}× ` : ""}{a.nome}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1201,7 +1418,16 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                         {item.status === "preparando" && <span style={{ display: "inline-block", fontSize: 9, fontWeight: 700, textTransform: "uppercase", padding: "1px 7px", borderRadius: 4, letterSpacing: 0.5, marginLeft: 6, background: "var(--warning-bg)", color: "var(--warning)" }}>Preparando</span>}
                         {item.status === "pendente" && <span style={{ display: "inline-block", fontSize: 9, fontWeight: 700, textTransform: "uppercase", padding: "1px 7px", borderRadius: 4, letterSpacing: 0.5, marginLeft: 6, background: "var(--info-bg)", color: "var(--info)" }}>Pendente</span>}
                       </div>
-                      <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(item.quantidade * item.preco_unitario)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(item.quantidade * item.preco_unitario + (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0))}</div>
+                      {(item.adicionais || []).length > 0 && (
+                        <div style={{ gridColumn: "1/-1", display: "flex", flexWrap: "wrap", gap: 4, marginTop: 2 }}>
+                          {item.adicionais.map(a => (
+                            <span key={a.id} style={{ fontSize: 10, background: "var(--success-bg, #f0fdf4)", color: "var(--success, #15803d)", padding: "2px 6px", borderRadius: 4, fontWeight: 600 }}>
+                              + {(a.quantidade || 1) > 1 ? `${a.quantidade}× ` : ""}{a.nome}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {item.obs && (
                         <div style={{ gridColumn: "1/-1", fontSize: 11, color: "var(--brown-soft)", background: "var(--gold-soft)", padding: "4px 8px", borderRadius: 6, marginTop: 4, fontWeight: 500 }}>📝 {item.obs}</div>
                       )}
@@ -1550,7 +1776,16 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
                         {item.quantidade > 1 && <span style={{ color: "var(--gold-deep)", marginRight: 4 }}>{item.quantidade}×</span>}
                         {item.produto_nome}
                       </div>
-                      <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(item.quantidade * item.preco_unitario)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{fmtBRL(item.quantidade * item.preco_unitario + (item.adicionais || []).reduce((s, a) => s + a.preco * (a.quantidade || 1), 0))}</div>
+                      {(item.adicionais || []).length > 0 && (
+                        <div style={{ gridColumn: "1/-1", display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {item.adicionais.map(a => (
+                            <span key={a.id} style={{ fontSize: 10, background: "var(--success-bg, #f0fdf4)", color: "var(--success, #15803d)", padding: "2px 6px", borderRadius: 4, fontWeight: 600 }}>
+                              + {(a.quantidade || 1) > 1 ? `${a.quantidade}× ` : ""}{a.nome}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -1708,14 +1943,35 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
               <div>
                 <div style={{ fontSize: 18, fontWeight: 700 }}>📱 QR Codes das Mesas</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Imprima e cole nas mesas para pedidos pelo celular</div>
-                {qrBaseUrl && (
-                  <div style={{ fontSize: 11, marginTop: 6, color: qrBaseUrl.includes("://") && !qrBaseUrl.includes("localhost") && !qrBaseUrl.includes("127.0.0.1") ? "var(--success)" : "#d97706", fontWeight: 600 }}
-                    title={"Todos os QR Codes apontam para: " + qrBaseUrl + "/mesa/N"}>
-                    {qrBaseUrl.includes("localhost") || qrBaseUrl.includes("127.0.0.1")
-                      ? "⚠️ Sem cardápio online configurado — QR só funciona na rede local"
-                      : `🌐 Apontando para ${qrBaseUrl.replace(/^https?:\/\//, "")}`}
-                  </div>
-                )}
+                {qrBaseUrl && (() => {
+                  const local = qrBaseUrl.includes("localhost") || qrBaseUrl.includes("127.0.0.1");
+                  const urlExemplo = `${qrBaseUrl}/mesa/1`;
+                  return (
+                    <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: local ? "#fef3c7" : "#f0fdf4", border: `1.5px solid ${local ? "#fde68a" : "#bbf7d0"}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: local ? "#92400e" : "#166534", marginBottom: 4 }}>
+                        {local ? "⚠️ QR só funciona na rede LOCAL (sync não configurado)" : "🌐 Cada QR aponta para:"}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <code style={{ fontSize: 11, background: "#fff", padding: "3px 7px", borderRadius: 4, border: "1px solid var(--border)", fontFamily: "monospace", color: "#1c1917" }}>
+                          {qrBaseUrl}/mesa/<b>N</b>
+                        </code>
+                        <button onClick={() => { navigator.clipboard.writeText(urlExemplo).then(() => showToast("Link da Mesa 1 copiado")).catch(() => {}); }}
+                          style={{ padding: "3px 10px", fontSize: 10.5, fontWeight: 700, border: "1.5px solid var(--border)", borderRadius: 4, background: "#fff", cursor: "pointer", color: "#57534e", fontFamily: "inherit" }}>
+                          📋 Copiar Mesa 1
+                        </button>
+                        <button onClick={() => window.open(urlExemplo, "_blank", "noopener")}
+                          style={{ padding: "3px 10px", fontSize: 10.5, fontWeight: 700, border: "1.5px solid var(--border)", borderRadius: 4, background: "#fff", cursor: "pointer", color: "#57534e", fontFamily: "inherit" }}>
+                          👁 Abrir preview
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: local ? "#92400e" : "#166534", marginTop: 6, lineHeight: 1.4 }}>
+                        {local
+                          ? "Configure em Configurações → Conexão pra que celulares dos clientes consigam abrir os QR."
+                          : "Se essa URL mudou depois que você imprimiu os QRs, é preciso REIMPRIMIR — o QR antigo aponta pra URL antiga."}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div style={{ fontSize: 11, fontWeight: 600, marginTop: 6, color: agenteQROnline ? "var(--success)" : "var(--text-soft)" }}
                   title={agenteQROnline
                     ? "Agente de impressão conectado: a térmica sai direto, sem caixa de diálogo."
@@ -1984,6 +2240,73 @@ export default function FrenteCaixa({ onNavegar, nomeUsuario, modoPerfil = "mesa
           </div>
         </div>
       )}
+
+      {/* ─── MODAL: ADICIONAIS ─── */}
+      {modalAdicionais && (() => {
+        const { produto, adicionaisDisponiveis } = modalAdicionais;
+        const totalAd = adicionaisSel.reduce((s, a) => s + a.preco * a.quantidade, 0);
+        const cat = categorias.find(c => c.nome === produto.categoria);
+        const maxAd = cat?.max_adicionais || 0;
+        const totalQtd = adicionaisSel.reduce((s, a) => s + a.quantidade, 0);
+        const updateQtdAd = (ad, delta) => {
+          setAdicionaisSel(prev => {
+            const ex = prev.find(s => s.id === ad.id);
+            if (ex) {
+              const nq = ex.quantidade + delta;
+              if (nq <= 0) return prev.filter(s => s.id !== ad.id);
+              return prev.map(s => s.id === ad.id ? { ...s, quantidade: nq } : s);
+            }
+            if (delta > 0) {
+              if (maxAd > 0 && totalQtd >= maxAd) return prev;
+              return [...prev, { id: ad.id, nome: ad.nome, preco: ad.preco, quantidade: 1 }];
+            }
+            return prev;
+          });
+        };
+        return (
+          <div className="fc-modal-overlay" onClick={() => setModalAdicionais(null)}>
+            <div className="fc-modal" onClick={e => e.stopPropagation()} style={{ width: 420 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{produto.nome}</div>
+              <div style={{ fontSize: 13, color: "var(--gold-deep)", fontWeight: 600, marginBottom: 14 }}>{fmtBRL(produto.preco)}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", marginBottom: 8, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                Adicionais {maxAd > 0 ? `(max ${maxAd})` : ""}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 14, maxHeight: 300, overflowY: "auto" }}>
+                {adicionaisDisponiveis.map(ad => {
+                  const sel = adicionaisSel.find(s => s.id === ad.id);
+                  const qtd = sel ? sel.quantidade : 0;
+                  const limitado = maxAd > 0 && totalQtd >= maxAd && qtd === 0;
+                  return (
+                    <div key={ad.id} style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+                      background: qtd > 0 ? "var(--success-bg, #f0fdf4)" : "var(--surface-2)",
+                      border: `1px solid ${qtd > 0 ? "var(--success, #86efac)" : "var(--border)"}`,
+                      borderRadius: 8, fontSize: 12, opacity: limitado ? 0.5 : 1,
+                    }}>
+                      <span style={{ flex: 1, fontWeight: 500 }}>{ad.nome}</span>
+                      <span style={{ fontWeight: 600, color: "var(--success, #15803d)" }}>+ {fmtBRL(ad.preco)}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <button onClick={() => updateQtdAd(ad, -1)} disabled={qtd === 0}
+                          style={{ width: 24, height: 24, border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", cursor: qtd > 0 ? "pointer" : "default", fontSize: 13, lineHeight: 1, color: qtd > 0 ? "var(--text)" : "var(--text-soft)", fontFamily: "inherit" }}>-</button>
+                        <span style={{ fontSize: 13, fontWeight: 600, minWidth: 18, textAlign: "center" }}>{qtd}</span>
+                        <button onClick={() => updateQtdAd(ad, 1)} disabled={limitado}
+                          style={{ width: 24, height: 24, border: "1px solid var(--border)", borderRadius: 4, background: "var(--surface)", cursor: limitado ? "default" : "pointer", fontSize: 13, lineHeight: 1, fontFamily: "inherit" }}>+</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+                <span style={{ fontSize: 16, fontWeight: 700, color: "var(--gold-deep)" }}>{fmtBRL(produto.preco + totalAd)}</span>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="fc-btn fc-btn-secondary" onClick={() => setModalAdicionais(null)}>Cancelar</button>
+                  <button className="fc-btn fc-btn-primary" onClick={() => confirmarAdicionais(adicionaisSel)}>Adicionar</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ─── MODAL: PESO DA PEÇA (produtos vendidos por kg) ─── */}
       {modalPeso && (

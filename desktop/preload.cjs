@@ -39,6 +39,20 @@ contextBridge.exposeInMainWorld("atualizacao", {
 });
 
 // Correção do bug de foco pós-alert/confirm (Chromium no Windows)
+// + controles de fullscreen (esconde barra de tarefas do Windows)
 contextBridge.exposeInMainWorld("janela", {
   refocus: () => ipcRenderer.invoke("janela:refocus"),
+  fullScreen: () => ipcRenderer.invoke("janela:fullScreen"),
+  isFullScreen: () => ipcRenderer.invoke("janela:isFullScreen"),
+});
+
+// Estado do túnel de suporte (para o indicador visível na UI).
+// getEstado() = snapshot imediato; onEstado(cb) = escuta pushes; devolve unsubscribe.
+contextBridge.exposeInMainWorld("nexusSuporte", {
+  getEstado: () => ipcRenderer.invoke("suporte:estado"),
+  onEstado: (cb) => {
+    const handler = (_e, s) => cb(s);
+    ipcRenderer.on("suporte:estado", handler);
+    return () => ipcRenderer.removeListener("suporte:estado", handler);
+  },
 });

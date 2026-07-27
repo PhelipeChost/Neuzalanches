@@ -195,7 +195,7 @@ db.exec(`
     cliente_nome TEXT DEFAULT '',
     cliente_telefone TEXT DEFAULT '',
     cliente_email TEXT DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente', 'confirmado', 'preparando', 'pronto', 'entregue', 'cancelado')),
+    status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente', 'confirmado', 'preparando', 'pronto', 'aguardando_confirmacao', 'entregue', 'cancelado')),
     total REAL NOT NULL DEFAULT 0,
     obs TEXT DEFAULT '',
     tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
@@ -216,10 +216,12 @@ db.exec(`
     pedido_id TEXT NOT NULL,
     produto_id TEXT NOT NULL,
     produto_nome TEXT NOT NULL,
-    quantidade INTEGER NOT NULL DEFAULT 1,
+    quantidade REAL NOT NULL DEFAULT 1,
     preco_unitario REAL NOT NULL,
     custo_unitario REAL NOT NULL DEFAULT 0,
     adicionais TEXT DEFAULT '[]',
+    por_peso INTEGER NOT NULL DEFAULT 0,
+    peso_desejado_kg REAL DEFAULT NULL,
     FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE
   );
 
@@ -427,6 +429,13 @@ db.exec(`
   const colsAd = db.prepare("PRAGMA table_info(adicionais)").all().map(c => c.name);
   if (!colsAd.includes("max_quantidade")) db.exec("ALTER TABLE adicionais ADD COLUMN max_quantidade INTEGER DEFAULT 0");
   if (!colsAd.includes("categoria_id"))   db.exec("ALTER TABLE adicionais ADD COLUMN categoria_id TEXT DEFAULT NULL");
+  // Multi-categorias (JSON array de category ids). Substitui o categoria_id
+  // solo: o operador marca quais categorias de produto podem usar o adicional.
+  // Se NULL, cai no legacy `categoria_id` (que continua funcionando pra quem
+  // ainda tem o modelo antigo). Se preenchido e vazio (`"[]"`), NÃO aparece em
+  // nenhuma categoria — solução pro "bebida entrando no meio de comida" que
+  // acontecia quando o cliente deixava "todas as categorias" por engano.
+  if (!colsAd.includes("categorias_ids")) db.exec("ALTER TABLE adicionais ADD COLUMN categorias_ids TEXT DEFAULT NULL");
 }
 
 // ─── MIGRAÇÃO: cardapios ganha imagem (foto para tela de seleção) ────────────
@@ -528,6 +537,9 @@ if (!colsLanc.includes("custo_fixo_id")) {
 // Migração: custo (CMV embutido na venda) — feed mostra venda+custo+margem em 1 linha
 if (!colsLanc.includes("custo")) {
   db.exec("ALTER TABLE lancamentos ADD COLUMN custo REAL DEFAULT NULL");
+}
+if (!colsLanc.includes("pedido_id")) {
+  db.exec("ALTER TABLE lancamentos ADD COLUMN pedido_id TEXT DEFAULT NULL");
 }
 
 // Migração: motor "NFC-e antigo" (emissão direta na SEFAZ, regras vigentes pré-reforma)
@@ -695,6 +707,164 @@ for (const tabela of TABELAS_LIXEIRA) {
   }
 }
 
+// ─── MIGRAÇÃO: adicionar 'aguardando_confirmacao' ao CHECK de status ─────
+// Produtos por peso podem entrar em espera de confirmação do cliente quando
+// a peça pesada real diverge muito do peso pedido (>20%).
+{
+  const sqlCreate = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='pedidos'").get();
+  if (sqlCreate && sqlCreate.sql && !sqlCreate.sql.includes("'aguardando_confirmacao'")) {
+    // Idempotente: se uma tentativa anterior travou entre `CREATE TABLE pedidos_new AS`
+    // e `DROP TABLE pedidos`, dropa a tabela órfã antes de tentar de novo.
+    db.exec("DROP TABLE IF EXISTS pedidos_new");
+    db.exec(`
+      CREATE TABLE pedidos_new AS SELECT * FROM pedidos;
+      DROP TABLE pedidos;
+      CREATE TABLE pedidos (
+        id TEXT PRIMARY KEY,
+        cliente_id TEXT,
+        cliente_nome TEXT DEFAULT '',
+        cliente_telefone TEXT DEFAULT '',
+        cliente_email TEXT DEFAULT '',
+        total REAL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente','confirmado','preparando','pronto','aguardando_confirmacao','entregue','cancelado')),
+        obs TEXT DEFAULT '',
+        tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
+        metodo_pagamento TEXT DEFAULT '',
+        troco_para REAL DEFAULT NULL,
+        tipo_entrega TEXT DEFAULT 'entrega' CHECK(tipo_entrega IN ('entrega','retirada','casa')),
+        endereco_cep TEXT DEFAULT '',
+        endereco_rua TEXT DEFAULT '',
+        endereco_numero TEXT DEFAULT '',
+        endereco_bairro TEXT DEFAULT '',
+        endereco_referencia TEXT DEFAULT '',
+        deleted_at TEXT DEFAULT NULL,
+        desconto REAL DEFAULT 0,
+        emitir_nfce INTEGER DEFAULT 1,
+        cliente_cpf TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    const colsOrigemPeso = db.prepare("PRAGMA table_info(pedidos_new)").all().map(c => c.name);
+    let colsDestinoPeso = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
+    // Blindagem: qualquer coluna que exista na tabela antiga e NÃO esteja no
+    // schema hardcoded acima (esquecida aqui, ou adicionada por uma migração
+    // futura antes desta) é preservada via ALTER TABLE genérico — evita repetir
+    // o bug de perder 'desconto'/'emitir_nfce'/'cliente_cpf' se algo mais faltar.
+    const infoOrigemPeso = db.prepare("PRAGMA table_info(pedidos_new)").all();
+    for (const col of infoOrigemPeso) {
+      if (col.name === "id" || colsDestinoPeso.includes(col.name)) continue;
+      const tipo = col.type || "TEXT";
+      db.exec(`ALTER TABLE pedidos ADD COLUMN ${col.name} ${tipo}`);
+      console.log(`[migração] pedidos: coluna '${col.name}' preservada automaticamente (não estava no schema hardcoded)`);
+    }
+    colsDestinoPeso = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
+    const comunsPeso = colsDestinoPeso.filter(c => colsOrigemPeso.includes(c));
+    db.exec(`INSERT INTO pedidos (${comunsPeso.join(", ")}) SELECT ${comunsPeso.join(", ")} FROM pedidos_new;`);
+    if (colsOrigemPeso.includes("updated_at") && !colsDestinoPeso.includes("updated_at")) {
+      db.exec("ALTER TABLE pedidos ADD COLUMN updated_at TEXT");
+      db.exec("UPDATE pedidos SET updated_at = (SELECT updated_at FROM pedidos_new WHERE pedidos_new.id = pedidos.id)");
+    }
+    db.exec("DROP TABLE pedidos_new; CREATE INDEX IF NOT EXISTS idx_pedidos_deleted_at ON pedidos(deleted_at);");
+    console.log("[migração] pedidos.status agora aceita 'aguardando_confirmacao' (venda por peso)");
+  }
+}
+
+// ─── MIGRAÇÃO: adicionar 'balcao' ao CHECK de tipo_entrega ───────────────
+// Pedidos criados no FrenteCaixa (venda balcão) recebem tipo_entrega='balcao'
+// pra aparecerem na cozinha como "Balcão" em vez de "Retirada" — o operador
+// vê que é venda de comprador presencial, não pedido pra buscar depois.
+{
+  const sqlCreate = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='pedidos'").get();
+  if (sqlCreate && sqlCreate.sql && !sqlCreate.sql.includes("'balcao'")) {
+    db.exec("DROP TABLE IF EXISTS pedidos_new");
+    db.exec(`
+      CREATE TABLE pedidos_new AS SELECT * FROM pedidos;
+      DROP TABLE pedidos;
+      CREATE TABLE pedidos (
+        id TEXT PRIMARY KEY,
+        cliente_id TEXT,
+        cliente_nome TEXT DEFAULT '',
+        cliente_telefone TEXT DEFAULT '',
+        cliente_email TEXT DEFAULT '',
+        total REAL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pendente' CHECK(status IN ('pendente','confirmado','preparando','pronto','aguardando_confirmacao','entregue','cancelado')),
+        obs TEXT DEFAULT '',
+        tipo TEXT NOT NULL DEFAULT 'online' CHECK(tipo IN ('online', 'presencial')),
+        metodo_pagamento TEXT DEFAULT '',
+        troco_para REAL DEFAULT NULL,
+        tipo_entrega TEXT DEFAULT 'entrega' CHECK(tipo_entrega IN ('entrega','retirada','casa','balcao')),
+        endereco_cep TEXT DEFAULT '',
+        endereco_rua TEXT DEFAULT '',
+        endereco_numero TEXT DEFAULT '',
+        endereco_bairro TEXT DEFAULT '',
+        endereco_referencia TEXT DEFAULT '',
+        deleted_at TEXT DEFAULT NULL,
+        desconto REAL DEFAULT 0,
+        emitir_nfce INTEGER DEFAULT 1,
+        cliente_cpf TEXT DEFAULT '',
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+    `);
+    const colsOrigemBalcao = db.prepare("PRAGMA table_info(pedidos_new)").all().map(c => c.name);
+    let colsDestinoBalcao = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
+    const infoOrigemBalcao = db.prepare("PRAGMA table_info(pedidos_new)").all();
+    for (const col of infoOrigemBalcao) {
+      if (col.name === "id" || colsDestinoBalcao.includes(col.name)) continue;
+      const tipo = col.type || "TEXT";
+      db.exec(`ALTER TABLE pedidos ADD COLUMN ${col.name} ${tipo}`);
+    }
+    colsDestinoBalcao = db.prepare("PRAGMA table_info(pedidos)").all().map(c => c.name);
+    const comunsBalcao = colsDestinoBalcao.filter(c => colsOrigemBalcao.includes(c));
+    db.exec(`INSERT INTO pedidos (${comunsBalcao.join(", ")}) SELECT ${comunsBalcao.join(", ")} FROM pedidos_new;`);
+    db.exec("DROP TABLE pedidos_new; CREATE INDEX IF NOT EXISTS idx_pedidos_deleted_at ON pedidos(deleted_at);");
+    console.log("[migração] pedidos.tipo_entrega agora aceita 'balcao' (venda no caixa)");
+  }
+}
+
+// ─── MIGRAÇÃO: pedido_itens.quantidade → REAL + colunas de peso ─────────
+// Pedidos por peso guardam quantidade fracionária (0.350 kg) — INTEGER trunca
+// dependendo da type affinity. Também adiciona `por_peso` (flag) e
+// `peso_desejado_kg` (imutável, guarda o peso ORIGINAL pedido pelo cliente
+// pra calcular a tolerância quando o lojista informa o peso real).
+{
+  const cols = db.prepare("PRAGMA table_info(pedido_itens)").all();
+  const colQtd = cols.find(c => c.name === "quantidade");
+  const temPorPeso = cols.some(c => c.name === "por_peso");
+  const temPesoDesejado = cols.some(c => c.name === "peso_desejado_kg");
+  const precisaRebuild = colQtd && String(colQtd.type).toUpperCase() !== "REAL";
+
+  if (precisaRebuild) {
+    db.pragma("foreign_keys = OFF");
+    db.transaction(() => {
+      db.exec("DROP TABLE IF EXISTS pedido_itens_new");
+      db.exec(`
+        CREATE TABLE pedido_itens_new (
+          id TEXT PRIMARY KEY,
+          pedido_id TEXT NOT NULL,
+          produto_id TEXT NOT NULL,
+          produto_nome TEXT NOT NULL,
+          quantidade REAL NOT NULL DEFAULT 1,
+          preco_unitario REAL NOT NULL,
+          custo_unitario REAL NOT NULL DEFAULT 0,
+          adicionais TEXT DEFAULT '[]',
+          por_peso INTEGER NOT NULL DEFAULT 0,
+          peso_desejado_kg REAL DEFAULT NULL,
+          FOREIGN KEY (pedido_id) REFERENCES pedidos(id) ON DELETE CASCADE
+        );
+        INSERT INTO pedido_itens_new (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais)
+          SELECT id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais FROM pedido_itens;
+        DROP TABLE pedido_itens;
+        ALTER TABLE pedido_itens_new RENAME TO pedido_itens;
+      `);
+    })();
+    db.pragma("foreign_keys = ON");
+    console.log("[migração] pedido_itens: quantidade agora é REAL + colunas por_peso/peso_desejado_kg");
+  } else {
+    if (!temPorPeso)      db.exec("ALTER TABLE pedido_itens ADD COLUMN por_peso INTEGER NOT NULL DEFAULT 0");
+    if (!temPesoDesejado) db.exec("ALTER TABLE pedido_itens ADD COLUMN peso_desejado_kg REAL DEFAULT NULL");
+  }
+}
+
 // ─── MIGRAÇÃO PROMOÇÕES — colunas extras em produtos ───────────────────────
 const PROMO_COLS = [
   ["eh_promocao",       "INTEGER DEFAULT 0"],            // 1 = é promoção, 0 = produto normal
@@ -727,6 +897,46 @@ const SEED_CAT_PROMO = "Promoções";
     ).run(id, SEED_CAT_PROMO);
   }
 }
+
+// ─── MIGRAÇÃO: NF-e de Entrada (controle fiscal de compras) ────────────────
+// Armazena XMLs de NF-e de fornecedores + itens extraídos. Cada item pode ser
+// vinculado a um estoque_itens (revenda/insumo) para rastreio fiscal entrada→saída.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notas_entrada (
+    id TEXT PRIMARY KEY,
+    chave_acesso TEXT DEFAULT '',
+    numero_nf TEXT DEFAULT '',
+    serie TEXT DEFAULT '',
+    data_emissao TEXT DEFAULT '',
+    fornecedor_nome TEXT DEFAULT '',
+    fornecedor_cnpj TEXT DEFAULT '',
+    fornecedor_ie TEXT DEFAULT '',
+    valor_total REAL DEFAULT 0,
+    xml_original TEXT DEFAULT '',
+    origem TEXT DEFAULT 'xml' CHECK(origem IN ('xml','manual')),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS notas_entrada_itens (
+    id TEXT PRIMARY KEY,
+    nota_id TEXT NOT NULL,
+    num_item INTEGER DEFAULT 1,
+    produto_nome TEXT DEFAULT '',
+    codigo TEXT DEFAULT '',
+    ncm TEXT DEFAULT '',
+    cfop TEXT DEFAULT '',
+    unidade TEXT DEFAULT 'un',
+    quantidade REAL DEFAULT 0,
+    valor_unitario REAL DEFAULT 0,
+    valor_total REAL DEFAULT 0,
+    estoque_item_id TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (nota_id) REFERENCES notas_entrada(id) ON DELETE CASCADE,
+    FOREIGN KEY (estoque_item_id) REFERENCES estoque_itens(id)
+  );
+`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_notas_entrada_data ON notas_entrada(data_emissao)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_notas_entrada_cnpj ON notas_entrada(fornecedor_cnpj)`);
+db.exec(`CREATE INDEX IF NOT EXISTS idx_notas_entrada_itens_nota ON notas_entrada_itens(nota_id)`);
 
 // ─── SEED CATEGORIAS PRÉ-DEFINIDAS ─────────────────────────────────────────
 const CATEGORIAS_SEED = [
@@ -884,11 +1094,11 @@ export function buscarLancamento(id) {
   return db.prepare("SELECT * FROM lancamentos WHERE id = ? AND deleted_at IS NULL").get(id);
 }
 
-export function criarLancamento({ tipo, descricao, valor, data, cat, status, obs, custo }) {
+export function criarLancamento({ tipo, descricao, valor, data, cat, status, obs, custo, pedido_id }) {
   const id = gerarId();
   db.prepare(
-    "INSERT INTO lancamentos (id, tipo, descricao, valor, data, cat, status, obs, custo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, tipo, descricao, valor, data, cat, status, obs || "", custo != null ? Number(custo) : null);
+    "INSERT INTO lancamentos (id, tipo, descricao, valor, data, cat, status, obs, custo, pedido_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, tipo, descricao, valor, data, cat, status, obs || "", custo != null ? Number(custo) : null, pedido_id || null);
   return buscarLancamento(id);
 }
 
@@ -1192,7 +1402,7 @@ export function montarPayloadNFCe(pedido, fisc) {
     };
   });
   const valorTotal = itens.reduce((s, it) => s + it.valor_total, 0);
-  const mapaPgto = { pix: "17", credito: "03", debito: "04", dinheiro: "01", cartao: "99" };
+  const mapaPgto = { pix: "17", dinheiro: "01", credito: "99", debito: "99", cartao: "99" };
   return {
     ambiente: fisc.ambiente,
     modelo: "65",
@@ -1590,9 +1800,20 @@ function xmlEsc(s) {
     .replace(/"/g, "&quot;").replace(/\r/g, "&#xD;");
 }
 
-// Texto "fiscal": sem quebras, espaços colapsados, tamanho limitado
+// Texto "fiscal": sem quebras, espaços colapsados, tamanho limitado, restrito à
+// faixa de caracteres que o schema da NFe aceita (TString: \x21-\xFF). Textos
+// colados de Word/WhatsApp costumam trazer travessão "–", aspas curvas "" '',
+// reticências "…" ou emoji — fora dessa faixa, e a SEFAZ rejeita o lote inteiro
+// com 225 "Falha no Schema XML" sem apontar o campo culpado.
 function txtFiscal(s, max = 120) {
-  return xmlEsc(String(s == null ? "" : s).replace(/\s+/g, " ").trim().slice(0, max));
+  const normalizado = String(s == null ? "" : s)
+    .normalize("NFC")
+    .replace(/[‐-―]/g, "-")
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/…/g, "...")
+    .replace(/[^\x21-\xFF]/g, " ");
+  return xmlEsc(normalizado.replace(/\s+/g, " ").trim().slice(0, max));
 }
 
 const dec = (v, casas = 2) => (Math.round(Number(v || 0) * 10 ** casas) / 10 ** casas).toFixed(casas);
@@ -1730,7 +1951,8 @@ function prepararEmissaoAntigo() {
   if (!fisc.logradouro || !fisc.numero || !fisc.bairro || !fisc.municipio) faltas.push("Endereço fiscal completo");
   if ((fisc.codigo_municipio || "").replace(/\D/g, "").length !== 7) faltas.push("Código IBGE do município (7 dígitos)");
   if ((fisc.cep || "").replace(/\D/g, "").length !== 8) faltas.push("CEP (8 dígitos)");
-  if (!fisc.uf) faltas.push("UF");
+  fisc.uf = String(fisc.uf || "").trim().toUpperCase();
+  if (!UF_CODIGO[fisc.uf]) faltas.push("UF (sigla válida de 2 letras, ex.: SP)");
   if (!fisc.cert_data) faltas.push("Certificado A1 (aba Fiscal / NFC-e)");
   if (!fisc.csc || !fisc.csc_id) faltas.push("CSC e ID do CSC (gerados no portal da SEFAZ — homologação tem CSC próprio)");
   if (!["simples", "mei"].includes(fisc.regime_tributario || "simples")) faltas.push("Regime: o motor antigo cobre Simples Nacional/MEI (CSOSN 102)");
@@ -1747,7 +1969,8 @@ function prepararEmissaoAntigo() {
 // Monta a infNFe canônica (regras vigentes) + dados auxiliares
 export function montarXmlNFCeAntigo(pedido, fisc, cnpj, { numero, serie, tpAmb }) {
   const { dhEmi, aamm } = agoraBrasilia();
-  const cUF = String(UF_CODIGO[fisc.uf] || 35);
+  const uf = String(fisc.uf || "").trim().toUpperCase();
+  const cUF = String(UF_CODIGO[uf] || 35);
   const nNF = String(numero);
   let cNF;
   do { cNF = String(Math.floor(Math.random() * 1e8)).padStart(8, "0"); }
@@ -1811,14 +2034,18 @@ export function montarXmlNFCeAntigo(pedido, fisc, cnpj, { numero, serie, tpAmb }
   ).join("");
 
   // Pagamento (regras vigentes: tPag; 99 exige xPag)
-  const mapaPgto = { pix: "17", credito: "03", debito: "04", dinheiro: "01" };
+  // Cartão débito/crédito → 99 (Outros) porque não há terminal integrado;
+  // a adquirente (Stone/Cielo) já reporta a transação à Receita separadamente.
+  const mapaPgto = { pix: "17", dinheiro: "01", credito: "99", debito: "99" };
+  const xPagDesc = { credito: "Cartao Credito", debito: "Cartao Debito" };
   const tPag = mapaPgto[pedido.metodo_pagamento] || "99";
+  const xPag = xPagDesc[pedido.metodo_pagamento] || "Outros";
   const trocoPara = Number(pedido.troco_para || 0);
   const temTroco = tPag === "01" && trocoPara > vNF;
   const vPag = temTroco ? trocoPara : vNF;
   const pagXml =
-    `<pag><detPag><indPag>0</indPag><tPag>${tPag}</tPag>` +
-    (tPag === "99" ? `<xPag>Outros</xPag>` : "") +
+    `<pag><detPag><tPag>${tPag}</tPag>` +
+    (tPag === "99" ? `<xPag>${xPag}</xPag>` : "") +
     `<vPag>${dec(vPag)}</vPag></detPag>` +
     (temTroco ? `<vTroco>${dec(trocoPara - vNF)}</vTroco>` : "") +
     `</pag>`;
@@ -1848,7 +2075,7 @@ export function montarXmlNFCeAntigo(pedido, fisc, cnpj, { numero, serie, tpAmb }
     `<xLgr>${txtFiscal(fisc.logradouro, 60)}</xLgr><nro>${txtFiscal(fisc.numero, 60)}</nro>` +
     `<xBairro>${txtFiscal(fisc.bairro, 60)}</xBairro>` +
     `<cMun>${(fisc.codigo_municipio || "").replace(/\D/g, "")}</cMun><xMun>${txtFiscal(fisc.municipio, 60)}</xMun>` +
-    `<UF>${fisc.uf}</UF><CEP>${(fisc.cep || "").replace(/\D/g, "")}</CEP>` +
+    `<UF>${uf}</UF><CEP>${(fisc.cep || "").replace(/\D/g, "")}</CEP>` +
     `<cPais>1058</cPais><xPais>BRASIL</xPais>` +
     `</enderEmit>` +
     `<IE>${(fisc.inscricao_estadual || "").replace(/\D/g, "")}</IE><CRT>${crt}</CRT>` +
@@ -1940,6 +2167,10 @@ export async function emitirNFCeAntigo(pedidoId) {
     xMotivo = xmlTag(prot, "xMotivo") || xmlTag(retorno, "xMotivo") || "(sem retorno da SEFAZ)";
     nProt = xmlTag(prot, "nProt");
     status = cStat === "100" ? "autorizada" : "rejeitada";
+    if (status === "rejeitada") {
+      console.error(`[fiscal-antigo] REJEITADA cStat=${cStat} xMotivo=${xMotivo}`);
+      console.error(`[fiscal-antigo] enviNFe (primeiros 2000 chars):\n${enviNFe.slice(0, 2000)}`);
+    }
   } catch (err) {
     // Falha de COMUNICAÇÃO (timeout, SEFAZ fora do ar, sem internet) — não é uma
     // rejeição de dados. Contingência: a nota fica assinada e "pendente"; a venda
@@ -1978,6 +2209,13 @@ export function listarNFCeAntigo(limit = 20) {
   return db.prepare("SELECT id, pedido_id, numero, serie, ambiente, chave, status, protocolo, motivo, valor_total, qr_code_url, created_at FROM nfce_emitidas WHERE motor = 'antigo' ORDER BY created_at DESC LIMIT ?").all(limit);
 }
 
+export function diagnosticoNFCeAntigo() {
+  return db.prepare(
+    `SELECT id, numero, serie, ambiente, chave, status, motivo, valor_total, retorno_json, created_at
+     FROM nfce_emitidas WHERE motor = 'antigo' ORDER BY created_at DESC LIMIT 5`
+  ).all();
+}
+
 export function obterXmlNFCeAntigo(id) {
   const r = db.prepare("SELECT numero, serie, chave, xml_assinado FROM nfce_emitidas WHERE id = ? AND motor = 'antigo'").get(id);
   if (!r || !r.xml_assinado) return null;
@@ -2000,7 +2238,12 @@ export async function reenviarPendentesAntigo() {
 
   for (const nota of pendentes) {
     const nfeXml = (nota.xml_assinado || "").match(/<NFe[\s\S]*?<\/NFe>/)?.[0];
-    if (!nfeXml) continue; // sem XML assinado guardado — nada a reenviar
+    if (!nfeXml) continue;
+    if (!/<PIS>/.test(nfeXml)) {
+      db.prepare("UPDATE nfce_emitidas SET status='erro', motivo='XML gerado antes da correção de PIS/COFINS — não pode ser reenviado' WHERE id=?").run(nota.id);
+      console.log(`[fiscal-antigo] nota ${nota.numero}/${nota.serie} descartada: XML antigo sem PIS/COFINS`);
+      continue;
+    }
     const enviNFe = `<enviNFe xmlns="${NFE_NS}" versao="4.00"><idLote>${Date.now()}</idLote><indSinc>1</indSinc>${nfeXml}</enviNFe>`;
     try {
       const retorno = await postSefaz(urls.autorizacao, `${wsdl}/nfeAutorizacaoLote`, soap12(wsdl, enviNFe), material);
@@ -2050,6 +2293,33 @@ export function verificarEnvioRelatorioFiscalPendente() {
   const mesReferencia = d.toISOString().slice(0, 7); // YYYY-MM
   if (r.relatorio_ultimo_mes_enviado === mesReferencia) return null;
   return { mesReferencia, email_contabilidade: r.email_contabilidade, n8n_webhook_relatorio: r.n8n_webhook_relatorio };
+}
+
+// ─── DOCUMENTOS FISCAIS DO MÊS (download no Suporte) ─────────────────────────
+// Meses que têm ao menos uma nota autorizada — alimenta a navegação entre meses.
+export function mesesComNotasFiscais() {
+  return db.prepare(
+    `SELECT strftime('%Y-%m', created_at) AS mes, COUNT(*) AS quantidade,
+            COALESCE(SUM(valor_total), 0) AS total
+     FROM nfce_emitidas
+     WHERE status = 'autorizada'
+     GROUP BY mes ORDER BY mes DESC`
+  ).all();
+}
+
+// Notas AUTORIZADAS do mês (dos dois motores), com o XML assinado quando existe.
+// Base tanto do resumo (meta) quanto do pacote .zip pra download.
+export function documentosFiscaisDoMes(anoMes) {
+  const notas = db.prepare(
+    `SELECT id, numero, serie, motor, chave, status, valor_total, qr_code_url,
+            xml_assinado, created_at
+     FROM nfce_emitidas
+     WHERE status = 'autorizada' AND strftime('%Y-%m', created_at) = ?
+     ORDER BY numero ASC, created_at ASC`
+  ).all(anoMes);
+  const total = notas.reduce((s, n) => s + (n.valor_total || 0), 0);
+  const comXml = notas.filter(n => (n.xml_assinado || "").trim()).length;
+  return { periodo: anoMes, quantidade: notas.length, total, com_xml: comXml, notas };
 }
 
 // ─── ANALYTICS DO CARDÁPIO (T10) ─────────────────────────────────────────────
@@ -2229,6 +2499,19 @@ export function excluirCategoria(id) {
 
 // ─── ADICIONAIS ─────────────────────────────────────────────────────────────
 
+// Parse do JSON de categorias_ids antes de devolver pro frontend. Se null
+// (adicional legacy), mantém null — o front decide o fallback pro categoria_id
+// solo. Se preenchido, retorna array de ids (mesmo vazio).
+function _parseAdicionalRow(r) {
+  if (!r) return r;
+  let cats = null;
+  if (r.categorias_ids != null) {
+    try { cats = JSON.parse(r.categorias_ids); } catch { cats = null; }
+    if (!Array.isArray(cats)) cats = null;
+  }
+  return { ...r, categorias_ids: cats };
+}
+
 export function listarAdicionais(apenasDisponiveis = false, { cardapio_id, incluirCardapios = false } = {}) {
   const filtroDisp = apenasDisponiveis ? "AND a.disponivel = 1" : "";
   let rows;
@@ -2245,6 +2528,7 @@ export function listarAdicionais(apenasDisponiveis = false, { cardapio_id, inclu
       : "SELECT * FROM adicionais a WHERE a.deleted_at IS NULL ORDER BY a.nome";
     rows = db.prepare(sql).all();
   }
+  rows = rows.map(_parseAdicionalRow);
   if (incluirCardapios) {
     const cardStmt = db.prepare(`
       SELECT ca.id, ca.nome, ca.icone FROM cardapios ca
@@ -2261,18 +2545,27 @@ export function listarAdicionais(apenasDisponiveis = false, { cardapio_id, inclu
 }
 
 export function buscarAdicional(id) {
-  return db.prepare("SELECT * FROM adicionais WHERE id = ? AND deleted_at IS NULL").get(id);
+  return _parseAdicionalRow(db.prepare("SELECT * FROM adicionais WHERE id = ? AND deleted_at IS NULL").get(id));
 }
 
-export function criarAdicional({ nome, preco, custo, disponivel, max_quantidade, categoria_id, cardapio_id }) {
+// Normaliza categorias_ids vindo do front: null (não mexeu) = mantém legado,
+// [] = explicitamente NENHUMA categoria, [ids] = essas categorias específicas.
+function _serializarCategoriasIds(v) {
+  if (v === undefined || v === null) return null; // não define — mantém legacy
+  if (!Array.isArray(v)) return null;
+  return JSON.stringify(v.filter(x => typeof x === "string" && x.length > 0));
+}
+
+export function criarAdicional({ nome, preco, custo, disponivel, max_quantidade, categoria_id, categorias_ids, cardapio_id }) {
   const id = gerarId();
   db.prepare(
-    "INSERT INTO adicionais (id, nome, preco, custo, disponivel, max_quantidade, categoria_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO adicionais (id, nome, preco, custo, disponivel, max_quantidade, categoria_id, categorias_ids) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     id, nome, preco, custo || 0,
     disponivel !== undefined ? (disponivel ? 1 : 0) : 1,
     Math.max(0, parseInt(max_quantidade, 10) || 0),
-    categoria_id || null
+    categoria_id || null,
+    _serializarCategoriasIds(categorias_ids),
   );
   // Vincula automaticamente ao cardápio ativo se enviado
   if (cardapio_id) {
@@ -2283,14 +2576,15 @@ export function criarAdicional({ nome, preco, custo, disponivel, max_quantidade,
   return buscarAdicional(id);
 }
 
-export function atualizarAdicional(id, { nome, preco, custo, disponivel, max_quantidade, categoria_id }) {
+export function atualizarAdicional(id, { nome, preco, custo, disponivel, max_quantidade, categoria_id, categorias_ids }) {
   const result = db.prepare(
-    "UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ?, max_quantidade = ?, categoria_id = ? WHERE id = ? AND deleted_at IS NULL"
+    "UPDATE adicionais SET nome = ?, preco = ?, custo = ?, disponivel = ?, max_quantidade = ?, categoria_id = ?, categorias_ids = ? WHERE id = ? AND deleted_at IS NULL"
   ).run(
     nome, preco, custo || 0,
     disponivel ? 1 : 0,
     Math.max(0, parseInt(max_quantidade, 10) || 0),
     categoria_id || null,
+    _serializarCategoriasIds(categorias_ids),
     id
   );
   if (result.changes === 0) return null;
@@ -2743,11 +3037,11 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
     "INSERT INTO pedidos (id, cliente_id, cliente_nome, cliente_telefone, cliente_email, total, desconto, obs, tipo, metodo_pagamento, troco_para, tipo_entrega, endereco_cep, endereco_rua, endereco_numero, endereco_bairro, endereco_referencia, emitir_nfce, cliente_cpf, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f','now'))"
   );
   const inserirItem = db.prepare(
-    "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais, por_peso, peso_desejado_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
 
   const transaction = db.transaction(() => {
-    const tipoEnt = ['retirada', 'casa'].includes(tipo_entrega) ? tipo_entrega : 'entrega';
+    const tipoEnt = ['retirada', 'casa', 'balcao'].includes(tipo_entrega) ? tipo_entrega : 'entrega';
     inserirPedido.run(id, cliente_id || null, cliente_nome || "", cliente_telefone || "", cliente_email || "", total, desc, obs || "", tipo || "online", metodo_pagamento || "", (troco_para && Number(troco_para) > 0) ? Number(troco_para) : null, tipoEnt, end.cep || "", end.rua || "", end.numero || "", end.bairro || "", end.referencia || "", emitir_nfce ? 1 : 0, (cliente_cpf || "").replace(/\D/g, ""));
     for (const item of itens) {
       // Buscar custo do produto no banco. Se o frontend enviou custo_unitario
@@ -2765,9 +3059,15 @@ export function criarPedido({ cliente_id, cliente_nome, cliente_telefone, client
       const custoAdicionais = adicionaisComCusto.reduce((s, a) => s + (a.custo || 0) * (a.quantidade || 1), 0);
       const custoTotal = custoProduto + custoAdicionais;
 
+      // Item por peso (peixaria/açougue): quantidade = kg pedido pelo cliente;
+      // peso_desejado_kg guarda o valor ORIGINAL imutável pra calcular tolerância
+      // depois que o lojista pesar a peça real.
+      const porPeso = item.por_peso ? 1 : 0;
+      const pesoDesejadoKg = porPeso ? Number(item.quantidade) : null;
+
       inserirItem.run(
         gerarId(), id, item.produto_id, item.produto_nome, item.quantidade, item.preco_unitario,
-        custoTotal, JSON.stringify(adicionaisComCusto)
+        custoTotal, JSON.stringify(adicionaisComCusto), porPeso, pesoDesejadoKg
       );
     }
   });
@@ -2785,6 +3085,121 @@ export function atualizarStatusPedido(id, status) {
 export function excluirPedido(id) {
   // Soft delete — pedido_itens permanece junto e volta junto na restauração
   return db.prepare("UPDATE pedidos SET deleted_at = datetime('now'), updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ? AND deleted_at IS NULL").run(id).changes > 0;
+}
+
+// ─── VENDA POR PESO — pesagem, tolerância, confirmação ────────────────────
+// Tolerância fixa em 20% (LTS): peça pesada dentro de ±20% do peso pedido segue
+// direto (ajusta e avisa); fora disso trava o pedido em 'aguardando_confirmacao'
+// pra o cliente aprovar via WhatsApp.
+const TOLERANCIA_PESO_PCT = 0.20;
+
+export function pedidoTemPorPeso(pedidoId) {
+  const r = db.prepare("SELECT COUNT(*) AS c FROM pedido_itens WHERE pedido_id = ? AND por_peso = 1").get(pedidoId);
+  return (r?.c || 0) > 0;
+}
+
+// Recalcula o total do pedido a partir dos itens (usado depois de ajustar peso).
+// Mesma matemática do `criarPedido`: total = Σ (preço + adicionais) × quantidade − desconto.
+function recalcularTotalPedido(pedidoId) {
+  const itens = db.prepare("SELECT quantidade, preco_unitario, adicionais FROM pedido_itens WHERE pedido_id = ?").all(pedidoId);
+  const p = db.prepare("SELECT desconto FROM pedidos WHERE id = ?").get(pedidoId) || {};
+  const desc = Number(p.desconto || 0);
+  const bruto = itens.reduce((s, it) => {
+    let ads = 0;
+    try { ads = (JSON.parse(it.adicionais || "[]")).reduce((a, x) => a + (Number(x.preco) || 0) * (Number(x.quantidade) || 1), 0); } catch {}
+    return s + ((Number(it.preco_unitario) || 0) + ads) * Number(it.quantidade || 0);
+  }, 0);
+  const total = Math.max(0, bruto - Math.max(0, Math.min(desc, bruto)));
+  db.prepare("UPDATE pedidos SET total = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(total, pedidoId);
+  return total;
+}
+
+// Confere se TODOS os itens por_peso do pedido estão dentro da tolerância —
+// usado pra decidir se dá pra destravar um pedido 'aguardando_confirmacao'
+// depois de corrigir o peso de um item (pedido pode ter mais de um item por peso).
+function todosItensDentroTolerancia(pedidoId) {
+  const itens = db.prepare("SELECT quantidade, peso_desejado_kg FROM pedido_itens WHERE pedido_id = ? AND por_peso = 1").all(pedidoId);
+  return itens.every(it => {
+    const desejado = Number(it.peso_desejado_kg || 0);
+    if (desejado <= 0) return true;
+    const diferenca = Math.abs(Number(it.quantidade || 0) - desejado) / desejado;
+    return diferenca <= TOLERANCIA_PESO_PCT;
+  });
+}
+
+// Registra o peso REAL medido na balança pra um item por_peso. Pode ser chamada
+// mais de uma vez pro mesmo item (reajuste, ex: lojista pesou errado ou o
+// cliente trocou de peça) — cada chamada sobrescreve a `quantidade` anterior.
+// Retorna { pedido, item, dentro_tolerancia, diferenca_pct, novo_status, total_anterior, total_novo, eh_ajuste }.
+// - Dentro da tolerância → mantém o status atual (o lojista segue o fluxo normal).
+//   Se o pedido já estava 'aguardando_confirmacao' e TODOS os itens por peso
+//   agora estão dentro da tolerância, destrava de volta pra 'confirmado'.
+// - Fora da tolerância → move o pedido pra 'aguardando_confirmacao' (trava até o
+//   cliente responder pelo WhatsApp e o lojista clicar Confirmou/Recusou).
+export function registrarPesoItem(pedidoId, itemId, pesoRealKg) {
+  const peso = Number(pesoRealKg);
+  if (!peso || peso <= 0) throw new Error("Peso inválido");
+  const pedido = db.prepare("SELECT * FROM pedidos WHERE id = ?").get(pedidoId);
+  if (!pedido) throw new Error("Pedido não encontrado");
+  if (pedido.status === "entregue" || pedido.status === "cancelado") {
+    throw new Error("Pedido já finalizado — não é possível ajustar o peso");
+  }
+  const item = db.prepare("SELECT * FROM pedido_itens WHERE id = ? AND pedido_id = ?").get(itemId, pedidoId);
+  if (!item) throw new Error("Item não encontrado");
+  if (!item.por_peso) throw new Error("Item não é vendido por peso");
+  const desejado = Number(item.peso_desejado_kg || item.quantidade || 0);
+  if (desejado <= 0) throw new Error("Peso desejado do item não registrado");
+
+  const ehAjuste = Number(item.quantidade) !== desejado;
+  const totalAnterior = Number((db.prepare("SELECT total FROM pedidos WHERE id = ?").get(pedidoId) || {}).total || 0);
+
+  db.prepare("UPDATE pedido_itens SET quantidade = ? WHERE id = ?").run(peso, itemId);
+  const totalNovo = recalcularTotalPedido(pedidoId);
+
+  const diferencaPct = Math.abs(peso - desejado) / desejado;
+  const dentro = diferencaPct <= TOLERANCIA_PESO_PCT;
+
+  let novoStatus = null;
+  if (!dentro) {
+    db.prepare("UPDATE pedidos SET status = 'aguardando_confirmacao', updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(pedidoId);
+    novoStatus = "aguardando_confirmacao";
+  } else if (pedido.status === "aguardando_confirmacao" && todosItensDentroTolerancia(pedidoId)) {
+    db.prepare("UPDATE pedidos SET status = 'confirmado', updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(pedidoId);
+    novoStatus = "confirmado";
+  }
+
+  return {
+    pedido: buscarPedido(pedidoId),
+    item: db.prepare("SELECT * FROM pedido_itens WHERE id = ?").get(itemId),
+    dentro_tolerancia: dentro,
+    diferenca_pct: diferencaPct,
+    novo_status: novoStatus,
+    total_anterior: totalAnterior,
+    total_novo: totalNovo,
+    peso_desejado_kg: desejado,
+    peso_real_kg: peso,
+    eh_ajuste: ehAjuste,
+  };
+}
+
+// Cliente aprovou o ajuste de peso via WhatsApp — lojista destrava o pedido
+// (volta pra 'confirmado' pra seguir pra entrega).
+export function confirmarPesagem(pedidoId) {
+  const p = buscarPedido(pedidoId);
+  if (!p) throw new Error("Pedido não encontrado");
+  if (p.status !== "aguardando_confirmacao") throw new Error("Pedido não está aguardando confirmação");
+  db.prepare("UPDATE pedidos SET status = 'confirmado', updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(pedidoId);
+  return buscarPedido(pedidoId);
+}
+
+// Cliente recusou — cancela o pedido.
+export function recusarPesagem(pedidoId, motivo) {
+  const p = buscarPedido(pedidoId);
+  if (!p) throw new Error("Pedido não encontrado");
+  if (p.status !== "aguardando_confirmacao") throw new Error("Pedido não está aguardando confirmação");
+  const obs = (motivo && String(motivo).trim()) ? String(motivo).slice(0, 200) : "Cliente recusou o ajuste de peso";
+  db.prepare("UPDATE pedidos SET status = 'cancelado', obs = CASE WHEN obs = '' THEN ? ELSE obs || ' | ' || ? END, updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(obs, obs, pedidoId);
+  return buscarPedido(pedidoId);
 }
 
 // ─── SINCRONIZAÇÃO local ↔ nuvem (cozinha simultânea) ────────────────────────
@@ -2829,10 +3244,18 @@ export function upsertPedidoSync(p) {
     // itens são imutáveis após a criação: só insere se ainda não houver
     const jaTem = db.prepare("SELECT COUNT(*) c FROM pedido_itens WHERE pedido_id = ?").get(p.id).c;
     if (jaTem === 0 && Array.isArray(p.itens)) {
-      const ins = db.prepare("INSERT OR IGNORE INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+      const ins = db.prepare("INSERT OR IGNORE INTO pedido_itens (id, pedido_id, produto_id, produto_nome, quantidade, preco_unitario, custo_unitario, adicionais, por_peso, peso_desejado_kg) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+      // Proteção defensiva: se o produto_id vindo do sync não existe local
+      // (cardápio online do cliente tem produtos diferentes do PDV desktop),
+      // troca por "" — pedido_itens.produto_id é NOT NULL sem FK aqui, mas
+      // a coluna vazia sinaliza "produto externo" e o nome preserva a info.
+      const produtoExiste = db.prepare("SELECT 1 FROM produtos WHERE id = ? AND deleted_at IS NULL");
       for (const it of p.itens) {
-        ins.run(it.id || gerarId(), p.id, it.produto_id || "", it.produto_nome || "", it.quantidade || 1,
-          it.preco_unitario || 0, it.custo_unitario || 0, typeof it.adicionais === "string" ? it.adicionais : JSON.stringify(it.adicionais || []));
+        let produtoId = it.produto_id || "";
+        if (produtoId && !produtoExiste.get(produtoId)) produtoId = "";
+        ins.run(it.id || gerarId(), p.id, produtoId, it.produto_nome || "", it.quantidade || 1,
+          it.preco_unitario || 0, it.custo_unitario || 0, typeof it.adicionais === "string" ? it.adicionais : JSON.stringify(it.adicionais || []),
+          it.por_peso ? 1 : 0, it.peso_desejado_kg ?? null);
       }
     }
   };
@@ -2880,9 +3303,15 @@ export function comandasAlteradasDesde(desdeIso) {
 // mas itens são upsertados individualmente também (a comanda ganha itens novos
 // depois de aberta — o sync precisa acompanhar).
 export function upsertComandaSync(c) {
-  if (!c || !c.id || !c.mesa_numero) return "ignorado";
+  if (!c || !c.id || !c.mesa_numero) {
+    console.log("[sync-comanda] ignorada: payload inválido", { id: c?.id, mesa_numero: c?.mesa_numero });
+    return "ignorado";
+  }
   const mesa = db.prepare("SELECT id FROM mesas WHERE numero = ?").get(c.mesa_numero);
-  if (!mesa) return "ignorado"; // mesa não existe nesta instalação
+  if (!mesa) {
+    console.log(`[sync-comanda] ignorada: mesa ${c.mesa_numero} não existe no PDV local (cadastre a mesa ou verifique o sync-catalogo)`);
+    return "ignorado";
+  }
   const mesaId = mesa.id;
 
   const incomingTs = c.updated_at || c.opened_at || "1970-01-01T00:00:00";
@@ -2891,6 +3320,7 @@ export function upsertComandaSync(c) {
   const upsertItens = () => {
     if (!Array.isArray(c.itens)) return;
     const jaExiste = db.prepare("SELECT id, updated_at, created_at FROM comanda_itens WHERE id = ?");
+    const produtoExiste = db.prepare("SELECT 1 FROM produtos WHERE id = ? AND deleted_at IS NULL");
     const insertItem = db.prepare(
       `INSERT INTO comanda_itens (id, comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, status, origem, created_at, updated_at, deleted_at)
        VALUES (@id, @comanda_id, @produto_id, @produto_nome, @quantidade, @preco_unitario, @adicionais, @obs, @status, @origem, @created_at, @updated_at, @deleted_at)`
@@ -2902,10 +3332,21 @@ export function upsertComandaSync(c) {
     for (const it of c.itens) {
       if (!it || !it.id) continue;
       const itemTs = it.updated_at || it.created_at || incomingTs;
+      // Se o produto_id vindo do online não existe no PDV local, nulla ele.
+      // A FK comanda_itens.produto_id → produtos(id) barra inserts órfãos com
+      // "FOREIGN KEY constraint failed" — o que acontecia quando o cardápio
+      // online tem produtos que o PDV local ainda não tem sincronizados (ou
+      // no cenário atual, quando cada cliente tem seu próprio backend online
+      // com produtos diferentes do PDV desktop). O produto_nome já vem no
+      // payload, então a comanda aparece com nome, preço e adicionais certos —
+      // só perde o link pra editar produto no cadastro local (que nem faz
+      // sentido, já que o produto original não é daqui).
+      let produtoId = it.produto_id || null;
+      if (produtoId && !produtoExiste.get(produtoId)) produtoId = null;
       const payload = {
         id: it.id,
         comanda_id: c.id,
-        produto_id: it.produto_id || null,
+        produto_id: produtoId,
         produto_nome: it.produto_nome || "",
         quantidade: it.quantidade || 1,
         preco_unitario: it.preco_unitario || 0,
@@ -3918,6 +4359,22 @@ export function excluirDefinitivoLixeira(tipo, id) {
   return meta.hardDelete(id);
 }
 
+// Apaga TODOS os itens da lixeira, de todas as categorias. Retorna quanto
+// removeu por tipo (útil pra mostrar no toast). Chamado pelo botão
+// "Limpar Lixeira" na aba Lixeira das Configurações.
+export function esvaziarLixeira() {
+  const contagem = {};
+  for (const [tipo, meta] of Object.entries(LIXEIRA_TIPOS)) {
+    const itens = db.prepare(meta.listSql).all();
+    let ok = 0;
+    for (const it of itens) {
+      try { if (meta.hardDelete(it.id)) ok++; } catch { /* segue */ }
+    }
+    contagem[tipo] = { label: meta.label, removidos: ok };
+  }
+  return contagem;
+}
+
 // ─── MESAS (Frente de Caixa) ────────────────────────────────────────────────
 
 db.exec(`
@@ -4190,6 +4647,147 @@ export function excluirCardapio(id, { cascade = false } = {}) {
   };
 }
 
+// ─── EXCLUSÃO EM CASCATA (cardápio ou categoria) ────────────────────────────
+// Preview: mostra o impacto antes de confirmar. Não altera nada.
+export function previewExclusaoCascata(tipo, id) {
+  let categorias = [];
+  let adicionais = [];
+
+  if (tipo === "cardapio") {
+    const orfaos = contarOrfaosCardapio(id);
+    categorias = orfaos.categoriasExclusivas;
+    adicionais = orfaos.adicionaisExclusivos;
+  } else if (tipo === "categoria") {
+    const cat = db.prepare("SELECT id, nome FROM categorias WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!cat) return null;
+    categorias = [cat];
+  } else return null;
+
+  const catNomes = categorias.map(c => c.nome);
+  let produtos = [];
+  for (const nome of catNomes) {
+    produtos.push(
+      ...db.prepare("SELECT id, nome, codigo, codigo_barras FROM produtos WHERE categoria = ? AND deleted_at IS NULL").all(nome)
+    );
+  }
+
+  if (produtos.length === 0) {
+    return {
+      categorias, adicionais,
+      produtos: [], totalProdutos: 0,
+      totalEstoque: 0, totalEntradas: 0, totalNotasEntrada: 0,
+      totalFichas: 0, totalPedidoItens: 0,
+    };
+  }
+
+  const prodIds = produtos.map(p => p.id);
+  const codigos = produtos.map(p => (p.codigo || p.codigo_barras || "").trim()).filter(Boolean);
+
+  let estoqueIds = [];
+  for (const cod of codigos) {
+    const ei = db.prepare("SELECT id FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(cod);
+    if (ei) estoqueIds.push(ei.id);
+  }
+
+  const phProd = prodIds.map(() => "?").join(",");
+  const totalFichas = db.prepare(`SELECT COUNT(*) as n FROM produto_insumos WHERE produto_id IN (${phProd})`).get(...prodIds).n;
+
+  let totalEntradas = 0, totalNotasEntrada = 0;
+  for (const eiId of estoqueIds) {
+    totalEntradas += db.prepare("SELECT COUNT(*) as n FROM estoque_entradas WHERE item_id = ?").get(eiId).n;
+    totalNotasEntrada += db.prepare("SELECT COUNT(*) as n FROM notas_entrada_itens WHERE estoque_item_id = ?").get(eiId).n;
+  }
+
+  const totalPedidoItens =
+    db.prepare(`SELECT COUNT(*) as n FROM pedido_itens WHERE produto_id IN (${phProd})`).get(...prodIds).n +
+    db.prepare(`SELECT COUNT(*) as n FROM comanda_itens WHERE produto_id IN (${phProd}) AND deleted_at IS NULL`).get(...prodIds).n;
+
+  return {
+    categorias, adicionais,
+    produtos: produtos.map(p => ({ id: p.id, nome: p.nome })),
+    totalProdutos: produtos.length,
+    totalEstoque: estoqueIds.length,
+    totalEntradas,
+    totalNotasEntrada,
+    totalFichas,
+    totalPedidoItens,
+  };
+}
+
+// Executa exclusão + limpeza conforme opções selecionadas pelo usuário.
+export function executarExclusaoCascata(tipo, id, opcoes = {}) {
+  const {
+    excluirProdutos = true,
+    limparEstoque = false,
+    excluirFichas = false,
+    desvincularNotas = false,
+  } = opcoes;
+
+  let categorias = [];
+  if (tipo === "cardapio") {
+    categorias = contarOrfaosCardapio(id).categoriasExclusivas;
+  } else if (tipo === "categoria") {
+    const cat = db.prepare("SELECT id, nome FROM categorias WHERE id = ? AND deleted_at IS NULL").get(id);
+    if (!cat) return { ok: false, error: "Categoria não encontrada" };
+    categorias = [cat];
+  } else return { ok: false, error: "Tipo inválido" };
+
+  const catNomes = categorias.map(c => c.nome);
+  let produtos = [];
+  for (const nome of catNomes) {
+    produtos.push(...db.prepare("SELECT * FROM produtos WHERE categoria = ? AND deleted_at IS NULL").all(nome));
+  }
+
+  const codigos = produtos.map(p => (p.codigo || p.codigo_barras || "").trim()).filter(Boolean);
+  let estoqueIds = [];
+  for (const cod of codigos) {
+    const ei = db.prepare("SELECT id FROM estoque_itens WHERE codigo = ? AND deleted_at IS NULL").get(cod);
+    if (ei) estoqueIds.push(ei.id);
+  }
+
+  return db.transaction(() => {
+    const removidos = { produtos: 0, estoque: 0, entradas: 0, fichas: 0, notas: 0 };
+
+    // 1. Desvincular notas de entrada (sempre antes de limpar estoque)
+    if (desvincularNotas || limparEstoque) {
+      for (const eiId of estoqueIds) {
+        removidos.notas += db.prepare("UPDATE notas_entrada_itens SET estoque_item_id = NULL WHERE estoque_item_id = ?").run(eiId).changes;
+      }
+    }
+
+    // 2. Limpar estoque (entradas + itens)
+    if (limparEstoque) {
+      for (const eiId of estoqueIds) {
+        removidos.entradas += db.prepare("DELETE FROM estoque_entradas WHERE item_id = ?").run(eiId).changes;
+        removidos.estoque += db.prepare("DELETE FROM estoque_itens WHERE id = ?").run(eiId).changes;
+      }
+    }
+
+    // 3. Fichas técnicas
+    if (excluirFichas) {
+      for (const p of produtos) {
+        removidos.fichas += db.prepare("DELETE FROM produto_insumos WHERE produto_id = ?").run(p.id).changes;
+      }
+    }
+
+    // 4. Soft-delete produtos (lixeira)
+    if (excluirProdutos) {
+      for (const p of produtos) {
+        if (excluirProduto(p.id)) removidos.produtos++;
+      }
+    }
+
+    // 5. Exclusão original (cardápio hard-delete + categorias/adicionais, ou soft-delete categoria)
+    if (tipo === "cardapio") {
+      excluirCardapio(id, { cascade: true });
+    } else {
+      excluirCategoria(id);
+    }
+
+    return { ok: true, removidos };
+  })();
+}
+
 export function definirCategoriasCardapio(cardapioId, categoriaIds) {
   const del = db.prepare("DELETE FROM cardapio_categorias WHERE cardapio_id = ?");
   const ins = db.prepare("INSERT INTO cardapio_categorias (cardapio_id, categoria_id) VALUES (?, ?)");
@@ -4371,8 +4969,20 @@ export function pedirConta(mesa_id) {
 
 // ─── COMANDA ITENS ──────────────────────────────────────────────────────────
 
+// Parse do JSON de adicionais antes de devolver pro frontend.
+// SEM isso, o front recebe string ("[]" ou '[{...}]') e crasha em .map/.reduce
+// — o clássico causa da "tela branca" na comanda ao clicar na mesa.
+function _parseItemComanda(item) {
+  if (!item) return item;
+  let ads = [];
+  try { ads = typeof item.adicionais === "string" ? JSON.parse(item.adicionais || "[]") : (item.adicionais || []); }
+  catch { ads = []; }
+  return { ...item, adicionais: Array.isArray(ads) ? ads : [] };
+}
+
 export function listarItensComanda(comanda_id) {
-  return db.prepare("SELECT * FROM comanda_itens WHERE comanda_id = ? AND deleted_at IS NULL ORDER BY created_at ASC").all(comanda_id);
+  return db.prepare("SELECT * FROM comanda_itens WHERE comanda_id = ? AND deleted_at IS NULL ORDER BY created_at ASC")
+    .all(comanda_id).map(_parseItemComanda);
 }
 
 export function adicionarItemComanda({ comanda_id, produto_id, produto_nome, quantidade, preco_unitario, adicionais, obs, origem }) {
@@ -4383,14 +4993,14 @@ export function adicionarItemComanda({ comanda_id, produto_id, produto_nome, qua
   ).run(id, comanda_id, produto_id || null, produto_nome, quantidade || 1, preco_unitario, JSON.stringify(adicionais || []), obs || "", origem || "caixa");
   // Marca a comanda como alterada — sync leva itens novos junto no próximo tick.
   db.prepare("UPDATE comandas SET updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(comanda_id);
-  return db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
+  return _parseItemComanda(db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id));
 }
 
 export function atualizarStatusItemComanda(id, status) {
   db.prepare("UPDATE comanda_itens SET status = ?, updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(status, id);
   const item = db.prepare("SELECT * FROM comanda_itens WHERE id = ?").get(id);
   if (item) db.prepare("UPDATE comandas SET updated_at = strftime('%Y-%m-%d %H:%M:%f','now') WHERE id = ?").run(item.comanda_id);
-  return item;
+  return _parseItemComanda(item);
 }
 
 export function removerItemComanda(id) {
@@ -4477,7 +5087,10 @@ export function listarFilaCozinhaUnificada() {
       grupo_id: `pedido_${p.id}`,
       tipo: "delivery",
       tipo_entrega: p.tipo_entrega,
-      label: p.tipo_entrega === "retirada" ? "Retirada" : p.tipo_entrega === "casa" ? "No local" : "Delivery",
+      label: p.tipo_entrega === "balcao" ? "Balcão"
+           : p.tipo_entrega === "retirada" ? "Retirada"
+           : p.tipo_entrega === "casa" ? "No local"
+           : "Delivery",
       cliente_nome: p.cliente_nome,
       status: p.status,
       status_grupo: p.status === "preparando" ? "preparando" : "pendente",
@@ -4640,6 +5253,265 @@ export function listarImpressaoEventos({ limite = 200, pedido_id = null } = {}) 
     ORDER BY id DESC
     LIMIT ${lim}
   `).all(...params);
+}
+
+// ─── NF-e DE ENTRADA (controle fiscal de compras) ──────────────────────────
+
+export function parseNFeXml(xmlStr) {
+  const t = (tag) => {
+    const m = xmlStr.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
+    return m ? m[1].trim() : "";
+  };
+  const allMatches = (tag) => {
+    const re = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g");
+    const results = [];
+    let m;
+    while ((m = re.exec(xmlStr)) !== null) results.push(m[1]);
+    return results;
+  };
+
+  const ide = t("ide");
+  const emit = t("emit");
+  const total = t("ICMSTot");
+
+  const chaveMatch = xmlStr.match(/Id="NFe(\d{44})"/);
+  const chave = chaveMatch ? chaveMatch[1] : "";
+
+  const tIde = (tag) => { const m = ide.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : ""; };
+  const tEmit = (tag) => { const m = emit.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : ""; };
+  const tTotal = (tag) => { const m = total.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : ""; };
+
+  const enderEmit = t("enderEmit");
+  const tEnder = (tag) => { const m = enderEmit.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : ""; };
+
+  const nota = {
+    chave_acesso: chave,
+    numero_nf: tIde("nNF"),
+    serie: tIde("serie"),
+    data_emissao: tIde("dhEmi").slice(0, 10),
+    fornecedor_nome: tEmit("xNome"),
+    fornecedor_cnpj: tEmit("CNPJ"),
+    fornecedor_ie: tEmit("IE"),
+    fornecedor_cidade: tEnder("xMun"),
+    fornecedor_uf: tEnder("UF"),
+    valor_total: parseFloat(tTotal("vNF")) || 0,
+  };
+
+  const dets = allMatches("det");
+  const itens = dets.map((det, i) => {
+    const prod = det.match(/<prod>([\s\S]*?)<\/prod>/);
+    const p = prod ? prod[1] : "";
+    const tP = (tag) => { const m = p.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : ""; };
+    return {
+      num_item: i + 1,
+      produto_nome: tP("xProd"),
+      codigo: tP("cProd"),
+      ncm: tP("NCM"),
+      cfop: tP("CFOP"),
+      unidade: tP("uCom"),
+      quantidade: parseFloat(tP("qCom")) || 0,
+      valor_unitario: parseFloat(tP("vUnCom")) || 0,
+      valor_total: parseFloat(tP("vProd")) || 0,
+    };
+  });
+
+  return { nota, itens };
+}
+
+export function salvarNotaEntrada(nota, itens, xmlOriginal = "") {
+  const id = randomBytes(8).toString("hex");
+  db.prepare(`
+    INSERT INTO notas_entrada (id, chave_acesso, numero_nf, serie, data_emissao,
+      fornecedor_nome, fornecedor_cnpj, fornecedor_ie, valor_total, xml_original, origem)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, nota.chave_acesso || "", nota.numero_nf || "", nota.serie || "",
+    nota.data_emissao || "", nota.fornecedor_nome || "", nota.fornecedor_cnpj || "",
+    nota.fornecedor_ie || "", nota.valor_total || 0, xmlOriginal, nota.origem || "xml",
+  );
+
+  const insItem = db.prepare(`
+    INSERT INTO notas_entrada_itens (id, nota_id, num_item, produto_nome, codigo, ncm,
+      cfop, unidade, quantidade, valor_unitario, valor_total, estoque_item_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const itensIds = [];
+  for (const it of itens) {
+    const itemId = randomBytes(8).toString("hex");
+    insItem.run(
+      itemId, id, it.num_item || 0, it.produto_nome || "", it.codigo || "",
+      it.ncm || "", it.cfop || "", it.unidade || "un",
+      it.quantidade || 0, it.valor_unitario || 0, it.valor_total || 0,
+      it.estoque_item_id || null,
+    );
+    itensIds.push(itemId);
+  }
+
+  return { id, itensIds };
+}
+
+export function listarNotasEntrada({ limite = 100, offset = 0, mes = null } = {}) {
+  let where = "";
+  const params = [];
+  if (mes) {
+    where = "WHERE strftime('%Y-%m', data_emissao) = ?";
+    params.push(mes);
+  }
+  params.push(Math.min(500, Math.max(1, Number(limite) || 100)));
+  params.push(Math.max(0, Number(offset) || 0));
+  const notas = db.prepare(`
+    SELECT id, chave_acesso, numero_nf, serie, data_emissao, fornecedor_nome,
+           fornecedor_cnpj, valor_total, origem, created_at
+    FROM notas_entrada ${where}
+    ORDER BY data_emissao DESC, created_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params);
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM notas_entrada ${where}`).get(
+    ...(mes ? [mes] : [])
+  ).c;
+  return { notas, total };
+}
+
+export function buscarNotaEntrada(id) {
+  const nota = db.prepare("SELECT * FROM notas_entrada WHERE id = ?").get(id);
+  if (!nota) return null;
+  const itens = db.prepare(
+    "SELECT * FROM notas_entrada_itens WHERE nota_id = ? ORDER BY num_item"
+  ).all(id);
+  return { ...nota, itens };
+}
+
+export function excluirNotaEntrada(id) {
+  return db.prepare("DELETE FROM notas_entrada WHERE id = ?").run(id);
+}
+
+export function vincularItemEntradaAoEstoque(itemEntradaId, estoqueItemId) {
+  return db.prepare(
+    "UPDATE notas_entrada_itens SET estoque_item_id = ? WHERE id = ?"
+  ).run(estoqueItemId, itemEntradaId);
+}
+
+export function criarEstoqueAPartirDeEntrada(itemEntrada, tipo = "revenda") {
+  const codigo = itemEntrada.codigo || ("NF-" + randomBytes(4).toString("hex"));
+  const existente = db.prepare("SELECT id FROM estoque_itens WHERE codigo = ? AND (deleted_at IS NULL OR deleted_at = '')").get(codigo);
+  if (existente) return existente.id;
+
+  const id = randomBytes(6).toString("hex");
+  db.prepare(`
+    INSERT INTO estoque_itens (id, codigo, nome, unidade, saldo_atual, custo_medio, tipo, ncm)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, codigo, itemEntrada.produto_nome || "Produto importado",
+    itemEntrada.unidade || "un", itemEntrada.quantidade || 0,
+    itemEntrada.valor_unitario || 0, tipo, itemEntrada.ncm || "",
+  );
+
+  const entradaId = randomBytes(6).toString("hex");
+  db.prepare(`
+    INSERT INTO estoque_entradas (id, item_id, quantidade, custo_unitario, data, nf, obs)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    entradaId, id, itemEntrada.quantidade || 0, itemEntrada.valor_unitario || 0,
+    new Date().toISOString().slice(0, 10), itemEntrada.codigo || "", "Importado de NF-e de entrada",
+  );
+
+  return id;
+}
+
+export function notasEntradaDoMes(anoMes) {
+  return db.prepare(`
+    SELECT id, chave_acesso, numero_nf, serie, data_emissao, fornecedor_nome,
+           fornecedor_cnpj, valor_total, xml_original, origem, created_at
+    FROM notas_entrada
+    WHERE strftime('%Y-%m', data_emissao) = ?
+    ORDER BY data_emissao ASC
+  `).all(anoMes);
+}
+
+// ─── RELATÓRIO FISCAL CONSOLIDADO ───────────────────────────────────────────
+
+export function relatorioFiscal({ mes, nivel = "resumo", tipo = "todos" } = {}) {
+  const anoMes = mes || (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; })();
+
+  const saida = { quantidade: 0, total: 0, produtos: [] };
+  const entrada = { quantidade: 0, total: 0, itens: [] };
+
+  // ── SAÍDA (NFC-e autorizadas) ──
+  if (tipo === "todos" || tipo === "saida") {
+    const nfces = db.prepare(`
+      SELECT id, numero, serie, chave, motor, valor_total, created_at
+      FROM nfce_emitidas
+      WHERE status = 'autorizada' AND strftime('%Y-%m', created_at) = ?
+    `).all(anoMes);
+
+    saida.quantidade = nfces.length;
+    saida.total = nfces.reduce((s, n) => s + (n.valor_total || 0), 0);
+
+    if (nivel === "produto" || nivel === "completo") {
+      const porProduto = {};
+      for (const nfce of nfces) {
+        const pedido = db.prepare("SELECT id, metodo_pagamento FROM pedidos WHERE id = (SELECT pedido_id FROM nfce_emitidas WHERE id = ?)").get(nfce.id);
+        if (!pedido) continue;
+        const itens = db.prepare("SELECT produto_id, produto_nome, quantidade, preco_unitario, custo_unitario FROM pedido_itens WHERE pedido_id = ?").all(pedido.id);
+        for (const it of itens) {
+          const key = it.produto_id || it.produto_nome;
+          if (!porProduto[key]) {
+            porProduto[key] = { produto_id: it.produto_id, nome: it.produto_nome, quantidade: 0, faturamento: 0, custo: 0, ocorrencias: 0 };
+          }
+          const qtd = Number(it.quantidade) || 0;
+          porProduto[key].quantidade += qtd;
+          porProduto[key].faturamento += qtd * (Number(it.preco_unitario) || 0);
+          porProduto[key].custo += qtd * (Number(it.custo_unitario) || 0);
+          porProduto[key].ocorrencias += 1;
+        }
+      }
+      saida.produtos = Object.values(porProduto).sort((a, b) => b.faturamento - a.faturamento);
+      if (nivel === "completo") {
+        for (const p of saida.produtos) {
+          p.margem = p.faturamento - p.custo;
+          p.margem_pct = p.faturamento > 0 ? ((p.margem / p.faturamento) * 100) : 0;
+        }
+      }
+    }
+  }
+
+  // ── ENTRADA (NF-e de fornecedores) ──
+  if (tipo === "todos" || tipo === "entrada") {
+    const nfes = db.prepare(`
+      SELECT id, numero_nf, fornecedor_nome, fornecedor_cnpj, valor_total, data_emissao, origem
+      FROM notas_entrada
+      WHERE strftime('%Y-%m', data_emissao) = ?
+    `).all(anoMes);
+
+    entrada.quantidade = nfes.length;
+    entrada.total = nfes.reduce((s, n) => s + (n.valor_total || 0), 0);
+
+    if (nivel === "produto" || nivel === "completo") {
+      for (const nfe of nfes) {
+        const itensNfe = db.prepare("SELECT produto_nome, ncm, quantidade, valor_unitario, valor_total, unidade FROM notas_entrada_itens WHERE nota_id = ?").all(nfe.id);
+        entrada.itens.push({
+          nota_id: nfe.id,
+          numero_nf: nfe.numero_nf,
+          fornecedor: nfe.fornecedor_nome,
+          cnpj: nfe.fornecedor_cnpj,
+          data: nfe.data_emissao,
+          origem: nfe.origem,
+          valor_nota: nfe.valor_total,
+          produtos: itensNfe,
+        });
+      }
+    }
+  }
+
+  return {
+    periodo: anoMes,
+    nivel,
+    tipo,
+    saida,
+    entrada,
+    saldo: saida.total - entrada.total,
+  };
 }
 
 export default db;

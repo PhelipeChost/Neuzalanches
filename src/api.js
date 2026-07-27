@@ -1,4 +1,21 @@
-const _base = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
+// Base normal do build (ex.: "/" no desktop, "/boutiquedepeixes" num cardápio hospedado).
+const _baseBuild = (import.meta.env.BASE_URL || "/").replace(/\/+$/, "");
+// Detecção do proxy do Suporte Nexus. Cenário: admin da plataforma Nexus abre o
+// PDV do cliente num iframe apontando pra .../api/suporte/proxy/:cid/. Sem prefix,
+// fetch("/api/...") escapa do proxy e vai pro domínio raiz — que é a própria
+// plataforma Nexus, cujo authMiddleware devolve "Token não fornecido".
+// Duas fontes, na ordem: (1) global injetada pelo próprio proxy;
+// (2) pathname atual — se começa com /api/suporte/proxy/:cid/, extrai daí.
+function _detectarPrefixSuporte() {
+  if (typeof window === "undefined") return null;
+  if (window.__NEXUS_API_BASE__) return String(window.__NEXUS_API_BASE__).replace(/\/+$/, "");
+  const path = window.location && window.location.pathname;
+  if (!path) return null;
+  const m = path.match(/^(\/api\/suporte\/proxy\/[^/]+)/);
+  return m ? m[1] : null;
+}
+const _baseOverride = _detectarPrefixSuporte();
+const _base = _baseOverride || _baseBuild;
 const API = `${_base}/api`;
 // Exportado p/ fetches diretos (fora do wrapper `request`) continuarem
 // respeitando o subpath do build (ex.: /boutiquedepeixes/api/...).
@@ -47,6 +64,28 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+// Download autenticado de um arquivo binário (ex.: .zip). O `request` acima só
+// devolve JSON — aqui pegamos o blob e disparamos o download no navegador.
+async function baixarArquivo(path, nomeArquivo) {
+  const res = await fetch(`${API}${path}`, {
+    headers: { ...authHeaders() },
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Erro ao gerar o arquivo");
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
 export const api = {
   // Auth
   login: (data) => request("/auth/login", { method: "POST", body: JSON.stringify(data) }),
@@ -92,6 +131,21 @@ export const api = {
     antigoEmitir: (pedido_id = null) => request("/fiscal/antigo/emitir", { method: "POST", body: JSON.stringify({ pedido_id }) }),
     antigoListar: () => request("/fiscal/antigo/nfce"),
     antigoXml: (id) => request(`/fiscal/antigo/nfce/${id}/xml`),
+    // Documentos do mês (Suporte): resumo p/ navegação + download do .zip.
+    documentosMesMeta: (anoMes) => request(`/fiscal/documentos-mes/${anoMes}/meta`),
+    baixarDocumentosMes: (anoMes) => baixarArquivo(`/fiscal/documentos-mes/${anoMes}`, `documentos-fiscais-${anoMes}.zip`),
+    // Relatório fiscal consolidado (entrada + saída)
+    relatorio: (params = {}) => request(`/fiscal/relatorio?${new URLSearchParams(params)}`),
+    // NF-e de Entrada (controle fiscal de compras)
+    nfeEntrada: {
+      preview: (xml) => request("/fiscal/nfe-entrada/preview", { method: "POST", body: JSON.stringify({ xml }) }),
+      enviar: (xml, auto_criar_estoque = false, tipo_estoque = "revenda") => request("/fiscal/nfe-entrada", { method: "POST", body: JSON.stringify({ xml, auto_criar_estoque, tipo_estoque }) }),
+      manual: (nota, itens, auto_criar_estoque = false, tipo_estoque = "revenda") => request("/fiscal/nfe-entrada/manual", { method: "POST", body: JSON.stringify({ nota, itens, auto_criar_estoque, tipo_estoque }) }),
+      listar: (params = {}) => request(`/fiscal/nfe-entrada?${new URLSearchParams(params)}`),
+      buscar: (id) => request(`/fiscal/nfe-entrada/${id}`),
+      excluir: (id) => request(`/fiscal/nfe-entrada/${id}`, { method: "DELETE" }),
+      vincular: (itemId, estoque_item_id) => request(`/fiscal/nfe-entrada/item/${itemId}/vincular`, { method: "PUT", body: JSON.stringify({ estoque_item_id }) }),
+    },
   },
 
   // Perfil / Setup do estabelecimento
@@ -111,6 +165,15 @@ export const api = {
     login: (senha) => request("/suporte/login", { method: "POST", body: JSON.stringify({ senha }) }),
     backups: () => request("/suporte/backups"),
     backup: () => request("/suporte/backup", { method: "POST" }),
+    // Backup no Google Drive (Nexus) — só Operador
+    drive: {
+      obter: () => request("/suporte/drive"),
+      salvar: (data) => request("/suporte/drive", { method: "PUT", body: JSON.stringify(data) }),
+      testar: () => request("/suporte/drive/testar", { method: "POST" }),
+      enviar: () => request("/suporte/drive/enviar", { method: "POST" }),
+      backups: () => request("/suporte/drive/backups"),
+      restaurar: (file_id, nome) => request("/suporte/drive/restaurar", { method: "POST", body: JSON.stringify({ file_id, nome }) }),
+    },
     // Relatórios do Suporte
     pedidos: (params = {}) => {
       const q = new URLSearchParams(params).toString();
@@ -160,6 +223,11 @@ export const api = {
     atualizar: (id, data) => request(`/categorias/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     reordenar: (ids) => request("/categorias/reordenar", { method: "PUT", body: JSON.stringify({ ids }) }),
     excluir: (id) => request(`/categorias/${id}`, { method: "DELETE" }),
+  },
+
+  exclusaoCascata: {
+    preview: (tipo, id) => request(`/exclusao-cascata/preview/${tipo}/${id}`),
+    executar: (tipo, id, opcoes) => request(`/exclusao-cascata/executar/${tipo}/${id}`, { method: "POST", body: JSON.stringify(opcoes) }),
   },
 
   // Adicionais
@@ -225,6 +293,10 @@ export const api = {
     criar: (data) => request("/pedidos", { method: "POST", body: JSON.stringify(data) }),
     criarPublico: (data) => request("/pedidos/publico", { method: "POST", body: JSON.stringify(data) }),
     atualizarStatus: (id, status) => request(`/pedidos/${id}/status`, { method: "PUT", body: JSON.stringify({ status }) }),
+    // Venda por peso — lojista informa o peso real da peça, cliente confirma/recusa
+    pesarItem: (id, item_id, peso_kg) => request(`/pedidos/${id}/pesar-item`, { method: "POST", body: JSON.stringify({ item_id, peso_kg }) }),
+    confirmarPesagem: (id) => request(`/pedidos/${id}/confirmar-pesagem`, { method: "POST" }),
+    recusarPesagem: (id, motivo) => request(`/pedidos/${id}/recusar-pesagem`, { method: "POST", body: JSON.stringify({ motivo }) }),
     excluir: (id) => request(`/pedidos/${id}`, { method: "DELETE" }),
     contarPendentes: () => request("/pedidos/pendentes/count"),
     // Listagem pública pelo telefone (read-only para "Meus Pedidos" do cliente)
@@ -262,6 +334,12 @@ export const api = {
     enviarProdutos: () => request("/sync/produtos", { method: "POST" }),
     meuToken: () => request("/config/sync-token"),
     regenerarMeuToken: () => request("/config/sync-token/regenerar", { method: "POST" }),
+    // Diagnóstico do QR — o cliente vê se comandas estão descendo do online.
+    status: () => request("/sync/status"),
+    agora: () => request("/sync/agora", { method: "POST" }),
+    // Reset do cursor — usar só se comandas antigas ficaram pra trás
+    // (clock skew, bug, ou downtime longo do PDV).
+    resetCursor: () => request("/sync/reset-cursor", { method: "POST" }),
   },
 
   // Horário de funcionamento
@@ -394,6 +472,7 @@ export const api = {
     listar: () => request("/lixeira"),
     restaurar: (tipo, id) => request(`/lixeira/${tipo}/${id}/restaurar`, { method: "POST" }),
     excluirDefinitivo: (tipo, id) => request(`/lixeira/${tipo}/${id}`, { method: "DELETE" }),
+    esvaziar: () => request("/lixeira", { method: "DELETE" }),
   },
 
   // T10 — analytics do cardápio

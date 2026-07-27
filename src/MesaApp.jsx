@@ -4,6 +4,12 @@ import Logo from "./Logo";
 import { ImagemProduto } from "./Produtos";
 import MontagemProduto, { precisaMontagem } from "./MontagemProduto";
 import { cardapioDoProduto, precoExibicao } from "./segmentos";
+// Usa o MESMO sistema de marca do ClienteApp — o cardápio da mesa herda paleta,
+// fontes, emblema e emoji por categoria da mesma BRAND (definida em build time
+// pela env VITE_BRAND). Sem isso, o QR abria em visual genérico enquanto o
+// cardápio principal já estava com a identidade da loja aplicada.
+import { BRAND, cssVarsDaMarca, visualCategoria } from "./brand";
+import { filtrarAdicionaisPorCategoria } from "./adicionais-filter";
 
 const fmt = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -36,12 +42,12 @@ function SlideshowModal({ produto }) {
 
   if (imagens.length === 0) return (
     <div style={{ width: "100%", height: 240, background: "var(--surface-warm)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <span style={{ fontSize: 56, opacity: 0.35 }}>🍽️</span>
+      <span style={{ fontSize: 56, opacity: 0.35 }}>{BRAND.emblema || "🍽️"}</span>
     </div>
   );
 
   return (
-    <div style={{ position: "relative", width: "100%", height: 260, background: "#5C2A0A", overflow: "hidden", userSelect: "none" }}
+    <div style={{ position: "relative", width: "100%", height: 260, background: "var(--dark)", overflow: "hidden", userSelect: "none" }}
       onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <img src={imagens[idx]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       {imagens.length > 1 && (
@@ -63,17 +69,16 @@ function SlideshowModal({ produto }) {
 // ─── CARD PRODUTO ─────────────────────────────────────────────────────────────
 function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, catIdPorNome, onVerDetalhes, onAdd }) {
   const catId = (catIdPorNome || {})[p.categoria];
-  const adsEspecificos = (adicionaisDisponiveis || []).filter(a => !a.categoria_id || a.categoria_id === catId);
-  const adsAplicaveis = adsEspecificos.length > 0 ? adsEspecificos : (adicionaisDisponiveis || []);
+  const adsEspecificos = filtrarAdicionaisPorCategoria(adicionaisDisponiveis, catId);
+  // Fallback só quando não há nenhum adicional com categorias_ids explícito
+  // — respeita a escolha explícita quando existir (multi-cat novo).
+  const algumTemMulti = (adicionaisDisponiveis || []).some(a => Array.isArray(a.categorias_ids));
+  const adsAplicaveis = adsEspecificos.length > 0 || algumTemMulti ? adsEspecificos : (adicionaisDisponiveis || []);
   const podePersonalizar = catPermiteAdicionais[p.categoria] && adsAplicaveis.length > 0;
-  const cfgPorCat = {
-    "Hambúrgueres": { bg: "#5C2A0A", emoji: "🍔" }, "Hamburgueres": { bg: "#5C2A0A", emoji: "🍔" },
-    "Beirutes": { bg: "#6B1A1A", emoji: "🥙" }, "Lanches": { bg: "#2A4A18", emoji: "🥪" },
-    "Salgados": { bg: "#7A5A18", emoji: "🥟" }, "Porções": { bg: "#4A3214", emoji: "🍟" },
-    "Porcoes": { bg: "#4A3214", emoji: "🍟" }, "Bebidas": { bg: "#12305A", emoji: "🥤" },
-    "Sobremesas": { bg: "#5C1A4A", emoji: "🍰" },
-  };
-  const cfg = cfgPorCat[p.categoria] || { bg: "#5C2A0A", emoji: "🍽️" };
+  // Fundo + emoji herdado do BRAND ativo (default/boutiquedepeixes/…), com
+  // matching tolerante a acento/plural. Assim boutique mostra 🐟 no azul-mar
+  // e lanchonete mostra 🍔 no marrom-terra, sem hardcode duplicado aqui.
+  const cfg = visualCategoria(p.categoria);
 
   return (
     <div onClick={() => onVerDetalhes(p)} style={{
@@ -92,7 +97,7 @@ function CardProduto({ p, catPermiteAdicionais, adicionaisDisponiveis, catIdPorN
         )}
       </div>
       <div style={{ padding: "14px 16px 16px", flex: 1, display: "flex", flexDirection: "column" }}>
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 6, lineHeight: 1.25 }}>{p.nome}</div>
+        <div style={{ fontFamily: BRAND.fontDisplay, fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 6, lineHeight: 1.25 }}>{p.nome}</div>
         {p.descricao && (
           <div style={{ fontSize: 13, color: "var(--text-muted)", lineHeight: 1.5, marginBottom: 10, flex: 1, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.descricao}</div>
         )}
@@ -127,7 +132,7 @@ function ModalProduto({ produto, adicionais, permiteAdicionais, onAddSimples, on
         <div style={{ marginTop: 8 }}><SlideshowModal produto={produto} /></div>
         <div style={{ padding: "22px 24px 32px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, lineHeight: 1.2, color: "var(--text)" }}>{produto.nome}</div>
+            <div style={{ fontFamily: BRAND.fontDisplay, fontSize: 24, fontWeight: 800, lineHeight: 1.2, color: "var(--text)" }}>{produto.nome}</div>
             <button onClick={onClose} style={{ background: "var(--surface-warm)", border: "none", borderRadius: "50%", width: 34, height: 34, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: "var(--text-muted)" }}>✕</button>
           </div>
           {produto.descricao && <p style={{ fontSize: 14, color: "var(--text-muted)", lineHeight: 1.65, marginBottom: 18, fontWeight: 500 }}>{produto.descricao}</p>}
@@ -174,13 +179,13 @@ function ModalAdicionais({ produto, adicionais, onConfirm, onClose }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
       <div style={{ background: "var(--surface)", borderRadius: 18, padding: "26px 28px", width: 440, maxWidth: "100%", maxHeight: "85vh", overflowY: "auto", boxShadow: "0 24px 60px rgba(0,0,0,0.3)", border: "1.5px solid var(--border)" }} onClick={e => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, color: "var(--text)" }}>Adicionais</div>
+          <div style={{ fontFamily: BRAND.fontDisplay, fontSize: 20, fontWeight: 800, color: "var(--text)" }}>Adicionais</div>
           <button onClick={onClose} style={{ background: "var(--surface-warm)", border: "none", borderRadius: "50%", width: 34, height: 34, fontSize: 16, cursor: "pointer", color: "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
         </div>
         <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 18, padding: "14px 16px", background: "var(--surface-warm)", borderRadius: 12 }}>
           <ImagemProduto src={produto.imagem} tamanho={52} borderRadius={10} />
           <div>
-            <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text)" }}>{produto.nome}</div>
+            <div style={{ fontSize: 14, fontWeight: 800, fontFamily: BRAND.fontDisplay, color: "var(--text)" }}>{produto.nome}</div>
             <div style={{ fontSize: 14, color: "var(--brand)", fontWeight: 800, fontFamily: "'Plus Jakarta Sans', sans-serif", marginTop: 2 }}>{fmt(produto.preco)}</div>
           </div>
         </div>
@@ -285,11 +290,12 @@ export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false })
   const adicionaisParaProduto = (produto) => {
     if (!produto || !catPermiteAdicionais[produto.categoria]) return [];
     const catId = catIdPorNome[produto.categoria];
-    // Filtra por categoria; se ninguém casar (ex.: cliente não configurou o
-    // vínculo categoria×adicional), cai no fallback e mostra TODOS os disponíveis.
-    // Sem isso, o modal abria vazio e o operador do PDV nem descobria por quê.
-    const especificos = adicionaisDisponiveis.filter(a => !a.categoria_id || a.categoria_id === catId);
-    return especificos.length > 0 ? especificos : adicionaisDisponiveis;
+    // Multi-cat novo: respeita categorias_ids explícito. Legacy: se ninguém
+    // casar cai no fallback pra não abrir modal vazio no PDV antigo. Quando
+    // algum adicional já tem categorias_ids, respeita a escolha explícita.
+    const especificos = filtrarAdicionaisPorCategoria(adicionaisDisponiveis, catId);
+    const algumTemMulti = adicionaisDisponiveis.some(a => Array.isArray(a.categorias_ids));
+    return especificos.length > 0 || algumTemMulti ? especificos : adicionaisDisponiveis;
   };
 
   const categoriasComProdutos = [
@@ -409,25 +415,14 @@ export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false })
 
   // ─── STYLES ─────────────────────────────────────────────────────────────────
   const themeStyles = `
-    @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Nunito:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');
+    @import url('${BRAND.fontImport}');
     html, body { margin: 0 !important; padding: 0 !important; }
     #root { width: 100% !important; max-width: 100% !important; margin: 0 !important; padding: 0 !important; border: none !important; text-align: left !important; display: block !important; min-height: 100vh; }
-    .mesa-app {
-      --bg: #FFF9F4; --surface: #FFFFFF; --surface-warm: #FFF2E6;
-      --brand: #E8650A; --brand-dark: #C0510A; --brand-light: #FEEADA;
-      --text: #2B1608; --text-muted: #9A6E50; --text-soft: #C49878;
-      --border: #EDD9C5; --border-dark: #D8BFA8;
-      --hot: #DC2626; --new-green: #059669;
-    }
-    .mesa-app[data-theme="dark"] {
-      --bg: #120A04; --surface: #1E1008; --surface-warm: #251408;
-      --brand: #F07020; --brand-dark: #D05C10; --brand-light: #3A1A06;
-      --text: #F5E8D8; --text-muted: #C09070; --text-soft: #7A5540;
-      --border: #2E1A0A; --border-dark: #3E2414;
-      --hot: #EF4444; --new-green: #10B981;
-    }
+    .mesa-app { ${cssVarsDaMarca(BRAND.tema.light)} }
+    .mesa-app[data-theme="dark"] { ${cssVarsDaMarca(BRAND.tema.dark)} }
     .mesa-app, .mesa-app * { box-sizing: border-box; }
     .mesa-app { font-family: 'Nunito', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .mesa-app h1, .mesa-app h2, .mesa-app h3 { font-family: ${BRAND.fontDisplay}; }
     @keyframes fi { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes slideUp { from { transform: translateY(60px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     .mesa-anim { animation: fi 0.25s ease; }
@@ -466,7 +461,7 @@ export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false })
         <div className="mesa-anim" style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
           <div style={{ background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 18, padding: 44, maxWidth: 520, width: "100%", textAlign: "center" }}>
             <div style={{ width: 72, height: 72, borderRadius: "50%", background: "var(--brand-light)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px", fontSize: 32, color: "var(--new-green)", fontWeight: 800 }}>✓</div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 26, fontWeight: 800, marginBottom: 10, color: "var(--brand)" }}>Pedido enviado!</div>
+            <div style={{ fontFamily: BRAND.fontDisplay, fontSize: 26, fontWeight: 800, marginBottom: 10, color: "var(--brand)" }}>Pedido enviado!</div>
             <div style={{ fontSize: 16, color: "var(--text-muted)", marginBottom: 8, fontWeight: 600 }}>
               Mesa {mesaNumero} — Comanda #{String(pedidoEnviado.comanda?.numero || "").padStart(3, "0")}
             </div>
@@ -519,7 +514,7 @@ export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false })
           )}
           <Logo size={36} radius={10} />
           <div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontWeight: 800, fontSize: 15, color: "var(--text)", lineHeight: 1 }}>
+            <div style={{ fontFamily: BRAND.fontDisplay, fontWeight: 800, fontSize: 15, color: "var(--text)", lineHeight: 1 }}>
               {modoAtendente ? "Atendimento" : "Cardápio Digital"}
             </div>
             <div style={{ fontSize: 11, color: "var(--brand)", fontWeight: 800, marginTop: 2 }}>
@@ -591,7 +586,7 @@ export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false })
               <div key={cat} id={`mesa-cat-${cat.replace(/\s+/g, "-")}`} style={{ marginBottom: 48, scrollMarginTop: 130 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
                   <div style={{ width: 6, height: 6, background: "var(--brand)", borderRadius: "50%", flexShrink: 0 }} />
-                  <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 12, fontWeight: 800, letterSpacing: "2px", textTransform: "uppercase", color: "var(--text-soft)", whiteSpace: "nowrap" }}>{cat}</span>
+                  <span style={{ fontFamily: BRAND.fontDisplay, fontSize: 12, fontWeight: 800, letterSpacing: "2px", textTransform: "uppercase", color: "var(--text-soft)", whiteSpace: "nowrap" }}>{cat}</span>
                   <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
                   <span style={{ fontSize: 12, color: "var(--text-soft)", fontWeight: 700, whiteSpace: "nowrap" }}>
                     {produtos.filter(p => cat === "Outros" ? !p.categoria : p.categoria === cat).length} {produtos.filter(p => cat === "Outros" ? !p.categoria : p.categoria === cat).length === 1 ? "item" : "itens"}
@@ -611,14 +606,14 @@ export default function MesaApp({ mesaNumero, onVoltar, modoAtendente = false })
         {/* CARRINHO (inline, not separate tab) */}
         {carrinho.length > 0 && (
           <div id="mesa-carrinho" style={{ marginTop: 40, scrollMarginTop: 80 }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, marginBottom: 16, color: "var(--text)" }}>Seu Pedido</div>
+            <div style={{ fontFamily: BRAND.fontDisplay, fontSize: 22, fontWeight: 800, marginBottom: 16, color: "var(--text)" }}>Seu Pedido</div>
             <div style={{ background: "var(--surface)", border: "1.5px solid var(--border)", borderRadius: 16, overflow: "hidden" }}>
               {carrinho.map((item, i) => {
                 const itemTotal = calcItemTotal(item);
                 return (
                   <div key={item._uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: i < carrinho.length - 1 ? "1px solid var(--border)" : "none", flexWrap: "wrap", gap: 10 }}>
                     <div style={{ flex: "1 1 200px" }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", fontFamily: "'Syne', sans-serif" }}>{item.produto_nome}</div>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text)", fontFamily: BRAND.fontDisplay }}>{item.produto_nome}</div>
                       <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2, fontWeight: 600 }}>{fmt(item.preco_unitario)} cada</div>
                       {item.adicionais?.length > 0 && (
                         <div style={{ marginTop: 6 }}>

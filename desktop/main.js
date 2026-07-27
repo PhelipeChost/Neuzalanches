@@ -5,7 +5,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeImage } from "electron";
 import { fileURLToPath, pathToFileURL } from "url";
 import { dirname, join } from "path";
-import { readFileSync, writeFileSync, existsSync, appendFileSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, appendFileSync, rmSync, copyFileSync, renameSync } from "fs";
 import http from "http";
 
 import { verificarLicenca } from "./licenca/verificar.js";
@@ -14,6 +14,7 @@ import { fingerprintMaquina } from "./licenca/fingerprint.js";
 import { lerLicenca, salvarLicenca, removerLicenca } from "./licenca/armazenamento.js";
 import { ativarOnline, heartbeatOnline, lerChave, salvarChave, aplicarConfigSync, gerarCobrancaPix, statusPagamento } from "./licenca/online.js";
 import { criarMotorSync, criarAuthVps } from "./sync/motor.js";
+import { criarTunelSuporte } from "./suporte/tunel.js";
 import { configurarAutoUpdate } from "./atualizacao.js";
 import { iniciarAgenteImpressao } from "./agente-impressao.js";
 import { lerConfigRede, salvarConfigRede, meusIpsLan, testarServidor, diagnosticoRede, criarRegraFirewall } from "./rede/config.js";
@@ -43,16 +44,71 @@ function resolverChave() {
 let splash = null;    // janela de boas-vindas
 let janela = null;    // janela principal (login/app ou tela de bloqueio)
 
+// Aplica uma restauração de backup pendente (Suporte → Drive → Restaurar),
+// ANTES do banco ser aberto — troca de arquivo é a única forma segura de
+// "restaurar" com better-sqlite3 (não dá pra substituir uma conexão já aberta).
+// Faz backup de segurança do banco atual e limpa -wal/-shm antigos (senão o
+// SQLite tenta aplicar write-ahead-log de um banco que não é mais este).
+function aplicarRestauracaoPendente(dbPath) {
+  const pendente = `${dbPath}.pending-restore`;
+  if (!existsSync(pendente)) return;
+  try {
+    if (existsSync(dbPath)) {
+      copyFileSync(dbPath, dbPath.replace(/\.db$/, "") + `.pre-restore-${Date.now()}.bak`);
+    }
+    for (const sufixo of ["-wal", "-shm"]) {
+      try { rmSync(dbPath + sufixo); } catch { /* não existia */ }
+    }
+    renameSync(pendente, dbPath);
+    console.log("[restore] backup restaurado com sucesso em", dbPath);
+  } catch (e) {
+    console.error("[restore] falhou, mantendo banco atual:", e.message);
+    try { rmSync(pendente); } catch { /* ignora */ }
+  }
+}
+
 // ─── Servidor local (reaproveita server/index.js) ────────────────────────────
 async function iniciarServidor() {
   const dirDados = app.getPath("userData");
+  const dbPath = join(dirDados, "fluxo-caixa.db");
+  aplicarRestauracaoPendente(dbPath);
   process.env.PORT = String(PORT);
-  process.env.FLUXO_DB_PATH = join(dirDados, "fluxo-caixa.db");     // banco gravável
+  process.env.FLUXO_DB_PATH = dbPath;     // banco gravável
   process.env.FLUXO_DIST_PATH = join(__dirname, "app-dist");        // frontend base "/"
   process.env.NODE_ENV = "production";
   process.env.NEXUS_DESKTOP = "1";  // habilita login opcional (acesso direto até ativar)
   process.env.MERCADO_URL = `http://127.0.0.1:${MERCADO_PORT}`; // exposto no GET tipos-estabelecimento
+  // Suporte remoto (túnel): passa a chave pública + client_id da licença pro
+  // server/index.js validar o header x-nexus-suporte-token. Só define se a
+  // licença lida tiver client_id — sem client_id não faz diferença expor a env.
+  try {
+    const licenca = lerLicenca(dirDados);
+    const check = verificarLicenca(licenca, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprintMaquina() });
+    const cid = check?.claims?.client_id;
+    if (cid) {
+      process.env.NEXUS_SUPORTE_PUBKEY = PUBKEY;
+      process.env.NEXUS_SUPORTE_CLIENT_ID = String(cid);
+    }
+  } catch { /* sem licença = sem suporte remoto, não bloqueia boot */ }
+  // O desktop não guarda a chave da Evolution (só existe no banco da nuvem do
+  // estabelecimento) — expõe a URL da nuvem (mesma do sync.json da "cozinha
+  // simultânea") pra server/services/whatsapp.js repassar o envio por lá em
+  // vez de tentar falar direto com a Evolution a partir da máquina do lojista.
+  try {
+    const syncCfg = JSON.parse(readFileSync(join(dirDados, "sync.json"), "utf8"));
+    if (syncCfg.vpsUrl) process.env.VPS_PROXY_URL = syncCfg.vpsUrl;
+  } catch { /* sem sync.json ainda (licença não ativada) — segue sem proxy */ }
   if (!process.env.JWT_SECRET) process.env.JWT_SECRET = "nexus-desktop-" + fingerprintMaquina();
+  // Credencial OAuth do Drive é da Nexus (global, mesma em todo instalador) —
+  // permite backup off-site sem o cliente configurar nada; só a pasta é por
+  // cliente (Suporte → Operador). Ver server/services/gdrive.js.
+  // Lê de desktop/drive-creds.json (gitignored) — bundled no instalador.
+  try {
+    const _driveCreds = JSON.parse(readFileSync(join(__dirname, "drive-creds.json"), "utf8"));
+    if (!process.env.DRIVE_CLIENT_ID) process.env.DRIVE_CLIENT_ID = _driveCreds.client_id;
+    if (!process.env.DRIVE_CLIENT_SECRET) process.env.DRIVE_CLIENT_SECRET = _driveCreds.client_secret;
+    if (!process.env.DRIVE_REFRESH_TOKEN) process.env.DRIVE_REFRESH_TOKEN = _driveCreds.refresh_token;
+  } catch { /* drive-creds.json ausente — backup no Drive desabilitado */ }
 
   await import(pathToFileURL(join(REPO_ROOT, "server", "index.js")).href);
   await esperarPorta(PORT, 15000);
@@ -79,6 +135,34 @@ async function iniciarMercado() {
 
   await import(pathToFileURL(backendIndex).href);
   console.log(`[mercado] PDV Mercado no ar em http://127.0.0.1:${MERCADO_PORT}`);
+}
+
+// ─── Túnel de suporte remoto (Nexus) ─────────────────────────────────────────
+// Estado emitido pelo túnel: { estado: "conectando"|"conectado"|"desconectado"|"bloqueado", sessaoAtiva: bool }
+// A UI escuta via IPC ("suporte:estado") pra mostrar o indicador visível.
+let tunelSuporte = null;
+let ultimoEstadoSuporte = { estado: "desconectado", sessaoAtiva: false };
+
+function iniciarTunelSuporte(dirDados) {
+  const licenca = lerLicenca(dirDados);
+  if (!licenca) { console.log("[suporte-tunel] sem licença — desligado"); return; }
+  const check = verificarLicenca(licenca, { publicKeyPem: PUBKEY, fingerprintAtual: fingerprintMaquina() });
+  if (!check?.claims?.client_id) {
+    console.log("[suporte-tunel] licença sem client_id — desligado (Suporte Nexus não consegue acessar sem)");
+    return;
+  }
+  tunelSuporte = criarTunelSuporte({
+    tokenLicenca: licenca,
+    porta: PORT,
+    onEstado: (s) => {
+      ultimoEstadoSuporte = s;
+      try {
+        if (janela && !janela.isDestroyed()) janela.webContents.send("suporte:estado", s);
+      } catch { /* janela pode nem existir ainda */ }
+    },
+    log: (m) => console.log("[suporte-tunel]", m),
+  });
+  tunelSuporte.start();
 }
 
 // ─── Sincronização com a nuvem (opcional, config em userData/sync.json) ──────
@@ -308,6 +392,9 @@ ipcMain.handle("licenca:reiniciar", () => {
 // Splash pergunta a versão
 ipcMain.handle("splash:versao", () => app.getVersion());
 
+// Estado atual do túnel de suporte (a UI também escuta pushes via "suporte:estado")
+ipcMain.handle("suporte:estado", () => ultimoEstadoSuporte);
+
 // Status da licença — usado pelo Suporte (plano de assinatura / validade).
 // Só LÊ e verifica; não altera nada.
 ipcMain.handle("licenca:status", () => {
@@ -363,6 +450,25 @@ ipcMain.handle("janela:refocus", () => {
     if (janela && !janela.isDestroyed()) { janela.blur(); janela.focus(); }
   } catch { /* janela pode não existir ainda */ }
   return { ok: true };
+});
+
+// Toggle fullscreen — no Electron esconde a barra de tarefas do Windows.
+// Retorna o novo estado pra UI atualizar o ícone.
+ipcMain.handle("janela:fullScreen", () => {
+  try {
+    if (janela && !janela.isDestroyed()) {
+      const novo = !janela.isFullScreen();
+      janela.setFullScreen(novo);
+      return { ok: true, fullScreen: novo };
+    }
+  } catch { /* ignore */ }
+  return { ok: false, fullScreen: false };
+});
+ipcMain.handle("janela:isFullScreen", () => {
+  try {
+    if (janela && !janela.isDestroyed()) return { fullScreen: janela.isFullScreen() };
+  } catch { /* ignore */ }
+  return { fullScreen: false };
 });
 
 // ─── Heartbeat ("ligar em casa") ─────────────────────────────────────────────
@@ -467,6 +573,7 @@ async function main() {
     abrirApp(resultado);   // esta chama fecharSplash() no ready-to-show
     iniciarSync(dirDados).catch(e => console.error("[sync] falha ao iniciar:", e.message));
     iniciarHeartbeat(dirDados);           // renova licença + config de sync em segundo plano
+    try { iniciarTunelSuporte(dirDados); } catch (e) { console.error("[suporte-tunel] falha:", e.message); }
     configurarAutoUpdate(() => janela);   // verifica/baixa atualização em segundo plano
   } catch (err) {
     console.error("[boot] FALHA ao iniciar servidor local:\n", err && err.stack ? err.stack : err);
@@ -477,6 +584,9 @@ async function main() {
 }
 
 app.whenReady().then(main);
-app.on("before-quit", () => { try { motorSync && motorSync.stop(); } catch {} });
+app.on("before-quit", () => {
+  try { motorSync && motorSync.stop(); } catch {}
+  try { tunelSuporte && tunelSuporte.stop(); } catch {}
+});
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) main(); });

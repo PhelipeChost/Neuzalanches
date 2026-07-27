@@ -12,51 +12,56 @@
 //   adicionais   → adicionais clássicos pagos (lanches, bebidas…)
 //   vendaPorPeso → produto pode ser marcado como vendido por kg (preço × peso)
 
+// vendaPorPeso é UNIVERSAL — habilitado em todos os segmentos. Quem não usa,
+// simplesmente não marca o checkbox "Vender por peso" no cadastro do produto.
+// Peixaria/açougue etc. continuam sendo os casos naturais, mas restaurante que
+// vende buffet por kg, cafeteria que vende grãos, mercado de conveniência…
+// todos aproveitam sem precisar migrar de segmento.
 export const SEGMENTOS = {
   snack_bar: {
     icone: "🥪", nome: "Lanchonete",
     desc: "Lanches e porções com adicionais",
-    recursos: { adicionais: true },
+    recursos: { adicionais: true, vendaPorPeso: true },
   },
   hamburger_shop: {
     icone: "🍔", nome: "Hamburgueria",
     desc: "Hambúrgueres artesanais com adicionais",
-    recursos: { adicionais: true },
+    recursos: { adicionais: true, vendaPorPeso: true },
   },
   pizzeria: {
     icone: "🍕", nome: "Pizzaria",
     desc: "Tamanhos, meio a meio e bordas recheadas",
-    recursos: { tamanhos: true, meioAMeio: true, bordas: true, adicionais: true },
+    recursos: { tamanhos: true, meioAMeio: true, bordas: true, adicionais: true, vendaPorPeso: true },
   },
   pastelaria: {
     icone: "🥟", nome: "Pastelaria",
     desc: "Pastéis por sabor com adicionais",
-    recursos: { adicionais: true },
+    recursos: { adicionais: true, vendaPorPeso: true },
   },
   ice_cream_shop: {
     icone: "🍦", nome: "Sorveteria",
     desc: "Tamanhos e complementos inclusos",
-    recursos: { tamanhos: true, complementos: true },
+    recursos: { tamanhos: true, complementos: true, vendaPorPeso: true },
   },
   acai_shop: {
     icone: "🫐", nome: "Açaiteria",
     desc: "Tamanhos e complementos inclusos",
-    recursos: { tamanhos: true, complementos: true },
+    recursos: { tamanhos: true, complementos: true, vendaPorPeso: true },
   },
   cafeteria: {
     icone: "☕", nome: "Cafeteria",
     desc: "Bebidas por tamanho com adicionais",
-    recursos: { tamanhos: true, adicionais: true },
+    recursos: { tamanhos: true, adicionais: true, vendaPorPeso: true },
   },
   restaurant: {
     icone: "🍱", nome: "Marmitaria / Restaurante",
     desc: "Marmitas por tamanho com acompanhamentos",
-    recursos: { tamanhos: true, adicionais: true },
+    recursos: { tamanhos: true, adicionais: true, vendaPorPeso: true },
   },
   convenience_store: {
     icone: "🏪", nome: "Conveniência",
     desc: "Produtos simples de prateleira",
-    recursos: {},
+    recursos: { vendaPorPeso: true },
   },
   fish_market: {
     icone: "🐟", nome: "Peixaria",

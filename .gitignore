@@ -16,6 +16,7 @@ dist
 dist-ssr
 dist-mercadolojo
 dist-online-test
+desktop/drive-creds.json
 desktop/dist-build-*
 desktop/dist-installer/
 desktop/dist-installer-v2/

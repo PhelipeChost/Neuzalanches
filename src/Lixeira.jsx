@@ -60,6 +60,17 @@ export default function Lixeira() {
     }
   }
 
+  async function esvaziarLixeira() {
+    if (!confirm("Excluir DEFINITIVAMENTE todos os itens da lixeira?\n\nEssa ação não pode ser desfeita — os itens não poderão mais ser restaurados.")) return;
+    try {
+      const r = await api.lixeira.esvaziar();
+      await carregar();
+      alert(`Lixeira esvaziada — ${r.total} ${r.total === 1 ? "item removido" : "itens removidos"}.`);
+    } catch (e) {
+      alert("Erro ao esvaziar: " + e.message);
+    }
+  }
+
   const tipos = Object.keys(grupos).filter(t => grupos[t].itens.length > 0);
   const totalItens = Object.values(grupos).reduce((s, g) => s + g.itens.length, 0);
   const tiposVisiveis = filtroTipo === "todos" ? tipos : tipos.filter(t => t === filtroTipo);
@@ -86,6 +97,14 @@ export default function Lixeira() {
           >
             ↻ Atualizar
           </button>
+          {totalItens > 0 && (
+            <button
+              onClick={esvaziarLixeira}
+              style={{ padding: "6px 12px", border: "1px solid #fecaca", borderRadius: 6, background: "#fef2f2", cursor: "pointer", fontSize: 12, color: "#dc2626", fontWeight: 600 }}
+            >
+              🗑️ Limpar Lixeira
+            </button>
+          )}
         </div>
       </div>
 

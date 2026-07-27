@@ -1005,6 +1005,17 @@ export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "
   const [confirmDel, setConfirmDel] = useState(null);
   const [toast, setToast] = useState("");
   const [busca, setBusca] = useState("");
+  // Ficam persistidos: separar por categoria + acordeão de categoria colapsada
+  const [separarPorCat, setSepararPorCat] = useState(() => {
+    try { return localStorage.getItem("prod_separar_por_cat") === "1"; } catch { return false; }
+  });
+  const [catsColapsadas, setCatsColapsadas] = useState({});
+  // Modal de edição em massa (Vender por kg / Estoque / Disponível)
+  const [batchFlag, setBatchFlag] = useState(null); // 'por_peso' | 'estoque' | 'disponivel'
+
+  useEffect(() => {
+    try { localStorage.setItem("prod_separar_por_cat", separarPorCat ? "1" : "0"); } catch {}
+  }, [separarPorCat]);
 
   const showToast = (msg, cor = "#14532d") => { setToast({ msg, cor }); setTimeout(() => setToast(""), 2500); };
 
@@ -1112,58 +1123,98 @@ export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "
             <span style={{ fontSize: 16, lineHeight: 1 }}>+</span> Novo produto
           </button>
         </div>
+
+        {/* Filtros e edição em massa — evitam abrir "Editar" produto a produto */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", width: "100%", marginTop: 2 }}>
+          <button
+            onClick={() => setSepararPorCat(v => !v)}
+            style={{
+              padding: "8px 14px", borderRadius: 8, border: "1.5px solid #e7e5e4",
+              background: separarPorCat ? "#F38C24" : "#fff",
+              color: separarPorCat ? "#fff" : "#57534e",
+              fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>
+            📂 {separarPorCat ? "Separando por categoria" : "Separar por categoria"}
+          </button>
+          <div style={{ width: 1, height: 24, background: "#e7e5e4", margin: "0 4px" }} />
+          <span style={{ fontSize: 11, color: "#a8a29e", fontWeight: 700, letterSpacing: "0.06em" }}>EDIÇÃO EM MASSA:</span>
+          <button onClick={() => setBatchFlag("por_peso")} style={{ padding: "7px 12px", borderRadius: 8, border: "1.5px solid #ddd6fe", background: "#f5f3ff", color: "#5b21b6", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            ⚖️ Vender por kg
+          </button>
+          <button onClick={() => setBatchFlag("estoque")} style={{ padding: "7px 12px", borderRadius: 8, border: "1.5px solid #bbf7d0", background: "#f0fdf4", color: "#166534", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            📦 Pertence ao estoque
+          </button>
+          <button onClick={() => setBatchFlag("disponivel")} style={{ padding: "7px 12px", borderRadius: 8, border: "1.5px solid #bae6fd", background: "#f0f9ff", color: "#075985", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+            🟢 Disponível
+          </button>
+        </div>
       </div>
 
       {filtrados.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 48, color: "#a8a29e" }}>
           {produtos.length === 0 ? "Nenhum produto cadastrado. Comece adicionando seu primeiro produto." : "Nenhum produto encontrado para a busca."}
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
-          {filtrados.map(p => (
-            <div key={p.id} className="card" style={{ padding: "18px 20px" }}>
-              <div style={{ display: "flex", gap: 14, marginBottom: 10 }}>
-                <SlideshowAdminCard produtoId={p.id} imagemLegada={p.imagem} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: p.categoria === "Lanches" ? "#7B4532" : "#1c1917" }}>{p.nome}</div>
-                    <span style={{ background: p.disponivel ? "#dcfce7" : "#fee2e2", color: p.disponivel ? "#15803d" : "#dc2626", padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
-                      {p.disponivel ? "Disponível" : "Indisponível"}
+      ) : separarPorCat ? (() => {
+        // Agrupa por categoria, na ordem das categorias do cardápio (que já vêm
+        // ordenadas pelo próprio admin). "Sem categoria" fica por último.
+        const ordemCats = categorias.map(c => c.nome);
+        const grupos = {};
+        for (const nome of ordemCats) grupos[nome] = [];
+        for (const p of filtrados) {
+          const c = p.categoria || "Sem categoria";
+          if (!grupos[c]) grupos[c] = [];
+          grupos[c].push(p);
+        }
+        const semSC = grupos["Sem categoria"];
+        delete grupos["Sem categoria"];
+        const nomesComItens = Object.keys(grupos).filter(n => grupos[n].length > 0);
+        if (semSC && semSC.length) grupos["Sem categoria"] = semSC;
+        const nomesFinais = [...nomesComItens, ...(semSC && semSC.length ? ["Sem categoria"] : [])];
+        const toggleCat = (nome) => setCatsColapsadas(m => ({ ...m, [nome]: !m[nome] }));
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+            {nomesFinais.map(nomeCat => {
+              const lista = grupos[nomeCat];
+              const colapsado = !!catsColapsadas[nomeCat];
+              return (
+                <div key={nomeCat}>
+                  <div onClick={() => toggleCat(nomeCat)}
+                    style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, cursor: "pointer", userSelect: "none", padding: "8px 0", borderBottom: "1.5px solid #e7e5e4" }}>
+                    <span style={{ fontSize: 12, color: "#78716c", transform: colapsado ? "rotate(-90deg)" : "", transition: "transform 0.15s" }}>▼</span>
+                    <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 15, fontWeight: 700, color: "#1c1917" }}>{nomeCat}</div>
+                    <span style={{ background: "#f5f5f4", color: "#57534e", padding: "2px 10px", borderRadius: 10, fontSize: 11, fontWeight: 700 }}>
+                      {lista.length}
                     </span>
                   </div>
-                  {p.categoria && <span style={{ fontSize: 10, color: "#78716c", background: "#f5f5f4", padding: "2px 8px", borderRadius: 4, marginTop: 4, display: "inline-block" }}>{p.categoria}</span>}
-                  {p.descricao && <div style={{ fontSize: 12, color: "#78716c", marginTop: 4 }}>{p.descricao}</div>}
+                  {!colapsado && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+                      {lista.map(p => <CardProdutoAdmin key={p.id} p={p} setEditando={setEditando} setModal={setModal} setConfirmDel={setConfirmDel} />)}
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  {(() => {
-                    const pe = precoExibicao(p);
-                    const ts = tamanhosDoProduto(p);
-                    return (
-                      <>
-                        <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>
-                          {pe.aPartirDe && <span style={{ fontSize: 11, fontWeight: 500, color: "#78716c" }}>a partir de </span>}
-                          {fmt(pe.preco)}
-                        </div>
-                        {ts.length > 0 && <div style={{ fontSize: 10, color: "#2563eb", fontWeight: 600 }}>{ts.length} tamanho{ts.length > 1 ? "s" : ""}</div>}
-                      </>
-                    );
-                  })()}
-                  {p.custo > 0 && <div style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmt(p.custo)}</div>}
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="icon-btn" onClick={() => { setEditando(p); setModal(true); }}>✎ Editar</button>
-                  <button className="icon-btn del" onClick={() => setConfirmDel(p.id)}>✕ Excluir</button>
-                </div>
-              </div>
-            </div>
-          ))}
+              );
+            })}
+          </div>
+        );
+      })() : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+          {filtrados.map(p => <CardProdutoAdmin key={p.id} p={p} setEditando={setEditando} setModal={setModal} setConfirmDel={setConfirmDel} />)}
         </div>
       )}
 
       {modal && <ModalProduto onSave={salvar} onFichaSalva={fichaSalva} onClose={() => { setModal(false); setEditando(null); }} editando={editando} categorias={categorias} insumos={insumos} cardapioTipo={cardapioTipo} cardapio={cardapio} />}
       {modalImport && <ModalImportarProdutos onImport={importarProdutos} onClose={() => setModalImport(false)} cardapioNome={cardapioNome} />}
+      {batchFlag && (
+        <ModalBatchFlag
+          flag={batchFlag}
+          produtos={produtosDoCardapio}
+          onClose={() => setBatchFlag(null)}
+          onSaved={(updates) => {
+            setProdutos(ps => ps.map(p => updates[p.id] ? { ...p, ...updates[p.id] } : p));
+            showToast(`${Object.keys(updates).length} produto(s) atualizado(s)!`);
+          }}
+        />
+      )}
 
       {confirmDel && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setConfirmDel(null)}>
@@ -1184,3 +1235,181 @@ export default function Produtos({ cardapioAtivo, cardapioNome, cardapioTipo = "
 }
 
 export { ImagemProduto };
+
+// ─── Card individual de produto no admin (reusado no modo grid e agrupado) ──
+function CardProdutoAdmin({ p, setEditando, setModal, setConfirmDel }) {
+  return (
+    <div className="card" style={{ padding: "18px 20px" }}>
+      <div style={{ display: "flex", gap: 14, marginBottom: 10 }}>
+        <SlideshowAdminCard produtoId={p.id} imagemLegada={p.imagem} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: p.categoria === "Lanches" ? "#7B4532" : "#1c1917" }}>{p.nome}</div>
+            <span style={{ background: p.disponivel ? "#dcfce7" : "#fee2e2", color: p.disponivel ? "#15803d" : "#dc2626", padding: "2px 8px", borderRadius: 12, fontSize: 10, fontWeight: 600, flexShrink: 0, marginLeft: 8 }}>
+              {p.disponivel ? "Disponível" : "Indisponível"}
+            </span>
+          </div>
+          {p.categoria && <span style={{ fontSize: 10, color: "#78716c", background: "#f5f5f4", padding: "2px 8px", borderRadius: 4, marginTop: 4, display: "inline-block" }}>{p.categoria}</span>}
+          {p.descricao && <div style={{ fontSize: 12, color: "#78716c", marginTop: 4 }}>{p.descricao}</div>}
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+          {(() => {
+            const pe = precoExibicao(p);
+            const ts = tamanhosDoProduto(p);
+            return (
+              <>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 20, fontWeight: 600, color: "#15803d" }}>
+                  {pe.aPartirDe && <span style={{ fontSize: 11, fontWeight: 500, color: "#78716c" }}>a partir de </span>}
+                  {fmt(pe.preco)}
+                </div>
+                {ts.length > 0 && <div style={{ fontSize: 10, color: "#2563eb", fontWeight: 600 }}>{ts.length} tamanho{ts.length > 1 ? "s" : ""}</div>}
+              </>
+            );
+          })()}
+          {p.custo > 0 && <div style={{ fontSize: 11, color: "#a8a29e" }}>CMV: {fmt(p.custo)}</div>}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button className="icon-btn" onClick={() => { setEditando(p); setModal(true); }}>✎ Editar</button>
+          <button className="icon-btn del" onClick={() => setConfirmDel(p.id)}>✕ Excluir</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal de edição em massa: 3 flags avulsas ────────────────────────────
+// Lista TODOS os produtos com checkbox — o lojista marca/desmarca em lote e
+// salva de uma vez. Evita abrir "Editar" produto a produto (que era o
+// gargalo real: peixarias importam 50+ produtos por vez).
+function ModalBatchFlag({ flag, produtos, onClose, onSaved }) {
+  const meta = {
+    por_peso:   { titulo: "⚖️ Vender por kg",    cor: "#7c3aed", desc: "Marque os produtos vendidos por peso (o cardápio pede peso em kg em vez de unidades)." },
+    estoque:    { titulo: "📦 Pertence ao estoque", cor: "#166534", desc: "Marque os produtos que devem espelhar no controle de Estoque (categoria \"revenda\")." },
+    disponivel: { titulo: "🟢 Disponível para venda", cor: "#0284c7", desc: "Marque os produtos que aparecem para venda (cardápio online e PDV). Desmarcados ficam ocultos temporariamente." },
+  }[flag] || {};
+
+  // Estado atual (antes de salvar). Prod é o objeto vindo do servidor:
+  // - disponivel é coluna direta
+  // - por_peso e estoque vivem em config.venda_por_peso / pertence_estoque
+  const lerFlag = (p) => {
+    if (flag === "disponivel") return !!p.disponivel;
+    if (flag === "por_peso") {
+      try {
+        const cfg = typeof p.config === "string" ? JSON.parse(p.config || "{}") : (p.config || {});
+        return cfg.venda_por_peso === true;
+      } catch { return false; }
+    }
+    if (flag === "estoque") return !!p.pertence_estoque;
+    return false;
+  };
+
+  const [estado, setEstado] = useState(() => {
+    const m = {};
+    for (const p of produtos) m[p.id] = lerFlag(p);
+    return m;
+  });
+  const [busca, setBusca] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  const filtrados = produtos.filter(p =>
+    !busca || p.nome.toLowerCase().includes(busca.toLowerCase()) || (p.categoria || "").toLowerCase().includes(busca.toLowerCase())
+  );
+  const marcados = Object.values(estado).filter(Boolean).length;
+
+  const toggle = (id) => setEstado(m => ({ ...m, [id]: !m[id] }));
+  const marcarTodos = () => setEstado(m => { const n = { ...m }; for (const p of filtrados) n[p.id] = true; return n; });
+  const desmarcarTodos = () => setEstado(m => { const n = { ...m }; for (const p of filtrados) n[p.id] = false; return n; });
+
+  const salvar = async () => {
+    setSalvando(true);
+    // Só manda pro server o que mudou (evita PUT desnecessário)
+    const mudou = {};
+    for (const p of produtos) {
+      const antes = lerFlag(p);
+      const agora = !!estado[p.id];
+      if (antes === agora) continue;
+      const patch = {};
+      if (flag === "disponivel") patch.disponivel = agora ? 1 : 0;
+      else if (flag === "por_peso") {
+        let cfg = {};
+        try { cfg = typeof p.config === "string" ? JSON.parse(p.config || "{}") : (p.config || {}); } catch {}
+        cfg.venda_por_peso = agora;
+        patch.config = cfg;
+      } else if (flag === "estoque") patch.pertence_estoque = agora ? 1 : 0;
+      mudou[p.id] = patch;
+    }
+    try {
+      const atualizados = {};
+      for (const [id, patch] of Object.entries(mudou)) {
+        const r = await api.produtos.atualizar(id, patch);
+        atualizados[id] = r;
+      }
+      onSaved(atualizados);
+      onClose();
+    } catch (e) {
+      alert("Erro ao salvar: " + e.message);
+    } finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, width: "100%", maxWidth: 560, maxHeight: "90vh", display: "flex", flexDirection: "column", fontFamily: "'DM Sans', sans-serif" }}>
+        <div style={{ padding: "18px 22px 10px", borderBottom: "1px solid #f5f5f4" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+            <div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 17, fontWeight: 700, color: "#1c1917" }}>{meta.titulo}</div>
+              <div style={{ fontSize: 12, color: "#78716c", marginTop: 3, lineHeight: 1.5 }}>{meta.desc}</div>
+            </div>
+            <button onClick={onClose} style={{ background: "none", border: "1px solid #e7e5e4", borderRadius: 8, width: 32, height: 32, fontSize: 14, cursor: "pointer", color: "#78716c" }}>✕</button>
+          </div>
+        </div>
+
+        <div style={{ padding: "10px 22px", borderBottom: "1px solid #f5f5f4", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input placeholder="Buscar…" value={busca} onChange={e => setBusca(e.target.value)}
+            style={{ flex: 1, minWidth: 160, padding: "8px 12px", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, outline: "none", fontFamily: "inherit" }} />
+          <button onClick={marcarTodos} style={{ padding: "8px 12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, fontSize: 12, fontWeight: 600, color: "#166534", cursor: "pointer", fontFamily: "inherit" }}>
+            Marcar visíveis
+          </button>
+          <button onClick={desmarcarTodos} style={{ padding: "8px 12px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, fontSize: 12, fontWeight: 600, color: "#dc2626", cursor: "pointer", fontFamily: "inherit" }}>
+            Desmarcar visíveis
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
+          {filtrados.length === 0 && (
+            <div style={{ padding: 40, textAlign: "center", color: "#a8a29e", fontSize: 13 }}>Nenhum produto.</div>
+          )}
+          {filtrados.map(p => {
+            const marcado = !!estado[p.id];
+            return (
+              <label key={p.id} onClick={() => toggle(p.id)}
+                style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 8, cursor: "pointer", background: marcado ? `${meta.cor}12` : "transparent", border: `1.5px solid ${marcado ? meta.cor + "55" : "transparent"}`, margin: "3px 0" }}>
+                <input type="checkbox" checked={marcado} onChange={() => {}} style={{ width: 18, height: 18, accentColor: meta.cor, cursor: "pointer" }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#1c1917" }}>{p.nome}</div>
+                  <div style={{ fontSize: 11, color: "#78716c", marginTop: 1 }}>{p.categoria || "Sem categoria"} · {fmt(precoExibicao(p).preco)}</div>
+                </div>
+              </label>
+            );
+          })}
+        </div>
+
+        <div style={{ padding: "12px 22px 16px", borderTop: "1px solid #f5f5f4", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 12, color: "#78716c" }}>
+            <b style={{ color: meta.cor, fontSize: 14 }}>{marcados}</b> de {produtos.length} marcado{marcados !== 1 ? "s" : ""}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} style={{ padding: "10px 18px", background: "#fff", border: "1.5px solid #e7e5e4", borderRadius: 8, fontSize: 13, fontWeight: 600, color: "#57534e", cursor: "pointer", fontFamily: "inherit" }}>
+              Cancelar
+            </button>
+            <button onClick={salvar} disabled={salvando} style={{ padding: "10px 22px", background: meta.cor, border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, color: "#fff", cursor: salvando ? "default" : "pointer", opacity: salvando ? 0.6 : 1, fontFamily: "inherit" }}>
+              {salvando ? "Salvando..." : "Salvar alterações"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

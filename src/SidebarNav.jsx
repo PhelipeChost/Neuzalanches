@@ -69,20 +69,20 @@ export default function SidebarNav({
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Inter:wght@600;700;800&display=swap');
         .nx-sb {
           position: fixed; left: 0; top: 0; bottom: 0; width: ${SIDEBAR_WIDTH}px;
-          background: #0f1a17; color: #e7e5e4;
+          background: #0d1018; color: #e8eaf0;
           display: flex; flex-direction: column;
           font-family: 'DM Sans', 'Segoe UI', sans-serif;
-          border-right: 1px solid #1c2622;
+          border-right: 1px solid #1c2130;
           z-index: 40;
         }
-        .nx-sb-brand { padding: 22px 22px 16px; border-bottom: 1px solid #1c2622; }
+        .nx-sb-brand { padding: 22px 22px 16px; border-bottom: 1px solid #1c2130; }
         .nx-sb-brand-name { font-family: 'Inter', sans-serif; font-size: 17px; font-weight: 800; color: #fff; line-height: 1.15; }
         .nx-sb-brand-sub  { font-size: 11px; color: #78716c; margin-top: 2px; letter-spacing: 0.03em; }
         .nx-sb-brand-pill { display:inline-block; margin-top: 8px; padding: 2px 9px; background: #15803d; color:#fff; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; }
 
         .nx-sb-scroll { flex: 1; overflow-y: auto; padding: 12px 12px 8px; }
         .nx-sb-scroll::-webkit-scrollbar { width: 6px; }
-        .nx-sb-scroll::-webkit-scrollbar-thumb { background: #1c2622; border-radius: 3px; }
+        .nx-sb-scroll::-webkit-scrollbar-thumb { background: #1c2130; border-radius: 3px; }
 
         .nx-sb-grp { font-size: 10px; letter-spacing: 0.10em; text-transform: uppercase; color: #6b7280; padding: 14px 10px 6px; font-weight: 700; }
         .nx-sb-item {
@@ -92,7 +92,7 @@ export default function SidebarNav({
           background: transparent; border: none; width: 100%; text-align: left;
           font-family: inherit;
         }
-        .nx-sb-item:hover { background: #1a2622; }
+        .nx-sb-item:hover { background: #161c28; }
         .nx-sb-item.active { background: #15803d; color: #fff; font-weight: 600; }
         .nx-sb-item.active .nx-sb-icon { filter: none; }
         .nx-sb-icon { width: 22px; text-align: center; font-size: 15px; }
@@ -102,7 +102,7 @@ export default function SidebarNav({
         }
         .nx-sb-badge.novo { background: #f59e0b; color: #1c1917; }
 
-        .nx-sb-foot { padding: 10px 14px 14px; border-top: 1px solid #1c2622; }
+        .nx-sb-foot { padding: 10px 14px 14px; border-top: 1px solid #1c2130; }
         .nx-sb-status { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #a8a29e; padding: 6px 4px 10px; }
         .nx-sb-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
         .nx-sb-user { display: flex; align-items: center; gap: 10px; padding: 8px 6px; }
@@ -112,11 +112,11 @@ export default function SidebarNav({
 
         .nx-sb-actions { display:flex; flex-direction: column; gap: 6px; margin-top: 10px; }
         .nx-sb-btn {
-          padding: 9px 12px; border-radius: 9px; background: transparent; border: 1px solid #1c2622;
+          padding: 9px 12px; border-radius: 9px; background: transparent; border: 1px solid #1c2130;
           color: #e7e5e4; font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
           transition: background 0.12s;
         }
-        .nx-sb-btn:hover { background: #1a2622; }
+        .nx-sb-btn:hover { background: #161c28; }
         .nx-sb-btn.danger { color: #f87171; border-color: #3a1414; }
         .nx-sb-btn.danger:hover { background: #2a0e0e; }
 
